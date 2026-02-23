@@ -66,7 +66,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     minimize: () => ipcRenderer.send('window:minimize'),
     maximize: () => ipcRenderer.send('window:maximize'),
     close: () => ipcRenderer.send('window:close'),
-    openChatWindow: () => ipcRenderer.invoke('window:openChatWindow'),
+    openChatWindow: (username?: string) => ipcRenderer.invoke('window:openChatWindow', username),
     openMomentsWindow: () => ipcRenderer.invoke('window:openMomentsWindow'),
     openGroupAnalyticsWindow: () => ipcRenderer.invoke('window:openGroupAnalyticsWindow'),
     openAnnualReportWindow: (year: number) => ipcRenderer.invoke('window:openAnnualReportWindow', year),
@@ -246,6 +246,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
       const listener = (_: any, data: any) => callback(data)
       ipcRenderer.on('chat:new-messages', listener)
       return () => ipcRenderer.removeListener('chat:new-messages', listener)
+    },
+    onNavigateToSession: (callback: (username: string) => void) => {
+      const listener = (_: any, username: string) => callback(username)
+      ipcRenderer.on('chat:navigateToSession', listener)
+      return () => ipcRenderer.removeListener('chat:navigateToSession', listener)
     }
   },
 

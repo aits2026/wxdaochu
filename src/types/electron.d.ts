@@ -8,7 +8,7 @@ export interface ElectronAPI {
     close: () => void
     splashReady: () => void
     onSplashFadeOut?: (callback: () => void) => () => void
-    openChatWindow: () => Promise<boolean>
+    openChatWindow: (username?: string) => Promise<boolean>
     openMomentsWindow: () => Promise<boolean>
     openGroupAnalyticsWindow: () => Promise<boolean>
     openAnnualReportWindow: (year: number) => Promise<boolean>
@@ -236,6 +236,7 @@ export interface ElectronAPI {
     refreshCache: () => Promise<boolean>
     setCurrentSession: (sessionId: string | null) => Promise<boolean>
     onNewMessages: (callback: (data: { sessionId: string; messages: Message[] }) => void) => () => void
+    onNavigateToSession: (callback: (username: string) => void) => () => void
     getSessionMessageCounts: (usernames: string[]) => Promise<{
       success: boolean
       counts?: { [username: string]: number }

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Search, Download, FolderOpen, RefreshCw, Check, FileJson, FileText, Table, Loader2, X, FileSpreadsheet, Database, FileCode, CheckCircle, XCircle, ExternalLink, MessageSquare, Users, User, Filter, Image, Video, CircleUserRound, Smile, Mic, Newspaper, ChevronDown, MoreHorizontal, ArrowLeft } from 'lucide-react'
+import { Search, Download, FolderOpen, RefreshCw, Check, FileJson, FileText, Table, Loader2, X, FileSpreadsheet, Database, FileCode, CheckCircle, XCircle, ExternalLink, MessageSquare, Users, User, Filter, Image, Video, CircleUserRound, Smile, Mic, Newspaper, ChevronDown, MoreHorizontal, ArrowLeft, Eye } from 'lucide-react'
 import DateRangePicker from '../components/DateRangePicker'
 import { useTitleBarStore } from '../stores/titleBarStore'
 import * as configService from '../services/config'
@@ -799,14 +799,23 @@ function ExportPage() {
                   })()}
                 </div>
                 <div className="export-action">
-                  <button
-                    className="export-btn"
-                    onClick={() => setShowExportSettings(true)}
-                    disabled={!sessionDetail || sessionDetail.messageCount === 0}
-                  >
-                    <Download size={18} />
-                    <span>导出此会话</span>
-                  </button>
+                  <div className="export-action-row">
+                    <button
+                      className="export-btn export-btn-secondary"
+                      onClick={() => window.electronAPI.window.openChatWindow(selectedSession!)}
+                    >
+                      <Eye size={16} />
+                      <span>查看会话</span>
+                    </button>
+                    <button
+                      className="export-btn"
+                      onClick={() => setShowExportSettings(true)}
+                      disabled={!sessionDetail || sessionDetail.messageCount === 0}
+                    >
+                      <Download size={16} />
+                      <span>导出此会话</span>
+                    </button>
+                  </div>
                 </div>
               </>
             ) : (

@@ -252,6 +252,7 @@ function ChatPage(_props: ChatPageProps) {
   const updateTimerRef = useRef<NodeJS.Timeout | null>(null)
   const updateStatusTimerRef = useRef<NodeJS.Timeout | null>(null)
   const isUserOperatingRef = useRef<boolean>(false) // 标记用户是否正在操作
+  const autoSelectSession = useRef<string | null>(null) // 从 URL 或 IPC 传入的待自动选中会话
   const [currentOffset, setCurrentOffset] = useState(0)
 
   // 更新状态管理
@@ -1072,10 +1073,39 @@ function ChatPage(_props: ChatPageProps) {
 
   // 初始化连接
   useEffect(() => {
+    // 读取 URL 参数中的目标会话（从导出页跳转时携带）
+    const params = new URLSearchParams(window.location.search)
+    const sessionParam = params.get('session')
+    if (sessionParam) {
+      autoSelectSession.current = sessionParam
+    }
     if (!isConnected && !isConnecting) {
       connect()
     }
   }, [])
+
+  // 当会话列表加载后，自动选中目标会话
+  useEffect(() => {
+    if (!autoSelectSession.current || sessions.length === 0) return
+    const target = sessions.find(s => s.username === autoSelectSession.current)
+    if (target) {
+      autoSelectSession.current = null
+      handleSelectSession(target)
+    }
+  }, [sessions])
+
+  // 监听来自主进程的跳转指令（聊天窗口已开启时）
+  useEffect(() => {
+    const remove = window.electronAPI.chat.onNavigateToSession((username) => {
+      const target = sessions.find(s => s.username === username)
+      if (target) {
+        handleSelectSession(target)
+      } else {
+        autoSelectSession.current = username
+      }
+    })
+    return remove
+  }, [sessions])
 
   // 监听会话更新事件（来自后台自动同步）
   useEffect(() => {

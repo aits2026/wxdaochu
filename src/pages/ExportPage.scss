@@ -943,20 +943,25 @@
   .export-action {
     padding: 20px 24px;
     border-top: 1px solid var(--border-color);
+
+    .export-action-row {
+      display: flex;
+      gap: 10px;
+    }
   }
 
   .export-btn {
-    width: 100%;
+    flex: 1;
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 10px;
-    padding: 14px 24px;
+    gap: 8px;
+    padding: 13px 16px;
     background: var(--primary);
     color: #fff;
     border: none;
     border-radius: 999px;
-    font-size: 15px;
+    font-size: 14px;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.2s;
@@ -968,6 +973,16 @@
     &:disabled {
       opacity: 0.5;
       cursor: not-allowed;
+    }
+
+    &.export-btn-secondary {
+      background: none;
+      color: var(--primary);
+      border: 1.5px solid var(--primary);
+
+      &:hover:not(:disabled) {
+        background: rgba(var(--primary-rgb), 0.08);
+      }
     }
 
     .spin {

@@ -198,13 +198,16 @@ function createWindow() {
 /**
  * 创建独立的聊天窗口（仿微信风格）
  */
-function createChatWindow() {
-  // 如果已存在，聚焦到现有窗口
+function createChatWindow(username?: string) {
+  // 如果已存在，聚焦到现有窗口，并通知切换到目标会话
   if (chatWindow && !chatWindow.isDestroyed()) {
     if (chatWindow.isMinimized()) {
       chatWindow.restore()
     }
     chatWindow.focus()
+    if (username) {
+      chatWindow.webContents.send('chat:navigateToSession', username)
+    }
     return chatWindow
   }
 
@@ -242,8 +245,9 @@ function createChatWindow() {
   const themeParams = getThemeQueryParams()
 
   // 加载聊天页面
+  const sessionParam = username ? `&session=${encodeURIComponent(username)}` : ''
   if (process.env.VITE_DEV_SERVER_URL) {
-    chatWindow.loadURL(`${process.env.VITE_DEV_SERVER_URL}?${themeParams}#/chat-window`)
+    chatWindow.loadURL(`${process.env.VITE_DEV_SERVER_URL}?${themeParams}${sessionParam}#/chat-window`)
 
     chatWindow.webContents.on('before-input-event', (event, input) => {
       if (input.key === 'F12' || (input.control && input.shift && input.key === 'I')) {
@@ -256,9 +260,14 @@ function createChatWindow() {
       }
     })
   } else {
+    const query: Record<string, string> = {
+      theme: configService?.get('theme') || 'cloud-dancer',
+      mode: configService?.get('themeMode') || 'light'
+    }
+    if (username) query.session = username
     chatWindow.loadFile(join(__dirname, '../dist/index.html'), {
       hash: '/chat-window',
-      query: { theme: configService?.get('theme') || 'cloud-dancer', mode: configService?.get('themeMode') || 'light' }
+      query
     })
   }
 
@@ -2105,9 +2114,9 @@ function registerIpcHandlers() {
     return groupAnalyticsService.getGroupMediaStats(chatroomId, startTime, endTime)
   })
 
-  // 打开独立聊天窗口
-  ipcMain.handle('window:openChatWindow', async () => {
-    createChatWindow()
+  // 打开独立聊天窗口（可选传入 username 自动定位会话）
+  ipcMain.handle('window:openChatWindow', async (_, username?: string) => {
+    createChatWindow(username)
     return true
   })
 
