@@ -322,20 +322,24 @@
     }
   }
 
+  .session-count-loading-hint {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 22px 10px;
+    color: var(--text-tertiary);
+    font-size: 12px;
+
+    .spin {
+      animation: exportSpin 1s linear infinite;
+    }
+  }
+
   .export-session-list {
     flex: 1;
-    overflow-y: auto;
+    min-height: 0;
+    overflow: hidden;
     padding: 0 12px 12px;
-
-    &::-webkit-scrollbar {
-      width: 6px;
-    }
-
-    &::-webkit-scrollbar-thumb {
-      background: var(--text-tertiary);
-      border-radius: 3px;
-      opacity: 0.3;
-    }
   }
 
   .export-session-item {
@@ -1168,4 +1172,3 @@
     transform: rotate(360deg);
   }
 }
-

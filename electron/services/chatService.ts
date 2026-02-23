@@ -128,6 +128,13 @@ class ChatService extends EventEmitter {
   private hasName2IdCache: Map<string, boolean> = new Map()
   // 缓存：预编译的 SQL 语句 - 提升查询性能
   private preparedStmtCache: Map<string, Database.Statement> = new Map()
+  // 缓存：批量会话消息数量统计结果（按消息数据库文件签名 + 用户列表）
+  private sessionMessageCountsCache: {
+    dbSignature: string
+    usernamesKey: string
+    counts: { [username: string]: number }
+    cachedAt: number
+  } | null = null
   // 缓存：联系人表结构信息 - 表结构不会变
   private contactColumnsCache: { hasBigHeadUrl: boolean; hasSmallHeadUrl: boolean; hasLocalType?: boolean; selectCols: string[] } | null = null
   // 缓存：头像 base64 数据
@@ -155,6 +162,10 @@ class ChatService extends EventEmitter {
    */
   setCurrentSession(sessionId: string | null): void {
     this.currentSessionId = sessionId
+  }
+
+  private clearSessionMessageCountsCache(): void {
+    this.sessionMessageCountsCache = null
   }
 
   /**
@@ -329,6 +340,7 @@ class ChatService extends EventEmitter {
       this.sessionTableCache.clear()
       this.sessionTableCacheTime = 0
       this.knownMessageDbFiles.clear()
+      this.clearSessionMessageCountsCache()
       this.avatarBase64Cache.clear()
 
       return { success: true }
@@ -369,6 +381,7 @@ class ChatService extends EventEmitter {
     this.myRowIdCache.clear()
     this.hasName2IdCache.clear()
     this.preparedStmtCache.clear()
+    this.clearSessionMessageCountsCache()
     this.contactColumnsCache = null
     this.avatarBase64Cache.clear()
     this.dbDir = null
@@ -432,6 +445,7 @@ class ChatService extends EventEmitter {
         // 清除会话表缓存（因为可能包含这个数据库的信息）
         this.sessionTableCache.clear()
         this.sessionTableCacheTime = 0
+        this.clearSessionMessageCountsCache()
         return
       }
     }
@@ -757,6 +771,25 @@ class ChatService extends EventEmitter {
   }
 
   /**
+   * 构建消息数据库文件签名（用于消息数量统计缓存失效）
+   */
+  private buildMessageDbSignature(dbPaths: string[]): string {
+    if (dbPaths.length === 0) return 'empty'
+
+    const parts: string[] = []
+    const sortedPaths = [...dbPaths].sort()
+    for (const dbPath of sortedPaths) {
+      try {
+        const stat = fs.statSync(dbPath)
+        parts.push(`${dbPath}:${stat.size}:${Math.floor(stat.mtimeMs)}`)
+      } catch {
+        parts.push(`${dbPath}:missing`)
+      }
+    }
+    return parts.join('|')
+  }
+
+  /**
    * 刷新消息数据库缓存（解密后调用）
    */
   refreshMessageDbCache(): void {
@@ -771,6 +804,7 @@ class ChatService extends EventEmitter {
     this.myRowIdCache.clear()
     this.hasName2IdCache.clear()
     this.preparedStmtCache.clear()
+    this.clearSessionMessageCountsCache()
 
     // 同时刷新 sessionDb 和 contactDb，确保获取最新的会话列表
     try {
@@ -3934,15 +3968,26 @@ class ChatService extends EventEmitter {
       }
 
       const crypto = require('crypto')
-      // 预计算 hash → username 映射
-      const hashToUsername: { [hash: string]: string } = {}
+      // 预计算 hash → username 映射（兼容完整 md5 和前 16 位 md5）
+      const hashToUsername = new Map<string, string>()
       for (const username of usernames) {
-        const hash = crypto.createHash('md5').update(username).digest('hex')
-        hashToUsername[hash] = username
+        const hash = crypto.createHash('md5').update(username).digest('hex').toLowerCase()
+        hashToUsername.set(hash, username)
+        hashToUsername.set(hash.slice(0, 16), username)
       }
 
       const counts: { [username: string]: number } = {}
       const { allDbs } = this.findMessageDbs()
+      const dbSignature = this.buildMessageDbSignature(allDbs)
+      const usernamesKey = [...usernames].sort().join('\u0001')
+
+      if (
+        this.sessionMessageCountsCache &&
+        this.sessionMessageCountsCache.dbSignature === dbSignature &&
+        this.sessionMessageCountsCache.usernamesKey === usernamesKey
+      ) {
+        return { success: true, counts: { ...this.sessionMessageCountsCache.counts } }
+      }
 
       for (const dbPath of allDbs) {
         const db = this.getMessageDb(dbPath)
@@ -3955,10 +4000,25 @@ class ChatService extends EventEmitter {
 
           for (const table of tables) {
             const tableName = table.name as string
-            // 从表名中提取 hash 并查找对应 username
-            const matchedUsername = Object.keys(hashToUsername).find(hash => tableName.includes(hash))
-              ? hashToUsername[Object.keys(hashToUsername).find(hash => tableName.includes(hash))!]
-              : null
+            const lowerTableName = tableName.toLowerCase()
+            const tableSuffix = lowerTableName.startsWith('msg_') ? lowerTableName.slice(4) : ''
+
+            // 优先直接按表名后缀匹配（常见情况）
+            let matchedUsername =
+              hashToUsername.get(tableSuffix) ||
+              (tableSuffix.length >= 16 ? hashToUsername.get(tableSuffix.slice(0, 16)) : undefined)
+
+            // 回退：兼容少数非标准表名（表名里包含 hash）
+            if (!matchedUsername) {
+              const hashMatch = lowerTableName.match(/[a-f0-9]{32}|[a-f0-9]{16}/i)
+              if (hashMatch?.[0]) {
+                const matchedHash = hashMatch[0].toLowerCase()
+                matchedUsername =
+                  hashToUsername.get(matchedHash) ||
+                  (matchedHash.length >= 16 ? hashToUsername.get(matchedHash.slice(0, 16)) : undefined)
+              }
+            }
+
             if (!matchedUsername) continue
 
             try {
@@ -3967,6 +4027,13 @@ class ChatService extends EventEmitter {
             } catch { }
           }
         } catch { }
+      }
+
+      this.sessionMessageCountsCache = {
+        dbSignature,
+        usernamesKey,
+        counts: { ...counts },
+        cachedAt: Date.now()
       }
 
       return { success: true, counts }

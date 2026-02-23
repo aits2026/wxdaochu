@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useDeferredValue, useMemo, useRef, startTransition } from 'react'
 import { Search, Download, FolderOpen, RefreshCw, Check, FileJson, FileText, Table, Loader2, X, FileSpreadsheet, Database, FileCode, CheckCircle, XCircle, ExternalLink, MessageSquare, Users, User, Filter, Image, Video, CircleUserRound, Smile, Mic, Newspaper, ChevronDown, MoreHorizontal, ArrowLeft, Eye } from 'lucide-react'
+import { List, RowComponentProps } from 'react-window'
 import DateRangePicker from '../components/DateRangePicker'
 import { useTitleBarStore } from '../stores/titleBarStore'
 import * as configService from '../services/config'
@@ -54,8 +55,63 @@ interface ExportResult {
   error?: string
 }
 
+type SessionMessageCountMap = Record<string, number>
+
 // 会话类型筛选
 type SessionTypeFilter = 'group' | 'private' | 'official'
+
+interface ExportSessionRowData {
+  sessions: ChatSession[]
+  selectedSession: string | null
+  sessionMessageCounts: SessionMessageCountMap
+  onSelect: (username: string) => void
+}
+
+const getAvatarLetter = (name: string) => {
+  if (!name) return '?'
+  return [...name][0] || '?'
+}
+
+const matchesSessionTypeFilter = (session: ChatSession, filter: SessionTypeFilter) => {
+  if (filter === 'group') return session.accountType === 'group'
+  if (filter === 'private') return session.accountType === 'friend'
+  return session.accountType === 'official'
+}
+
+const ExportSessionRow = (props: RowComponentProps<ExportSessionRowData>) => {
+  const { index, style, sessions, selectedSession, sessionMessageCounts, onSelect } = props
+  const session = sessions[index]
+  const messageCount = sessionMessageCounts[session.username]
+  const isGroup = session.username.includes('@chatroom')
+
+  return (
+    <div style={style}>
+      <div
+        className={`export-session-item ${selectedSession === session.username ? 'selected' : ''}`}
+        onClick={() => onSelect(session.username)}
+      >
+        <div className="export-avatar">
+          {session.avatarUrl ? (
+            <img src={session.avatarUrl} alt="" loading="lazy" />
+          ) : (
+            <span className={isGroup ? 'group-placeholder' : ''}>
+              {isGroup ? '群' : getAvatarLetter(session.displayName || session.username)}
+            </span>
+          )}
+        </div>
+        <div className="export-session-info">
+          <div className="export-session-name">{session.displayName || session.username}</div>
+          <div className="export-session-summary">{session.summary || '暂无消息'}</div>
+        </div>
+        {messageCount !== undefined && (
+          <div className="export-session-count">
+            {messageCount.toLocaleString()}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
 
 function ExportPage() {
   const [activeTab, setActiveTab] = useState<ExportTab>('chat')
@@ -63,9 +119,10 @@ function ExportPage() {
 
   // 聊天导出状态
   const [sessions, setSessions] = useState<ChatSession[]>([])
-  const [filteredSessions, setFilteredSessions] = useState<ChatSession[]>([])
-  const [sessionMessageCounts, setSessionMessageCounts] = useState<{ [username: string]: number }>({})
+  const [sessionMessageCounts, setSessionMessageCounts] = useState<SessionMessageCountMap>({})
   const [isLoading, setIsLoading] = useState(true)
+  const [isLoadingSessionCounts, setIsLoadingSessionCounts] = useState(false)
+  const [loadedSessionCountUsernames, setLoadedSessionCountUsernames] = useState<Set<string>>(new Set())
   const [searchKeyword, setSearchKeyword] = useState('')
   const [sessionTypeFilter, setSessionTypeFilter] = useState<SessionTypeFilter>('private')
   const [exportFolder, setExportFolder] = useState<string>('')
@@ -124,6 +181,15 @@ function ExportPage() {
       officials: false
     }
   })
+
+  const deferredSearchKeyword = useDeferredValue(searchKeyword)
+  const deferredSessionMessageCounts = useDeferredValue(sessionMessageCounts)
+  const sessionCountRequestIdRef = useRef(0)
+  const sessionTypeFilterRef = useRef<SessionTypeFilter>('private')
+
+  useEffect(() => {
+    sessionTypeFilterRef.current = sessionTypeFilter
+  }, [sessionTypeFilter])
 
   // 加载默认导出配置
   const loadDefaultExportConfig = useCallback(async () => {
@@ -214,14 +280,56 @@ function ExportPage() {
       const sessionsResult = await window.electronAPI.chat.getSessions()
       if (sessionsResult.success && sessionsResult.sessions) {
         setSessions(sessionsResult.sessions)
-        setFilteredSessions(sessionsResult.sessions)
+        setSessionMessageCounts({})
+        setLoadedSessionCountUsernames(new Set())
         // 批量加载消息数量（异步，不阻塞列表显示）
-        const usernames = sessionsResult.sessions.map(s => s.username)
-        window.electronAPI.chat.getSessionMessageCounts(usernames).then(countsResult => {
-          if (countsResult.success && countsResult.counts) {
-            setSessionMessageCounts(countsResult.counts)
+        const allUsernames = sessionsResult.sessions.map(s => s.username)
+        const priorityFilter = sessionTypeFilterRef.current
+        const priorityUsernames = sessionsResult.sessions
+          .filter(s => matchesSessionTypeFilter(s, priorityFilter))
+          .map(s => s.username)
+        const priorityUsernameSet = new Set(priorityUsernames)
+        const remainingUsernames = allUsernames.filter(username => !priorityUsernameSet.has(username))
+        const requestId = ++sessionCountRequestIdRef.current
+        setIsLoadingSessionCounts(true)
+        const mergeCounts = (counts: SessionMessageCountMap, usernames: string[]) => {
+          if (!counts || usernames.length === 0) return
+          startTransition(() => {
+            setSessionMessageCounts(prev => ({ ...prev, ...counts }))
+            setLoadedSessionCountUsernames(prev => {
+              const next = new Set(prev)
+              usernames.forEach(username => next.add(username))
+              return next
+            })
+          })
+        }
+
+        void (async () => {
+          try {
+            if (priorityUsernames.length > 0) {
+              const countsResult = await window.electronAPI.chat.getSessionMessageCounts(priorityUsernames)
+              if (requestId !== sessionCountRequestIdRef.current) return
+              if (countsResult.success && countsResult.counts) {
+                mergeCounts(countsResult.counts, priorityUsernames)
+              }
+            }
+
+            if (remainingUsernames.length > 0) {
+              const countsResult = await window.electronAPI.chat.getSessionMessageCounts(remainingUsernames)
+              if (requestId !== sessionCountRequestIdRef.current) return
+              if (countsResult.success && countsResult.counts) {
+                mergeCounts(countsResult.counts, remainingUsernames)
+              }
+            }
+          } catch (error) {
+            if (requestId !== sessionCountRequestIdRef.current) return
+            console.error('加载会话消息数量失败:', error)
+          } finally {
+            if (requestId === sessionCountRequestIdRef.current) {
+              setIsLoadingSessionCounts(false)
+            }
           }
-        })
+        })()
       }
     } catch (e) {
       console.error('加载会话失败:', e)
@@ -284,37 +392,59 @@ function ExportPage() {
     return () => setTitleBarContent(null)
   }, [setTitleBarContent])
 
-  // 聊天会话搜索与类型过滤
-  useEffect(() => {
+  const sessionTypeCounts = useMemo(() => {
+    let group = 0
+    let privateCount = 0
+    let official = 0
+
+    for (const session of sessions) {
+      if (session.accountType === 'group') group++
+      else if (session.accountType === 'friend') privateCount++
+      else if (session.accountType === 'official') official++
+    }
+
+    return { group, private: privateCount, official }
+  }, [sessions])
+
+  const filteredSessions = useMemo(() => {
     let filtered = sessions
 
-    // 类型过滤（基于后端返回的 accountType）
     if (sessionTypeFilter === 'group') {
       filtered = filtered.filter(s => s.accountType === 'group')
     } else if (sessionTypeFilter === 'private') {
       filtered = filtered.filter(s => s.accountType === 'friend')
-    } else if (sessionTypeFilter === 'official') {
+    } else {
       filtered = filtered.filter(s => s.accountType === 'official')
     }
 
-    // 关键词过滤
-    if (searchKeyword.trim()) {
-      const lower = searchKeyword.toLowerCase()
+    const keyword = deferredSearchKeyword.trim().toLowerCase()
+    if (keyword) {
       filtered = filtered.filter(s =>
-        s.displayName?.toLowerCase().includes(lower) ||
-        s.username.toLowerCase().includes(lower)
+        s.displayName?.toLowerCase().includes(keyword) ||
+        s.username.toLowerCase().includes(keyword)
       )
     }
 
-    // 私聊和群聊按消息数量降序排列（公众号保持原顺序）
-    if (sessionTypeFilter !== 'official') {
-      filtered = [...filtered].sort((a, b) =>
-        (sessionMessageCounts[b.username] || 0) - (sessionMessageCounts[a.username] || 0)
-      )
+    const hasCountsForCurrentFiltered = filtered.length > 0 && filtered.every(s => loadedSessionCountUsernames.has(s.username))
+
+    if (sessionTypeFilter !== 'official' && hasCountsForCurrentFiltered) {
+      filtered = [...filtered].sort((a, b) => {
+        const countDiff = (deferredSessionMessageCounts[b.username] || 0) - (deferredSessionMessageCounts[a.username] || 0)
+        if (countDiff !== 0) return countDiff
+        return (b.lastTimestamp || 0) - (a.lastTimestamp || 0)
+      })
     }
 
-    setFilteredSessions(filtered)
-  }, [searchKeyword, sessions, sessionTypeFilter, sessionMessageCounts])
+    return filtered
+  }, [sessions, sessionTypeFilter, deferredSearchKeyword, deferredSessionMessageCounts, loadedSessionCountUsernames])
+
+  const sessionByUsername = useMemo(() => {
+    const map = new Map<string, ChatSession>()
+    for (const session of sessions) {
+      map.set(session.username, session)
+    }
+    return map
+  }, [sessions])
 
   // 通讯录搜索过滤
   useEffect(() => {
@@ -388,11 +518,6 @@ function ExportPage() {
     } else {
       setSelectedContacts(new Set(filteredContacts.map(c => c.username)))
     }
-  }
-
-  const getAvatarLetter = (name: string) => {
-    if (!name) return '?'
-    return [...name][0] || '?'
   }
 
   const openExportFolder = async () => {
@@ -561,7 +686,7 @@ function ExportPage() {
                   <span>群聊</span>
                 </div>
                 <div className="type-filter-count">
-                  {sessions.filter(s => s.accountType === 'group').length}
+                  {sessionTypeCounts.group}
                 </div>
               </button>
               <button
@@ -573,7 +698,7 @@ function ExportPage() {
                   <span>私聊</span>
                 </div>
                 <div className="type-filter-count">
-                  {sessions.filter(s => s.accountType === 'friend').length}
+                  {sessionTypeCounts.private}
                 </div>
               </button>
               <button
@@ -585,7 +710,7 @@ function ExportPage() {
                   <span>公众号</span>
                 </div>
                 <div className="type-filter-count">
-                  {sessions.filter(s => s.accountType === 'official').length}
+                  {sessionTypeCounts.official}
                 </div>
               </button>
 
@@ -620,6 +745,12 @@ function ExportPage() {
                 )}
               </div>
             </div>
+            {isLoadingSessionCounts && (
+              <div className="session-count-loading-hint">
+                <Loader2 size={12} className="spin" />
+                <span>正在统计消息数量并排序...</span>
+              </div>
+            )}
 
             {isLoading ? (
               <div className="loading-state">
@@ -632,32 +763,19 @@ function ExportPage() {
               </div>
             ) : (
               <div className="export-session-list">
-                {filteredSessions.map(session => (
-                  <div
-                    key={session.username}
-                    className={`export-session-item ${selectedSession === session.username ? 'selected' : ''}`}
-                    onClick={() => selectSession(session.username)}
-                  >
-                    <div className="export-avatar">
-                      {session.avatarUrl ? (
-                        <img src={session.avatarUrl} alt="" />
-                      ) : (
-                        <span className={session.username.includes('@chatroom') ? 'group-placeholder' : ''}>
-                          {session.username.includes('@chatroom') ? '群' : getAvatarLetter(session.displayName || session.username)}
-                        </span>
-                      )}
-                    </div>
-                    <div className="export-session-info">
-                      <div className="export-session-name">{session.displayName || session.username}</div>
-                      <div className="export-session-summary">{session.summary || '暂无消息'}</div>
-                    </div>
-                    {sessionMessageCounts[session.username] !== undefined && (
-                      <div className="export-session-count">
-                        {sessionMessageCounts[session.username].toLocaleString()}
-                      </div>
-                    )}
-                  </div>
-                ))}
+                {/* @ts-ignore - react-window v2 类型定义与当前 rowProps 推断不一致 */}
+                <List
+                  style={{ height: '100%', width: '100%' }}
+                  rowCount={filteredSessions.length}
+                  rowHeight={72}
+                  rowProps={{
+                    sessions: filteredSessions,
+                    selectedSession,
+                    sessionMessageCounts,
+                    onSelect: selectSession
+                  }}
+                  rowComponent={ExportSessionRow}
+                />
               </div>
             )}
           </div>
@@ -674,7 +792,7 @@ function ExportPage() {
                 </div>
                 <div className="settings-content">
                   {(() => {
-                    const session = filteredSessions.find(s => s.username === selectedSession) || sessions.find(s => s.username === selectedSession)
+                    const session = selectedSession ? sessionByUsername.get(selectedSession) : undefined
                     return (
                       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16, padding: '32px 16px' }}>
                         <div className="export-avatar" style={{ width: 64, height: 64, fontSize: 24 }}>
