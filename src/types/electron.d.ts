@@ -248,6 +248,10 @@ export interface ElectronAPI {
         messageCount: number
         firstMessageTime?: number
         latestMessageTime?: number
+        imageCount: number
+        videoCount: number
+        voiceCount: number
+        emojiCount: number
         messageTables: { dbName: string; tableName: string; count: number }[]
       }
       error?: string

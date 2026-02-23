@@ -3770,6 +3770,10 @@ class ChatService extends EventEmitter {
       messageCount: number
       firstMessageTime?: number
       latestMessageTime?: number
+      imageCount: number
+      videoCount: number
+      voiceCount: number
+      emojiCount: number
       messageTables: { dbName: string; tableName: string; count: number }[]
     }
     error?: string
@@ -3831,6 +3835,10 @@ class ChatService extends EventEmitter {
       let totalMessageCount = 0
       let firstMessageTime: number | undefined
       let latestMessageTime: number | undefined
+      let imageCount = 0
+      let videoCount = 0
+      let voiceCount = 0
+      let emojiCount = 0
 
       for (const { db, tableName, dbPath } of dbTablePairs) {
         try {
@@ -3858,6 +3866,27 @@ class ChatService extends EventEmitter {
             }
           }
 
+          // 按消息类型统计
+          const tableColumns = db.prepare(`PRAGMA table_info('${tableName}')`).all() as any[]
+          const colNames = tableColumns.map((c: any) => c.name)
+          const typeCol = colNames.includes('local_type') ? 'local_type' : (colNames.includes('type') ? 'type' : null)
+          if (typeCol) {
+            const typeCountResult = db.prepare(`
+              SELECT
+                SUM(CASE WHEN ${typeCol} = 3 THEN 1 ELSE 0 END) as image_count,
+                SUM(CASE WHEN ${typeCol} = 43 THEN 1 ELSE 0 END) as video_count,
+                SUM(CASE WHEN ${typeCol} = 34 THEN 1 ELSE 0 END) as voice_count,
+                SUM(CASE WHEN ${typeCol} = 47 THEN 1 ELSE 0 END) as emoji_count
+              FROM ${tableName}
+            `).get() as any
+            if (typeCountResult) {
+              imageCount += typeCountResult.image_count || 0
+              videoCount += typeCountResult.video_count || 0
+              voiceCount += typeCountResult.voice_count || 0
+              emojiCount += typeCountResult.emoji_count || 0
+            }
+          }
+
           messageTables.push({
             dbName: path.basename(dbPath),
             tableName,
@@ -3878,6 +3907,10 @@ class ChatService extends EventEmitter {
           messageCount: totalMessageCount,
           firstMessageTime,
           latestMessageTime,
+          imageCount,
+          videoCount,
+          voiceCount,
+          emojiCount,
           messageTables
         }
       }

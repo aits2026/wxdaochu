@@ -84,6 +84,10 @@ function ExportPage() {
     messageCount: number
     firstMessageTime?: number
     latestMessageTime?: number
+    imageCount: number
+    videoCount: number
+    voiceCount: number
+    emojiCount: number
   } | null>(null)
   const [isLoadingDetail, setIsLoadingDetail] = useState(false)
   const [showExportSettings, setShowExportSettings] = useState(false)
@@ -348,6 +352,10 @@ function ExportPage() {
           messageCount: result.detail.messageCount,
           firstMessageTime: result.detail.firstMessageTime,
           latestMessageTime: result.detail.latestMessageTime,
+          imageCount: result.detail.imageCount,
+          videoCount: result.detail.videoCount,
+          voiceCount: result.detail.voiceCount,
+          emojiCount: result.detail.emojiCount,
         })
       }
     } catch { }
@@ -636,6 +644,30 @@ function ExportPage() {
                               <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-color, #e0e0e0)' }}>
                                 <span style={{ opacity: 0.6 }}>最新消息</span>
                                 <span>{new Date(sessionDetail.latestMessageTime * 1000).toLocaleDateString('zh-CN')}</span>
+                              </div>
+                            )}
+                            {sessionDetail.imageCount > 0 && (
+                              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-color, #e0e0e0)' }}>
+                                <span style={{ opacity: 0.6 }}>图片</span>
+                                <span>{sessionDetail.imageCount.toLocaleString()} 张</span>
+                              </div>
+                            )}
+                            {sessionDetail.emojiCount > 0 && (
+                              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-color, #e0e0e0)' }}>
+                                <span style={{ opacity: 0.6 }}>表情包</span>
+                                <span>{sessionDetail.emojiCount.toLocaleString()} 个</span>
+                              </div>
+                            )}
+                            {sessionDetail.videoCount > 0 && (
+                              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-color, #e0e0e0)' }}>
+                                <span style={{ opacity: 0.6 }}>视频</span>
+                                <span>{sessionDetail.videoCount.toLocaleString()} 条</span>
+                              </div>
+                            )}
+                            {sessionDetail.voiceCount > 0 && (
+                              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-color, #e0e0e0)' }}>
+                                <span style={{ opacity: 0.6 }}>语音</span>
+                                <span>{sessionDetail.voiceCount.toLocaleString()} 条</span>
                               </div>
                             )}
                           </div>
