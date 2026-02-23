@@ -536,7 +536,7 @@ class ChatService extends EventEmitter {
         const hasSmallHeadUrl = columnNames.includes('small_head_url')
         const hasLocalType = columnNames.includes('local_type')
 
-        const selectCols = ['username', 'remark', 'nick_name', 'alias']
+        const selectCols = ['username', 'remark', 'nick_name', 'alias', 'quan_pin']
         if (hasBigHeadUrl) selectCols.push('big_head_url')
         if (hasSmallHeadUrl) selectCols.push('small_head_url')
         if (hasLocalType) selectCols.push('local_type')
@@ -552,19 +552,27 @@ class ChatService extends EventEmitter {
         WHERE username = ?
       `)
 
+      // 与 getContacts() 中好友判定完全一致的排除名单
+      const excludeNames = ['medianote', 'floatbottle', 'qmessage', 'qqmail', 'fmessage']
+
       for (const session of sessions) {
         try {
           const contact = stmt.get(session.username) as any
+          const username = session.username
+          const localType = (contact && hasLocalType) ? (contact.local_type || 0) : 0
 
-          // 根据 username 和 local_type 判断账号类型
-          if (session.username.includes('@chatroom')) {
+          // 账号类型判定（与 getContacts() 逻辑完全一致）
+          if (username.includes('@chatroom')) {
             session.accountType = 'group'
-          } else if (session.username.startsWith('gh_')) {
+          } else if (username.startsWith('gh_')) {
             session.accountType = 'official'
-          } else if (contact && hasLocalType && contact.local_type === 1) {
+          } else if (
+            !/(?:gh_|@chatroom)/.test(username) &&
+            localType === 1 &&
+            !excludeNames.includes(username)
+          ) {
             session.accountType = 'friend'
           } else {
-            // local_type 不为 1 的非群聊、非 gh_ 账号视为公众号/服务号
             session.accountType = 'official'
           }
 
