@@ -18,6 +18,7 @@ export interface ChatSession {
   lastMsgType: number
   displayName?: string
   avatarUrl?: string
+  accountType?: 'friend' | 'group' | 'official'
 }
 
 export interface ContactInfo {
@@ -128,7 +129,7 @@ class ChatService extends EventEmitter {
   // 缓存：预编译的 SQL 语句 - 提升查询性能
   private preparedStmtCache: Map<string, Database.Statement> = new Map()
   // 缓存：联系人表结构信息 - 表结构不会变
-  private contactColumnsCache: { hasBigHeadUrl: boolean; hasSmallHeadUrl: boolean; selectCols: string[] } | null = null
+  private contactColumnsCache: { hasBigHeadUrl: boolean; hasSmallHeadUrl: boolean; hasLocalType?: boolean; selectCols: string[] } | null = null
   // 缓存：头像 base64 数据
   private avatarBase64Cache: Map<string, string> = new Map()
   // 标记：head_image.db 是否损坏
@@ -533,15 +534,17 @@ class ChatService extends EventEmitter {
 
         const hasBigHeadUrl = columnNames.includes('big_head_url')
         const hasSmallHeadUrl = columnNames.includes('small_head_url')
+        const hasLocalType = columnNames.includes('local_type')
 
         const selectCols = ['username', 'remark', 'nick_name', 'alias']
         if (hasBigHeadUrl) selectCols.push('big_head_url')
         if (hasSmallHeadUrl) selectCols.push('small_head_url')
+        if (hasLocalType) selectCols.push('local_type')
 
-        this.contactColumnsCache = { hasBigHeadUrl, hasSmallHeadUrl, selectCols }
+        this.contactColumnsCache = { hasBigHeadUrl, hasSmallHeadUrl, hasLocalType, selectCols }
       }
 
-      const { hasBigHeadUrl, hasSmallHeadUrl, selectCols } = this.contactColumnsCache
+      const { hasBigHeadUrl, hasSmallHeadUrl, hasLocalType, selectCols } = this.contactColumnsCache
 
       const stmt = this.contactDb.prepare(`
         SELECT ${selectCols.join(', ')}
@@ -552,6 +555,19 @@ class ChatService extends EventEmitter {
       for (const session of sessions) {
         try {
           const contact = stmt.get(session.username) as any
+
+          // 根据 username 和 local_type 判断账号类型
+          if (session.username.includes('@chatroom')) {
+            session.accountType = 'group'
+          } else if (session.username.startsWith('gh_')) {
+            session.accountType = 'official'
+          } else if (contact && hasLocalType && contact.local_type === 1) {
+            session.accountType = 'friend'
+          } else {
+            // local_type 不为 1 的非群聊、非 gh_ 账号视为公众号/服务号
+            session.accountType = 'official'
+          }
+
           if (contact) {
             session.displayName = contact.remark || contact.nick_name || contact.alias || session.username
 

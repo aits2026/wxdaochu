@@ -9,6 +9,7 @@ export interface ChatSession {
   lastMsgType: number
   displayName?: string
   avatarUrl?: string
+  accountType?: 'friend' | 'group' | 'official'
 }
 
 // 联系人

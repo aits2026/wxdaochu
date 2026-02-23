@@ -13,6 +13,7 @@ interface ChatSession {
   avatarUrl?: string
   summary: string
   lastTimestamp: number
+  accountType?: 'friend' | 'group' | 'official'
 }
 
 interface Contact {
@@ -281,13 +282,13 @@ function ExportPage() {
   useEffect(() => {
     let filtered = sessions
 
-    // 类型过滤
+    // 类型过滤（基于后端返回的 accountType）
     if (sessionTypeFilter === 'group') {
-      filtered = filtered.filter(s => s.username.includes('@chatroom'))
+      filtered = filtered.filter(s => s.accountType === 'group')
     } else if (sessionTypeFilter === 'private') {
-      filtered = filtered.filter(s => !s.username.includes('@chatroom') && !s.username.startsWith('gh_'))
+      filtered = filtered.filter(s => s.accountType === 'friend')
     } else if (sessionTypeFilter === 'official') {
-      filtered = filtered.filter(s => s.username.startsWith('gh_'))
+      filtered = filtered.filter(s => s.accountType === 'official')
     }
 
     // 关键词过滤
@@ -348,7 +349,7 @@ function ExportPage() {
   // 快捷选择：仅选群聊
   const selectOnlyGroups = () => {
     const groupUsernames = filteredSessions
-      .filter(s => s.username.includes('@chatroom'))
+      .filter(s => s.accountType === 'group')
       .map(s => s.username)
     setSelectedSessions(new Set(groupUsernames))
   }
@@ -356,7 +357,7 @@ function ExportPage() {
   // 快捷选择：仅选私聊
   const selectOnlyPrivate = () => {
     const privateUsernames = filteredSessions
-      .filter(s => !s.username.includes('@chatroom') && !s.username.startsWith('gh_'))
+      .filter(s => s.accountType === 'friend')
       .map(s => s.username)
     setSelectedSessions(new Set(privateUsernames))
   }
@@ -364,7 +365,7 @@ function ExportPage() {
   // 快捷选择：仅选公众号
   const selectOnlyOfficial = () => {
     const officialUsernames = filteredSessions
-      .filter(s => s.username.startsWith('gh_'))
+      .filter(s => s.accountType === 'official')
       .map(s => s.username)
     setSelectedSessions(new Set(officialUsernames))
   }
