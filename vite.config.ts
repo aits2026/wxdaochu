@@ -53,6 +53,15 @@ export default defineConfig({
         }
       },
       {
+        entry: 'electron/workers/sessionMessageCountWorker.js',
+        vite: {
+          build: {
+            outDir: 'dist-electron/workers',
+            rollupOptions: { external }
+          }
+        }
+      },
+      {
         entry: 'electron/transcribeWorker.ts',
         vite: {
           build: {

@@ -105,6 +105,7 @@ const emojiDownloading: Map<string, Promise<string | null>> = new Map()
 
 // 缓存过期时间（毫秒）
 const SESSION_TABLE_CACHE_DURATION = 60 * 1000  // 60秒，与原项目一致
+const SESSION_MESSAGE_COUNT_WORKER_THRESHOLD = 30
 
 class ChatService extends EventEmitter {
   private configService: ConfigService
@@ -166,6 +167,138 @@ class ChatService extends EventEmitter {
 
   private clearSessionMessageCountsCache(): void {
     this.sessionMessageCountsCache = null
+  }
+
+  private findSessionMessageCountWorkerPath(): string | null {
+    const candidates: string[] = []
+
+    if (app.isPackaged) {
+      candidates.push(
+        path.join(process.resourcesPath, 'app.asar.unpacked', 'dist-electron', 'workers', 'sessionMessageCountWorker.js'),
+        path.join(process.resourcesPath, 'dist-electron', 'workers', 'sessionMessageCountWorker.js'),
+        path.join(__dirname, '..', 'workers', 'sessionMessageCountWorker.js')
+      )
+    } else {
+      candidates.push(
+        path.join(app.getAppPath(), 'electron', 'workers', 'sessionMessageCountWorker.js'),
+        path.join(__dirname, '..', 'workers', 'sessionMessageCountWorker.js')
+      )
+    }
+
+    return candidates.find(p => fs.existsSync(p)) || null
+  }
+
+  private async countSessionMessageCountsByWorker(
+    dbPaths: string[],
+    usernames: string[]
+  ): Promise<{ success: boolean; counts?: { [username: string]: number }; error?: string }> {
+    try {
+      const workerPath = this.findSessionMessageCountWorkerPath()
+      if (!workerPath) {
+        return { success: false, error: '未找到 sessionMessageCountWorker.js' }
+      }
+
+      const { Worker } = require('worker_threads')
+
+      return await new Promise((resolve) => {
+        let settled = false
+        const worker = new Worker(workerPath, {
+          workerData: { dbPaths, usernames }
+        })
+
+        const finish = (result: { success: boolean; counts?: { [username: string]: number }; error?: string }) => {
+          if (settled) return
+          settled = true
+          resolve(result)
+          try { worker.terminate() } catch { }
+        }
+
+        const timeout = setTimeout(() => {
+          finish({ success: false, error: '消息数量统计 Worker 超时' })
+        }, 120000)
+
+        worker.on('message', (msg: any) => {
+          clearTimeout(timeout)
+          if (msg?.success) {
+            finish({ success: true, counts: msg.counts || {} })
+          } else {
+            finish({ success: false, error: msg?.error || '消息数量统计 Worker 失败' })
+          }
+        })
+
+        worker.on('error', (err: Error) => {
+          clearTimeout(timeout)
+          finish({ success: false, error: String(err) })
+        })
+
+        worker.on('exit', (code: number) => {
+          clearTimeout(timeout)
+          if (!settled && code !== 0) {
+            finish({ success: false, error: `消息数量统计 Worker 异常退出: ${code}` })
+          }
+        })
+      })
+    } catch (e) {
+      return { success: false, error: String(e) }
+    }
+  }
+
+  private countSessionMessageCountsInline(
+    dbPaths: string[],
+    usernames: string[]
+  ): { [username: string]: number } {
+    const crypto = require('crypto')
+    // 预计算 hash → username 映射（兼容完整 md5 和前 16 位 md5）
+    const hashToUsername = new Map<string, string>()
+    for (const username of usernames) {
+      const hash = crypto.createHash('md5').update(username).digest('hex').toLowerCase()
+      hashToUsername.set(hash, username)
+      hashToUsername.set(hash.slice(0, 16), username)
+    }
+
+    const counts: { [username: string]: number } = {}
+
+    for (const dbPath of dbPaths) {
+      const db = this.getMessageDb(dbPath)
+      if (!db) continue
+
+      try {
+        const tables = db.prepare(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Msg_%'"
+        ).all() as any[]
+
+        for (const table of tables) {
+          const tableName = table.name as string
+          const lowerTableName = tableName.toLowerCase()
+          const tableSuffix = lowerTableName.startsWith('msg_') ? lowerTableName.slice(4) : ''
+
+          // 优先直接按表名后缀匹配（常见情况）
+          let matchedUsername =
+            hashToUsername.get(tableSuffix) ||
+            (tableSuffix.length >= 16 ? hashToUsername.get(tableSuffix.slice(0, 16)) : undefined)
+
+          // 回退：兼容少数非标准表名（表名里包含 hash）
+          if (!matchedUsername) {
+            const hashMatch = lowerTableName.match(/[a-f0-9]{32}|[a-f0-9]{16}/i)
+            if (hashMatch?.[0]) {
+              const matchedHash = hashMatch[0].toLowerCase()
+              matchedUsername =
+                hashToUsername.get(matchedHash) ||
+                (matchedHash.length >= 16 ? hashToUsername.get(matchedHash.slice(0, 16)) : undefined)
+            }
+          }
+
+          if (!matchedUsername) continue
+
+          try {
+            const result = db.prepare(`SELECT COUNT(*) as count FROM ${tableName}`).get() as any
+            counts[matchedUsername] = (counts[matchedUsername] || 0) + (result?.count || 0)
+          } catch { }
+        }
+      } catch { }
+    }
+
+    return counts
   }
 
   /**
@@ -3967,16 +4100,6 @@ class ChatService extends EventEmitter {
         return { success: false, error: '数据库未连接' }
       }
 
-      const crypto = require('crypto')
-      // 预计算 hash → username 映射（兼容完整 md5 和前 16 位 md5）
-      const hashToUsername = new Map<string, string>()
-      for (const username of usernames) {
-        const hash = crypto.createHash('md5').update(username).digest('hex').toLowerCase()
-        hashToUsername.set(hash, username)
-        hashToUsername.set(hash.slice(0, 16), username)
-      }
-
-      const counts: { [username: string]: number } = {}
       const { allDbs } = this.findMessageDbs()
       const dbSignature = this.buildMessageDbSignature(allDbs)
       const usernamesKey = [...usernames].sort().join('\u0001')
@@ -3989,44 +4112,19 @@ class ChatService extends EventEmitter {
         return { success: true, counts: { ...this.sessionMessageCountsCache.counts } }
       }
 
-      for (const dbPath of allDbs) {
-        const db = this.getMessageDb(dbPath)
-        if (!db) continue
+      let counts: { [username: string]: number } = {}
 
-        try {
-          const tables = db.prepare(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Msg_%'"
-          ).all() as any[]
-
-          for (const table of tables) {
-            const tableName = table.name as string
-            const lowerTableName = tableName.toLowerCase()
-            const tableSuffix = lowerTableName.startsWith('msg_') ? lowerTableName.slice(4) : ''
-
-            // 优先直接按表名后缀匹配（常见情况）
-            let matchedUsername =
-              hashToUsername.get(tableSuffix) ||
-              (tableSuffix.length >= 16 ? hashToUsername.get(tableSuffix.slice(0, 16)) : undefined)
-
-            // 回退：兼容少数非标准表名（表名里包含 hash）
-            if (!matchedUsername) {
-              const hashMatch = lowerTableName.match(/[a-f0-9]{32}|[a-f0-9]{16}/i)
-              if (hashMatch?.[0]) {
-                const matchedHash = hashMatch[0].toLowerCase()
-                matchedUsername =
-                  hashToUsername.get(matchedHash) ||
-                  (matchedHash.length >= 16 ? hashToUsername.get(matchedHash.slice(0, 16)) : undefined)
-              }
-            }
-
-            if (!matchedUsername) continue
-
-            try {
-              const result = db.prepare(`SELECT COUNT(*) as count FROM ${tableName}`).get() as any
-              counts[matchedUsername] = (counts[matchedUsername] || 0) + (result?.count || 0)
-            } catch { }
-          }
-        } catch { }
+      const shouldUseWorker = usernames.length >= SESSION_MESSAGE_COUNT_WORKER_THRESHOLD
+      if (shouldUseWorker) {
+        const workerResult = await this.countSessionMessageCountsByWorker(allDbs, usernames)
+        if (workerResult.success && workerResult.counts) {
+          counts = workerResult.counts
+        } else {
+          console.warn('[ChatService] 消息数量统计 Worker 失败，回退主线程统计:', workerResult.error)
+          counts = this.countSessionMessageCountsInline(allDbs, usernames)
+        }
+      } else {
+        counts = this.countSessionMessageCountsInline(allDbs, usernames)
       }
 
       this.sessionMessageCountsCache = {
