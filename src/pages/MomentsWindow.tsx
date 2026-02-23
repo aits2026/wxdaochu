@@ -49,6 +49,12 @@ interface SnsPost {
   rawXml?: string
 }
 
+interface SelfProfile {
+  wxid?: string
+  nickName?: string
+  alias?: string
+}
+
 const isVideoUrl = (url: string) => {
   if (!url) return false
   return url.includes('snsvideodownload') || url.includes('video') || url.includes('.mp4')
@@ -530,6 +536,9 @@ function MomentsWindow() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true)
   const [showJumpDialog, setShowJumpDialog] = useState(false)
   const [selfWxid, setSelfWxid] = useState<string>('')
+  const [selfProfile, setSelfProfile] = useState<SelfProfile | null>(null)
+  const [pendingSelfPresetRequest, setPendingSelfPresetRequest] = useState<{ username?: string } | null>(null)
+  const [selfPresetFilterUsername, setSelfPresetFilterUsername] = useState<string | null>(null)
 
   // 其他状态
   const [previewImage, setPreviewImage] = useState<{ src: string, isVideo?: boolean, liveVideoPath?: string } | null>(null)
@@ -556,19 +565,54 @@ function MomentsWindow() {
     selfWxidRef.current = selfWxid
   }, [selfWxid])
 
-  const applySelfMomentsPreset = useCallback((usernameFromPayload?: string) => {
-    const targetUsername = (usernameFromPayload || selfWxidRef.current || '').trim()
-    if (!targetUsername) {
-      console.warn('[MomentsWindow] 无法应用“我的朋友圈”筛选：未找到当前账号')
-      return
-    }
-
+  const applyResolvedSelfMomentsPreset = useCallback((targetUsername: string) => {
     setSearchKeyword('')
     setJumpTargetDate(undefined)
     setContactSearch('')
     setSelectedUsernames([targetUsername])
+    setSelfPresetFilterUsername(targetUsername)
     setIsSidebarOpen(true)
   }, [])
+
+  const requestSelfMomentsPreset = useCallback((usernameFromPayload?: string) => {
+    setPendingSelfPresetRequest({ username: usernameFromPayload })
+  }, [])
+
+  const resolveSelfMomentsUsername = useCallback((usernameFromPayload?: string): string | null => {
+    const normalized = (value?: string) => (value || '').trim().toLowerCase()
+
+    const exactUsernameCandidates = Array.from(new Set(
+      [usernameFromPayload, selfProfile?.wxid, selfWxidRef.current]
+        .map(v => v?.trim())
+        .filter((v): v is string => !!v)
+    ))
+
+    for (const candidate of exactUsernameCandidates) {
+      if (contacts.some(c => c.username === candidate)) return candidate
+      if (posts.some(p => p.username === candidate)) return candidate
+    }
+
+    const nicknameCandidates = Array.from(new Set(
+      [selfProfile?.nickName, selfProfile?.alias]
+        .map(v => normalized(v))
+        .filter(Boolean)
+    ))
+
+    for (const name of nicknameCandidates) {
+      const contactMatches = contacts.filter(c => normalized(c.displayName) === name || normalized(c.username) === name)
+      if (contactMatches.length === 1) return contactMatches[0].username
+
+      const postMatches = Array.from(new Set(posts
+        .filter(p => normalized(p.nickname) === name)
+        .map(p => p.username)
+        .filter(Boolean)))
+      if (postMatches.length === 1) return postMatches[0]
+    }
+
+    // 最后兜底（如果没有映射成功，至少尝试现有值）
+    const fallback = exactUsernameCandidates[0]
+    return fallback || null
+  }, [contacts, posts, selfProfile])
 
   // 处理滚动，当有新筛选项时回滚到顶部
   useEffect(() => {
@@ -617,16 +661,31 @@ function MomentsWindow() {
         if (wxid) setSelfWxid(wxid)
       })
       .catch((e) => console.error('加载当前账号失败:', e))
+
+    window.electronAPI.chat.getMyUserInfo()
+      .then((result) => {
+        if (result.success && result.userInfo) {
+          setSelfProfile({
+            wxid: result.userInfo.wxid,
+            nickName: result.userInfo.nickName,
+            alias: result.userInfo.alias
+          })
+          if (result.userInfo.wxid) {
+            setSelfWxid(prev => prev || result.userInfo!.wxid)
+          }
+        }
+      })
+      .catch((e) => console.error('加载当前用户资料失败:', e))
   }, [])
 
   useEffect(() => {
     const off = window.electronAPI.window.onMomentsPreset((payload) => {
       if (payload.preset === 'self') {
-        applySelfMomentsPreset(payload.username)
+        requestSelfMomentsPreset(payload.username)
       }
     })
     return off
-  }, [applySelfMomentsPreset])
+  }, [requestSelfMomentsPreset])
 
   useEffect(() => {
     let mounted = true
@@ -634,7 +693,7 @@ function MomentsWindow() {
       .then((payload) => {
         if (!mounted || !payload) return
         if (payload.preset === 'self') {
-          applySelfMomentsPreset(payload.username)
+          requestSelfMomentsPreset(payload.username)
         }
       })
       .catch((e) => console.error('读取朋友圈预设失败:', e))
@@ -642,7 +701,24 @@ function MomentsWindow() {
     return () => {
       mounted = false
     }
-  }, [applySelfMomentsPreset])
+  }, [requestSelfMomentsPreset])
+
+  useEffect(() => {
+    if (!pendingSelfPresetRequest) return
+
+    const hasResolutionContext = contacts.length > 0 || posts.length > 0 || !!selfProfile || !!selfWxidRef.current
+    if (!hasResolutionContext) return
+
+    const resolvedUsername = resolveSelfMomentsUsername(pendingSelfPresetRequest.username)
+    if (!resolvedUsername) {
+      console.warn('[MomentsWindow] 无法应用“我的朋友圈”筛选：未解析到对应用户名')
+      setPendingSelfPresetRequest(null)
+      return
+    }
+
+    applyResolvedSelfMomentsPreset(resolvedUsername)
+    setPendingSelfPresetRequest(null)
+  }, [pendingSelfPresetRequest, contacts.length, posts.length, selfProfile, resolveSelfMomentsUsername, applyResolvedSelfMomentsPreset])
 
   // 加载数据
   const loadPosts = useCallback(async (options: { reset?: boolean, direction?: 'older' | 'newer' } = {}) => {
@@ -793,6 +869,7 @@ function MomentsWindow() {
     setSearchKeyword('')
     setSelectedUsernames([])
     setJumpTargetDate(undefined)
+    setSelfPresetFilterUsername(null)
   }
 
   // 导出朋友圈为 HTML
@@ -1240,7 +1317,7 @@ document.querySelectorAll('.vi video').forEach(function(v) {
     c.username.toLowerCase().includes(contactSearch.toLowerCase())
   )
 
-  const isSelfOnlyFilterActive = !!selfWxid && selectedUsernames.length === 1 && selectedUsernames[0] === selfWxid && !searchKeyword && !jumpTargetDate
+  const isSelfOnlyFilterActive = !!selfPresetFilterUsername && selectedUsernames.length === 1 && selectedUsernames[0] === selfPresetFilterUsername && !searchKeyword && !jumpTargetDate
 
   return (
     <div className="moments-window">
