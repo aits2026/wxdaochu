@@ -81,6 +81,10 @@ function ExportPage() {
   const [showFormatPicker, setShowFormatPicker] = useState(false)
   const [selectedSession, setSelectedSession] = useState<string | null>(null)
   const [sessionDetail, setSessionDetail] = useState<{
+    wxid: string
+    remark?: string
+    nickName?: string
+    alias?: string
     messageCount: number
     firstMessageTime?: number
     latestMessageTime?: number
@@ -349,6 +353,10 @@ function ExportPage() {
       const result = await window.electronAPI.chat.getSessionDetail(username)
       if (result.success && result.detail) {
         setSessionDetail({
+          wxid: result.detail.wxid,
+          remark: result.detail.remark,
+          nickName: result.detail.nickName,
+          alias: result.detail.alias,
           messageCount: result.detail.messageCount,
           firstMessageTime: result.detail.firstMessageTime,
           latestMessageTime: result.detail.latestMessageTime,
@@ -630,6 +638,29 @@ function ExportPage() {
                           </div>
                         ) : sessionDetail ? (
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: '100%', padding: '0 16px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-color, #e0e0e0)' }}>
+                              <span style={{ opacity: 0.6 }}>微信ID</span>
+                              <span style={{ fontFamily: 'monospace', fontSize: 13 }}>{sessionDetail.wxid}</span>
+                            </div>
+                            {sessionDetail.remark && (
+                              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-color, #e0e0e0)' }}>
+                                <span style={{ opacity: 0.6 }}>备注</span>
+                                <span>{sessionDetail.remark}</span>
+                              </div>
+                            )}
+                            {sessionDetail.nickName && (
+                              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-color, #e0e0e0)' }}>
+                                <span style={{ opacity: 0.6 }}>昵称</span>
+                                <span>{sessionDetail.nickName}</span>
+                              </div>
+                            )}
+                            {sessionDetail.alias && (
+                              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-color, #e0e0e0)' }}>
+                                <span style={{ opacity: 0.6 }}>微信号</span>
+                                <span>{sessionDetail.alias}</span>
+                              </div>
+                            )}
+                            <div style={{ height: 8 }} />
                             <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-color, #e0e0e0)' }}>
                               <span style={{ opacity: 0.6 }}>消息总数</span>
                               <span style={{ fontWeight: 500 }}>{sessionDetail.messageCount.toLocaleString()} 条</span>
