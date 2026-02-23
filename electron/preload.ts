@@ -67,7 +67,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     maximize: () => ipcRenderer.send('window:maximize'),
     close: () => ipcRenderer.send('window:close'),
     openChatWindow: (username?: string) => ipcRenderer.invoke('window:openChatWindow', username),
-    openMomentsWindow: () => ipcRenderer.invoke('window:openMomentsWindow'),
+    openMomentsWindow: (options?: { preset?: 'self' }) => ipcRenderer.invoke('window:openMomentsWindow', options),
     openGroupAnalyticsWindow: () => ipcRenderer.invoke('window:openGroupAnalyticsWindow'),
     openAnnualReportWindow: (year: number) => ipcRenderer.invoke('window:openAnnualReportWindow', year),
     openAgreementWindow: () => ipcRenderer.invoke('window:openAgreementWindow'),
@@ -89,7 +89,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     onSplashFadeOut: (callback: () => void) => {
       ipcRenderer.on('splash:fadeOut', () => callback())
       return () => ipcRenderer.removeAllListeners('splash:fadeOut')
-    }
+    },
+    onMomentsPreset: (callback: (payload: { preset: 'self'; username?: string; label?: string }) => void) => {
+      const listener = (_: any, payload: { preset: 'self'; username?: string; label?: string }) => callback(payload)
+      ipcRenderer.on('moments:applyPreset', listener)
+      return () => ipcRenderer.removeListener('moments:applyPreset', listener)
+    },
+    consumeMomentsPreset: () => ipcRenderer.invoke('window:consumeMomentsPreset')
   },
 
   // Windows Hello 原生验证 (比 WebAuthn 更快)

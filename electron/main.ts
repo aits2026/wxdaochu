@@ -85,6 +85,7 @@ let logService: LogService | null = null
 let chatWindow: BrowserWindow | null = null
 // 朋友圈窗口实例
 let momentsWindow: BrowserWindow | null = null
+let pendingMomentsPreset: { preset: 'self'; username?: string; label?: string } | null = null
 // 群聊分析窗口实例
 let groupAnalyticsWindow: BrowserWindow | null = null
 // 年度报告窗口实例
@@ -355,6 +356,26 @@ function createGroupAnalyticsWindow() {
 /**
  * 创建独立的朋友圈窗口
  */
+function sendMomentsPresetToWindow(payload: { preset: 'self'; username?: string; label?: string }): boolean {
+  if (!momentsWindow || momentsWindow.isDestroyed()) return false
+  if (momentsWindow.webContents.isLoadingMainFrame()) return false
+  momentsWindow.webContents.send('moments:applyPreset', payload)
+  return true
+}
+
+function flushPendingMomentsPreset(options: { consumeOnSend?: boolean } = {}): void {
+  if (!pendingMomentsPreset) return
+  if (sendMomentsPresetToWindow(pendingMomentsPreset) && options.consumeOnSend) {
+    pendingMomentsPreset = null
+  }
+}
+
+function applyMomentsPreset(payload?: { preset: 'self'; username?: string; label?: string }): void {
+  if (!payload) return
+  pendingMomentsPreset = payload
+  flushPendingMomentsPreset()
+}
+
 function createMomentsWindow() {
   // 如果已存在，聚焦到现有窗口
   if (momentsWindow && !momentsWindow.isDestroyed()) {
@@ -362,6 +383,7 @@ function createMomentsWindow() {
       momentsWindow.restore()
     }
     momentsWindow.focus()
+    flushPendingMomentsPreset({ consumeOnSend: true })
     return momentsWindow
   }
 
@@ -397,6 +419,10 @@ function createMomentsWindow() {
 
   // 获取主题参数
   const themeParams = getThemeQueryParams()
+
+  momentsWindow.webContents.on('did-finish-load', () => {
+    flushPendingMomentsPreset()
+  })
 
   // 加载朋友圈页面
   if (process.env.VITE_DEV_SERVER_URL) {
@@ -2121,9 +2147,23 @@ function registerIpcHandlers() {
   })
 
   // 打开朋友圈窗口
-  ipcMain.handle('window:openMomentsWindow', async () => {
+  ipcMain.handle('window:openMomentsWindow', async (_, options?: { preset?: 'self' }) => {
+    if (options?.preset === 'self') {
+      const myWxid = configService?.get('myWxid')
+      applyMomentsPreset({
+        preset: 'self',
+        username: typeof myWxid === 'string' ? myWxid : undefined,
+        label: '我的朋友圈'
+      })
+    }
     createMomentsWindow()
     return true
+  })
+
+  ipcMain.handle('window:consumeMomentsPreset', async () => {
+    const payload = pendingMomentsPreset
+    pendingMomentsPreset = null
+    return payload
   })
 
   // 打开群聊分析窗口

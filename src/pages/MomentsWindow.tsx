@@ -3,6 +3,7 @@ import { Loader2, RefreshCw, Search, Calendar, User, X, Filter, AlertTriangle, P
 import { ImagePreview } from '../components/ImagePreview'
 import { LivePhotoIcon } from '../components/LivePhotoIcon'
 import { parseWechatEmoji } from '../utils/wechatEmoji'
+import * as configService from '../services/config'
 import TitleBar from '../components/TitleBar'
 import JumpToDateDialog from '../components/JumpToDateDialog'
 import DateRangePicker from '../components/DateRangePicker'
@@ -528,6 +529,7 @@ function MomentsWindow() {
   const [contactSearch, setContactSearch] = useState('')
   const [isSidebarOpen, setIsSidebarOpen] = useState(true)
   const [showJumpDialog, setShowJumpDialog] = useState(false)
+  const [selfWxid, setSelfWxid] = useState<string>('')
 
   // 其他状态
   const [previewImage, setPreviewImage] = useState<{ src: string, isVideo?: boolean, liveVideoPath?: string } | null>(null)
@@ -548,6 +550,25 @@ function MomentsWindow() {
   const loadingRef = useRef(false)
   const sentinelRef = useRef<HTMLDivElement>(null)
   const isInitialLoad = useRef(true)
+  const selfWxidRef = useRef('')
+
+  useEffect(() => {
+    selfWxidRef.current = selfWxid
+  }, [selfWxid])
+
+  const applySelfMomentsPreset = useCallback((usernameFromPayload?: string) => {
+    const targetUsername = (usernameFromPayload || selfWxidRef.current || '').trim()
+    if (!targetUsername) {
+      console.warn('[MomentsWindow] 无法应用“我的朋友圈”筛选：未找到当前账号')
+      return
+    }
+
+    setSearchKeyword('')
+    setJumpTargetDate(undefined)
+    setContactSearch('')
+    setSelectedUsernames([targetUsername])
+    setIsSidebarOpen(true)
+  }, [])
 
   // 处理滚动，当有新筛选项时回滚到顶部
   useEffect(() => {
@@ -589,6 +610,39 @@ function MomentsWindow() {
   useEffect(() => {
     loadContacts()
   }, [loadContacts])
+
+  useEffect(() => {
+    configService.getMyWxid()
+      .then((wxid) => {
+        if (wxid) setSelfWxid(wxid)
+      })
+      .catch((e) => console.error('加载当前账号失败:', e))
+  }, [])
+
+  useEffect(() => {
+    const off = window.electronAPI.window.onMomentsPreset((payload) => {
+      if (payload.preset === 'self') {
+        applySelfMomentsPreset(payload.username)
+      }
+    })
+    return off
+  }, [applySelfMomentsPreset])
+
+  useEffect(() => {
+    let mounted = true
+    window.electronAPI.window.consumeMomentsPreset()
+      .then((payload) => {
+        if (!mounted || !payload) return
+        if (payload.preset === 'self') {
+          applySelfMomentsPreset(payload.username)
+        }
+      })
+      .catch((e) => console.error('读取朋友圈预设失败:', e))
+
+    return () => {
+      mounted = false
+    }
+  }, [applySelfMomentsPreset])
 
   // 加载数据
   const loadPosts = useCallback(async (options: { reset?: boolean, direction?: 'older' | 'newer' } = {}) => {
@@ -1186,6 +1240,8 @@ document.querySelectorAll('.vi video').forEach(function(v) {
     c.username.toLowerCase().includes(contactSearch.toLowerCase())
   )
 
+  const isSelfOnlyFilterActive = !!selfWxid && selectedUsernames.length === 1 && selectedUsernames[0] === selfWxid && !searchKeyword && !jumpTargetDate
+
   return (
     <div className="moments-window">
       <TitleBar
@@ -1317,6 +1373,20 @@ document.querySelectorAll('.vi video').forEach(function(v) {
               <AlertTriangle size={16} />
               <span>由于技术限制，当前无法解密显示部分图片与视频等加密资源文件</span>
             </div>
+            {isSelfOnlyFilterActive && (
+              <div className="moments-filter-preset-banner">
+                <div className="preset-label">
+                  <User size={14} />
+                  <span>已应用筛选：我的朋友圈</span>
+                </div>
+                <button
+                  className="preset-clear-btn"
+                  onClick={() => setSelectedUsernames([])}
+                >
+                  清除
+                </button>
+              </div>
+            )}
 
             <div className="moments-content custom-scrollbar">
               {isLoading ? (

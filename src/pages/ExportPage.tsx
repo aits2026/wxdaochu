@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useDeferredValue, useMemo, useRef, startTransition } from 'react'
-import { Search, Download, FolderOpen, RefreshCw, Check, FileJson, FileText, Table, Loader2, X, FileSpreadsheet, Database, FileCode, CheckCircle, XCircle, ExternalLink, MessageSquare, Users, User, Filter, Image, Video, CircleUserRound, Smile, Mic, Newspaper, ChevronDown, MoreHorizontal, ArrowLeft, Eye } from 'lucide-react'
+import { Search, Download, FolderOpen, RefreshCw, Check, FileJson, FileText, Table, Loader2, X, FileSpreadsheet, Database, FileCode, CheckCircle, XCircle, ExternalLink, MessageSquare, Users, User, Filter, Image, Video, CircleUserRound, Smile, Mic, Newspaper, ChevronDown, MoreHorizontal, ArrowLeft, Eye, Aperture } from 'lucide-react'
 import { List, RowComponentProps } from 'react-window'
 import DateRangePicker from '../components/DateRangePicker'
 import { useTitleBarStore } from '../stores/titleBarStore'
@@ -732,6 +732,21 @@ function ExportPage() {
                       >
                         <RefreshCw size={14} className={isLoading ? 'spin' : ''} />
                         <span>刷新</span>
+                      </button>
+                      <button
+                        className="more-menu-item"
+                        onClick={async () => {
+                          try {
+                            await window.electronAPI.window.openMomentsWindow({ preset: 'self' })
+                          } catch (e) {
+                            console.error('打开我的朋友圈失败:', e)
+                          } finally {
+                            setShowMoreMenu(false)
+                          }
+                        }}
+                      >
+                        <Aperture size={14} />
+                        <span>我的朋友圈</span>
                       </button>
                       <button
                         className="more-menu-item"
