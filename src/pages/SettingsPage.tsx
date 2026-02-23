@@ -1,11 +1,10 @@
 import { useState, useEffect } from 'react'
 import { useSearchParams, useLocation } from 'react-router-dom'
 import { useAppStore } from '../stores/appStore'
-import { useThemeStore, themes } from '../stores/themeStore'
+import { useThemeStore } from '../stores/themeStore'
 import { useActivationStore } from '../stores/activationStore'
 import { dialog } from '../services/ipc'
 import * as configService from '../services/config'
-import AISummarySettings from '../components/ai/AISummarySettings'
 import {
   Eye, EyeOff, Key, FolderSearch, FolderOpen, Search,
   RotateCcw, Trash2, Save, Plug, X, Check, Sun, Moon, Monitor,
@@ -15,36 +14,22 @@ import {
 import { useAuthStore } from '../stores/authStore'
 import './SettingsPage.scss'
 
-type SettingsTab = 'appearance' | 'database' | 'stt' | 'ai' | 'data' | 'security' | 'activation' | 'about'
+type SettingsTab = 'appearance' | 'database' | 'data' | 'security' | 'activation' | 'about'
 
 const tabs: { id: SettingsTab; label: string; icon: React.ElementType }[] = [
   { id: 'appearance', label: '外观', icon: Palette },
   { id: 'database', label: '数据解密', icon: Database },
   { id: 'security', label: '安全设置', icon: Lock },
-  { id: 'stt', label: '语音转文字', icon: Mic },
-  { id: 'ai', label: 'AI 摘要', icon: Sparkles },
   { id: 'data', label: '数据管理', icon: HardDrive },
   // { id: 'activation', label: '激活', icon: Shield },
   { id: 'about', label: '关于', icon: Info }
 ]
 
-const sttLanguageOptions = [
-  { value: 'zh', label: '中文', enLabel: 'Chinese' },
-  { value: 'en', label: '英语', enLabel: 'English' },
-  { value: 'ja', label: '日语', enLabel: 'Japanese' },
-  { value: 'ko', label: '韩语', enLabel: 'Korean' },
-  { value: 'yue', label: '粤语', enLabel: 'Cantonese' }
-]
-
-const sttModelTypeOptions = [
-  { value: 'int8', label: 'int8 量化版', size: '235 MB', desc: '推荐，体积小、速度快' },
-  { value: 'float32', label: 'float32 完整版', size: '920 MB', desc: '更高精度，体积较大' }
-]
 
 function SettingsPage() {
   const [searchParams] = useSearchParams()
   const { setDbConnected, setLoading } = useAppStore()
-  const { currentTheme, themeMode, setTheme, setThemeMode, appIcon, setAppIcon } = useThemeStore()
+  const { themeMode, setThemeMode, appIcon } = useThemeStore()
   const { status: activationStatus, checkStatus: checkActivationStatus } = useActivationStore()
 
   const { isAuthEnabled, enableAuth, disableAuth, setupPassword, authMethod } = useAuthStore()
@@ -85,8 +70,6 @@ function SettingsPage() {
   const [cachePath, setCachePath] = useState('')
   const [imageXorKey, setImageXorKey] = useState('')
   const [imageAesKey, setImageAesKey] = useState('')
-  const [exportPath, setExportPath] = useState('')
-  const [defaultExportPath, setDefaultExportPath] = useState('')
 
   const [isLoading, setIsLoadingState] = useState(false)
   const [isTesting, setIsTesting] = useState(false)
@@ -114,9 +97,7 @@ function SettingsPage() {
     total: number
   } | null>(null)
   const [isLoadingCacheSize, setIsLoadingCacheSize] = useState(false)
-  const [sttLanguages, setSttLanguagesState] = useState<string[]>([])
-  const [sttModelType, setSttModelType] = useState<'int8' | 'float32'>('int8')
-  const [quoteStyle, setQuoteStyle] = useState<'default' | 'wechat'>('default')
+  const quoteStyle = 'wechat' as const
   const [skipIntegrityCheck, setSkipIntegrityCheck] = useState(false)
   const [exportDefaultDateRange, setExportDefaultDateRange] = useState<number>(0)
   const [exportDefaultAvatars, setExportDefaultAvatars] = useState<boolean>(true)
@@ -125,15 +106,6 @@ function SettingsPage() {
   const [autoUpdateCheckInterval, setAutoUpdateCheckInterval] = useState(60) // 检查间隔（秒）
   const [autoUpdateMinInterval, setAutoUpdateMinInterval] = useState(1000)   // 最小更新间隔（毫秒）
   const [autoUpdateDebounceTime, setAutoUpdateDebounceTime] = useState(500)  // 防抖时间（毫秒）
-
-  // AI 相关配置状态
-  const [aiProvider, setAiProviderState] = useState('zhipu')
-  const [aiApiKey, setAiApiKeyState] = useState('')
-  const [aiModel, setAiModelState] = useState('')
-  const [aiDefaultTimeRange, setAiDefaultTimeRangeState] = useState<number>(7)
-  const [aiSummaryDetail, setAiSummaryDetailState] = useState<'simple' | 'normal' | 'detailed'>('normal')
-  const [aiEnableThinking, setAiEnableThinkingState] = useState<boolean>(true)
-  const [aiMessageLimit, setAiMessageLimitState] = useState<number>(3000)
 
   // 日志相关状态
   const [logFiles, setLogFiles] = useState<Array<{ name: string; size: number; mtime: Date }>>([])
@@ -146,7 +118,6 @@ function SettingsPage() {
 
   useEffect(() => {
     loadConfig()
-    loadDefaultExportPath()
     loadAppVersion()
     loadCacheSize()
     loadLogFiles()
@@ -160,9 +131,6 @@ function SettingsPage() {
       const savedCachePath = await configService.getCachePath()
       const savedXorKey = await configService.getImageXorKey()
       const savedAesKey = await configService.getImageAesKey()
-      const savedExportPath = await configService.getExportPath()
-      const savedSttLanguages = await configService.getSttLanguages()
-      const savedSttModelType = await configService.getSttModelType()
       const savedSkipIntegrityCheck = await configService.getSkipIntegrityCheck()
       const savedAutoUpdateDatabase = await configService.getAutoUpdateDatabase()
 
@@ -172,13 +140,6 @@ function SettingsPage() {
       if (savedCachePath) setCachePath(savedCachePath)
       if (savedXorKey) setImageXorKey(savedXorKey)
       if (savedAesKey) setImageAesKey(savedAesKey)
-      if (savedExportPath) setExportPath(savedExportPath)
-      if (savedSttLanguages && savedSttLanguages.length > 0) {
-        setSttLanguagesState(savedSttLanguages)
-      } else {
-        setSttLanguagesState(['zh'])
-      }
-      setSttModelType(savedSttModelType)
       setSkipIntegrityCheck(savedSkipIntegrityCheck)
       setAutoUpdateDatabase(savedAutoUpdateDatabase)
 
@@ -190,42 +151,14 @@ function SettingsPage() {
       setAutoUpdateMinInterval(savedMinInterval)
       setAutoUpdateDebounceTime(savedDebounceTime)
 
-      const savedQuoteStyle = await configService.getQuoteStyle()
-      setQuoteStyle(savedQuoteStyle)
-
       const savedExportDefaultDateRange = await configService.getExportDefaultDateRange()
       setExportDefaultDateRange(savedExportDefaultDateRange)
 
       const savedExportDefaultAvatars = await configService.getExportDefaultAvatars()
       setExportDefaultAvatars(savedExportDefaultAvatars)
 
-      // 加载 AI 配置
-      const savedAiProvider = await configService.getAiProvider()
-      const savedAiApiKey = await configService.getAiApiKey()
-      const savedAiModel = await configService.getAiModel()
-      const savedAiDefaultTimeRange = await configService.getAiDefaultTimeRange()
-      const savedAiSummaryDetail = await configService.getAiSummaryDetail()
-      const savedAiEnableThinking = await configService.getAiEnableThinking()
-      const savedAiMessageLimit = await configService.getAiMessageLimit()
-
-      setAiProviderState(savedAiProvider)
-      setAiApiKeyState(savedAiApiKey)
-      setAiModelState(savedAiModel)
-      setAiDefaultTimeRangeState(savedAiDefaultTimeRange)
-      setAiSummaryDetailState(savedAiSummaryDetail)
-      setAiEnableThinkingState(savedAiEnableThinking)
-      setAiMessageLimitState(savedAiMessageLimit)
     } catch (e) {
       console.error('加载配置失败:', e)
-    }
-  }
-
-  const loadDefaultExportPath = async () => {
-    try {
-      const downloadsPath = await window.electronAPI.app.getDownloadsPath()
-      setDefaultExportPath(downloadsPath)
-    } catch (e) {
-      console.error('获取默认导出路径失败:', e)
     }
   }
 
@@ -595,30 +528,6 @@ function SettingsPage() {
     }
   }
 
-  const handleSelectExportPath = async () => {
-    try {
-      const result = await dialog.openFile({ title: '选择导出目录', properties: ['openDirectory'] })
-      if (!result.canceled && result.filePaths.length > 0) {
-        setExportPath(result.filePaths[0])
-        await configService.setExportPath(result.filePaths[0])
-        showMessage('已设置导出目录', true)
-      }
-    } catch (e) {
-      showMessage('选择目录失败', false)
-    }
-  }
-
-  const handleResetExportPath = async () => {
-    try {
-      const downloadsPath = await window.electronAPI.app.getDownloadsPath()
-      setExportPath(downloadsPath)
-      await configService.setExportPath(downloadsPath)
-      showMessage('已恢复为下载目录', true)
-    } catch (e) {
-      showMessage('恢复默认失败', false)
-    }
-  }
-
   // 扫描 wxid
   const handleScanWxid = async () => {
     if (!dbPath) {
@@ -697,9 +606,6 @@ function SettingsPage() {
       await configService.setImageXorKey(imageXorKey)
       await configService.setImageAesKey(imageAesKey)
 
-      // 保存导出路径
-      if (exportPath) await configService.setExportPath(exportPath)
-
       // 保存完整性检查设置
       await configService.setSkipIntegrityCheck(skipIntegrityCheck)
       // 保存自动更新设置
@@ -715,15 +621,6 @@ function SettingsPage() {
       // 保存导出默认设置
       await configService.setExportDefaultDateRange(exportDefaultDateRange)
       await configService.setExportDefaultAvatars(exportDefaultAvatars)
-
-      // 保存 AI 配置
-      await configService.setAiProvider(aiProvider)
-      await configService.setAiApiKey(aiApiKey)
-      await configService.setAiModel(aiModel)
-      await configService.setAiDefaultTimeRange(aiDefaultTimeRange)
-      await configService.setAiSummaryDetail(aiSummaryDetail)
-      await configService.setAiEnableThinking(aiEnableThinking)
-      await configService.setAiMessageLimit(aiMessageLimit)
 
       // 如果数据库配置完整，尝试设置已连接状态（不进行耗时测试，仅标记）
       if (decryptKey && dbPath && wxid && decryptKey.length === 64) {
@@ -751,106 +648,6 @@ function SettingsPage() {
         <button className={`mode-btn ${themeMode === 'system' ? 'active' : ''}`} onClick={() => setThemeMode('system')}>
           <Monitor size={16} /> 跟随系统
         </button>
-      </div>
-      <div className="theme-grid">
-        {themes.map((theme) => (
-          <div key={theme.id} className={`theme-card ${currentTheme === theme.id ? 'active' : ''}`} onClick={() => setTheme(theme.id)}>
-            <div className="theme-preview" style={{ background: themeMode === 'dark' ? 'linear-gradient(135deg, #1a1a1a 0%, #2a2a2a 100%)' : `linear-gradient(135deg, ${theme.bgColor} 0%, ${theme.bgColor}dd 100%)` }}>
-              <div className="theme-accent" style={{ background: theme.primaryColor }} />
-            </div>
-            <div className="theme-info">
-              <span className="theme-name">{theme.name}</span>
-              <span className="theme-desc">{theme.description}</span>
-            </div>
-            {currentTheme === theme.id && <div className="theme-check"><Check size={14} /></div>}
-          </div>
-        ))}
-      </div>
-
-      <h3 className="section-title" style={{ marginTop: '2rem' }}>应用图标</h3>
-      <div className="quote-style-options">
-        <label className={`radio-label ${appIcon === 'default' ? 'active' : ''}`} style={{ width: 'auto', minWidth: '180px' }}>
-          <input
-            type="radio"
-            name="appIcon"
-            value="default"
-            checked={appIcon === 'default' || !appIcon}
-            onChange={() => setAppIcon('default')}
-          />
-          <div className="radio-content">
-            <span className="radio-title">默认图标</span>
-            <div className="style-preview" style={{ justifyContent: 'center', padding: '10px' }}>
-              <img src="./logo.png" alt="默认" style={{ width: '48px', height: '48px' }} />
-            </div>
-          </div>
-        </label>
-
-        <label className={`radio-label ${appIcon === 'xinnian' ? 'active' : ''}`} style={{ width: 'auto', minWidth: '180px' }}>
-          <input
-            type="radio"
-            name="appIcon"
-            value="xinnian"
-            checked={appIcon === 'xinnian'}
-            onChange={() => setAppIcon('xinnian')}
-          />
-          <div className="radio-content">
-            <span className="radio-title">新年图标</span>
-            <div className="style-preview" style={{ justifyContent: 'center', padding: '10px' }}>
-              <img src="./xinnian.png" alt="新年" style={{ width: '48px', height: '48px' }} />
-            </div>
-          </div>
-        </label>
-      </div>
-
-      <h3 className="section-title" style={{ marginTop: '2rem' }}>引用消息样式</h3>
-      <div className="quote-style-options">
-        <label className={`radio-label ${quoteStyle === 'default' ? 'active' : ''}`}>
-          <input
-            type="radio"
-            name="quoteStyle"
-            value="default"
-            checked={quoteStyle === 'default'}
-            onChange={() => setQuoteStyle('default')}
-          />
-          <div className="radio-content">
-            <span className="radio-title">经典样式</span>
-            <div className="style-preview">
-              <div className="preview-bubble default">
-                <div className="preview-quote">
-                  张三: 那天去爬山的照片...
-                </div>
-                <div className="preview-text">
-                  拍得真不错！
-                </div>
-              </div>
-              <img src="./logo.png" className="preview-avatar" alt="我" />
-            </div>
-          </div>
-        </label>
-
-        <label className={`radio-label ${quoteStyle === 'wechat' ? 'active' : ''}`}>
-          <input
-            type="radio"
-            name="quoteStyle"
-            value="wechat"
-            checked={quoteStyle === 'wechat'}
-            onChange={() => setQuoteStyle('wechat')}
-          />
-          <div className="radio-content">
-            <span className="radio-title">新版样式</span>
-            <div className="style-preview">
-              <div className="preview-group">
-                <div className="preview-bubble wechat">
-                  拍得真不错！
-                </div>
-                <div className="preview-quote-bubble">
-                  张三: 那天去爬山的照片...
-                </div>
-              </div>
-              <img src="./logo.png" className="preview-avatar" alt="我" />
-            </div>
-          </div>
-        </label>
       </div>
     </div>
   )
@@ -1213,765 +1010,6 @@ function SettingsPage() {
     }
   }
 
-  // ========== 语音转文字 (STT) 相关状态 ==========
-  const [sttModelStatus, setSttModelStatus] = useState<{ exists: boolean; sizeBytes?: number } | null>(null)
-  const [isLoadingSttStatus, setIsLoadingSttStatus] = useState(false)
-  const [isDownloadingSttModel, setIsDownloadingSttModel] = useState(false)
-  const [sttDownloadProgress, setSttDownloadProgress] = useState(0)
-
-  // ========== Whisper GPU 加速相关状态 ==========
-  const [whisperGpuInfo, setWhisperGpuInfo] = useState<{ available: boolean; provider: string; info: string } | null>(null)
-  const [whisperModelType, setWhisperModelType] = useState<'tiny' | 'base' | 'small' | 'medium' | 'large-v3' | 'large-v3-turbo' | 'large-v3-turbo-q5' | 'large-v3-turbo-q8'>('small')
-  const [whisperModelStatus, setWhisperModelStatus] = useState<{ exists: boolean; modelPath?: string; sizeBytes?: number } | null>(null)
-  const [isLoadingWhisperStatus, setIsLoadingWhisperStatus] = useState(false)
-  const [isDownloadingWhisperModel, setIsDownloadingWhisperModel] = useState(false)
-  const [whisperDownloadProgress, setWhisperDownloadProgress] = useState(0)
-  const [useWhisperGpu, setUseWhisperGpu] = useState(false)
-  
-  // GPU 组件状态
-  const [gpuComponentsStatus, setGpuComponentsStatus] = useState<{ installed: boolean; missingFiles?: string[]; gpuDir?: string } | null>(null)
-  const [isDownloadingGpuComponents, setIsDownloadingGpuComponents] = useState(false)
-  const [gpuDownloadProgress, setGpuDownloadProgress] = useState({ overallProgress: 0, currentFile: '' })
-  
-  // ========== STT 模式切换 ==========
-  const [sttMode, setSttMode] = useState<'cpu' | 'gpu'>('cpu')
-
-  // 加载 STT 模型状态
-  useEffect(() => {
-    if (activeTab === 'stt') {
-      loadSttModelStatus()
-      loadWhisperStatus()
-      loadSttMode()
-      checkGpuComponents()
-    }
-  }, [activeTab])
-  
-  const loadSttMode = async () => {
-    const savedMode = await window.electronAPI.config.get('sttMode') as 'cpu' | 'gpu' | undefined
-    setSttMode(savedMode || 'cpu')
-  }
-  
-  const handleSttModeChange = async (mode: 'cpu' | 'gpu') => {
-    setSttMode(mode)
-    await window.electronAPI.config.set('sttMode', mode)
-    showMessage(mode === 'cpu' ? '已切换到 CPU 模式 (SenseVoice)' : '已切换到 GPU 模式 (Whisper)', true)
-  }
-
-  // 监听 STT 下载进度
-  useEffect(() => {
-    const removeListener = window.electronAPI.stt.onDownloadProgress((progress) => {
-      setSttDownloadProgress(progress.percent || 0)
-    })
-    return () => removeListener()
-  }, [])
-
-  const loadSttModelStatus = async () => {
-    setIsLoadingSttStatus(true)
-    try {
-      const result = await window.electronAPI.stt.getModelStatus()
-      if (result.success) {
-        setSttModelStatus({
-          exists: result.exists || false,
-          sizeBytes: result.sizeBytes
-        })
-      }
-    } catch (e) {
-      console.error('获取 STT 模型状态失败:', e)
-    } finally {
-      setIsLoadingSttStatus(false)
-    }
-  }
-
-  const handleDownloadSttModel = async () => {
-    if (isDownloadingSttModel) return
-    setIsDownloadingSttModel(true)
-    setSttDownloadProgress(0)
-
-    try {
-      showMessage('正在下载语音识别模型...', true)
-      const result = await window.electronAPI.stt.downloadModel()
-      if (result.success) {
-        showMessage('语音识别模型下载完成！', true)
-        await loadSttModelStatus()
-      } else {
-        showMessage(result.error || '模型下载失败', false)
-      }
-    } catch (e) {
-      showMessage(`模型下载失败: ${e}`, false)
-    } finally {
-      setIsDownloadingSttModel(false)
-    }
-  }
-
-  const handleSttLanguageToggle = async (lang: string) => {
-    if (sttLanguages.includes(lang) && sttLanguages.length === 1) {
-      showMessage('必须至少选择一种语言', false)
-      return
-    }
-
-    const newLangs = sttLanguages.includes(lang)
-      ? sttLanguages.filter(l => l !== lang)
-      : [...sttLanguages, lang]
-    setSttLanguagesState(newLangs)
-    await configService.setSttLanguages(newLangs)
-  }
-
-  const handleSttModelTypeChange = async (type: 'int8' | 'float32') => {
-    if (type === sttModelType) return
-
-    // 如果已下载模型，切换类型需要重新下载
-    if (sttModelStatus?.exists) {
-      const confirmSwitch = confirm(
-        `切换模型类型需要重新下载模型。\n\n` +
-        `当前: ${sttModelTypeOptions.find(o => o.value === sttModelType)?.label}\n` +
-        `切换到: ${sttModelTypeOptions.find(o => o.value === type)?.label} (${sttModelTypeOptions.find(o => o.value === type)?.size})\n\n` +
-        `确定要切换吗？`
-      )
-      if (!confirmSwitch) return
-
-      // 清除当前模型
-      try {
-        await window.electronAPI.stt.clearModel()
-      } catch (e) {
-        console.error('清除模型失败:', e)
-      }
-    }
-
-    setSttModelType(type)
-    await configService.setSttModelType(type)
-    await loadSttModelStatus()
-    showMessage(`模型类型已切换为 ${sttModelTypeOptions.find(o => o.value === type)?.label}`, true)
-  }
-
-  // ========== Whisper GPU 相关函数 ==========
-  const loadWhisperStatus = async () => {
-    setIsLoadingWhisperStatus(true)
-    try {
-      // 加载保存的模型类型
-      const savedModelType = await window.electronAPI.config.get('whisperModelType') as 'tiny' | 'base' | 'small' | 'medium' | 'large-v3' | 'large-v3-turbo' | 'large-v3-turbo-q5' | 'large-v3-turbo-q8' | undefined
-      const modelType = savedModelType || 'small'
-      setWhisperModelType(modelType)
-
-      const gpuInfo = await window.electronAPI.sttWhisper.detectGPU()
-      setWhisperGpuInfo(gpuInfo)
-
-      const modelStatus = await window.electronAPI.sttWhisper.checkModel(modelType)
-      setWhisperModelStatus(modelStatus)
-
-      const savedUseWhisper = await window.electronAPI.config.get('useWhisperGpu') as boolean | undefined
-      setUseWhisperGpu(savedUseWhisper || false)
-    } catch (e) {
-      console.error('加载 Whisper 状态失败:', e)
-    } finally {
-      setIsLoadingWhisperStatus(false)
-    }
-  }
-
-  const handleDownloadWhisperModel = async () => {
-    if (isDownloadingWhisperModel) return
-    setIsDownloadingWhisperModel(true)
-    setWhisperDownloadProgress(0)
-
-    const unsubscribe = window.electronAPI.sttWhisper.onDownloadProgress((progress) => {
-      if (progress.percent) {
-        setWhisperDownloadProgress(progress.percent)
-      }
-    })
-
-    try {
-      const result = await window.electronAPI.sttWhisper.downloadModel(whisperModelType)
-      if (result.success) {
-        showMessage('Whisper 模型下载完成！', true)
-        await loadWhisperStatus()
-      } else {
-        showMessage(result.error || 'Whisper 模型下载失败', false)
-      }
-    } catch (e) {
-      showMessage(`Whisper 模型下载失败: ${e}`, false)
-    } finally {
-      unsubscribe()
-      setIsDownloadingWhisperModel(false)
-    }
-  }
-
-  const handleWhisperModelTypeChange = async (type: 'tiny' | 'base' | 'small' | 'medium' | 'large-v3' | 'large-v3-turbo' | 'large-v3-turbo-q5' | 'large-v3-turbo-q8') => {
-    console.log('[SettingsPage] 切换 Whisper 模型类型:', type)
-    setWhisperModelType(type)
-    await window.electronAPI.config.set('whisperModelType', type)
-    console.log('[SettingsPage] Whisper 模型类型已保存')
-    await loadWhisperStatus()
-  }
-
-  // ========== GPU 组件管理 ==========
-  const checkGpuComponents = async () => {
-    try {
-      const status = await window.electronAPI.sttWhisper.checkGPUComponents()
-      setGpuComponentsStatus(status)
-    } catch (e) {
-      console.error('检查 GPU 组件失败:', e)
-    }
-  }
-
-  const handleDownloadGpuComponents = async () => {
-    if (isDownloadingGpuComponents) return
-    
-    // 检查是否设置了缓存目录
-    if (!cachePath) {
-      showMessage('请先设置缓存目录', false)
-      return
-    }
-
-    if (!confirm('下载 GPU 组件约 645 MB，确定要下载吗？\n下载后将自动安装到缓存目录。')) {
-      return
-    }
-
-    setIsDownloadingGpuComponents(true)
-    setGpuDownloadProgress({ overallProgress: 0, currentFile: '' })
-
-    const unsubscribe = window.electronAPI.sttWhisper.onGPUDownloadProgress((progress) => {
-      setGpuDownloadProgress({
-        overallProgress: progress.overallProgress,
-        currentFile: progress.currentFile
-      })
-    })
-
-    try {
-      const result = await window.electronAPI.sttWhisper.downloadGPUComponents()
-      if (result.success) {
-        showMessage('GPU 组件下载完成！', true)
-        await checkGpuComponents()
-        await loadWhisperStatus()
-      } else {
-        showMessage(result.error || 'GPU 组件下载失败', false)
-      }
-    } catch (e) {
-      showMessage(`GPU 组件下载失败: ${e}`, false)
-    } finally {
-      unsubscribe()
-      setIsDownloadingGpuComponents(false)
-    }
-  }
-
-  const handleToggleWhisperGpu = async (enabled: boolean) => {
-    setUseWhisperGpu(enabled)
-    await window.electronAPI.config.set('useWhisperGpu', enabled)
-    showMessage(enabled ? 'Whisper GPU 加速已启用' : 'Whisper GPU 加速已禁用', true)
-  }
-
-  const renderSttTab = () => (
-    <div className="tab-content">
-      {/* STT 模式切换器 */}
-      <div className="theme-mode-toggle" style={{ marginBottom: '2rem' }}>
-        <button 
-          className={`mode-btn ${sttMode === 'cpu' ? 'active' : ''}`} 
-          onClick={() => handleSttModeChange('cpu')}
-        >
-          <Layers size={16} /> CPU 模式
-        </button>
-        <button 
-          className={`mode-btn ${sttMode === 'gpu' ? 'active' : ''}`} 
-          onClick={() => handleSttModeChange('gpu')}
-        >
-          <Zap size={16} /> GPU 模式
-        </button>
-      </div>
-
-      {/* CPU 模式 - SenseVoice */}
-      {sttMode === 'cpu' && (
-        <>
-          <h3 className="section-title">语音识别模型 (SenseVoice)</h3>
-          <p className="section-desc">
-            使用 SenseVoice 模型进行本地离线语音转文字，支持中文、英语、日语、韩语、粤语。
-            选择合适的模型版本后下载，仅需下载一次。
-          </p>
-
-          <h4 className="subsection-title" style={{ marginTop: '1rem', marginBottom: '0.5rem', fontSize: '0.95rem', fontWeight: 500 }}>模型版本</h4>
-          <div className="model-type-grid">
-            {sttModelTypeOptions.map(opt => (
-              <label
-                key={opt.value}
-                className={`model-card ${sttModelType === opt.value ? 'active' : ''} ${isDownloadingSttModel ? 'disabled' : ''}`}
-              >
-                <input
-                  type="radio"
-                  name="sttModelType"
-                  value={opt.value}
-                  checked={sttModelType === opt.value}
-                  onChange={() => handleSttModelTypeChange(opt.value as 'int8' | 'float32')}
-                  disabled={isDownloadingSttModel}
-                />
-                <div className="model-icon">
-                  {opt.value === 'int8' ? <Zap size={24} /> : <Layers size={24} />}
-                </div>
-                <div className="model-info">
-                  <div className="model-header">
-                    <span className="model-name">{opt.label}</span>
-                    <span className="model-size">{opt.size}</span>
-                  </div>
-                  <span className="model-desc">{opt.desc}</span>
-                </div>
-                {sttModelType === opt.value && <div className="model-check"><Check size={14} /></div>}
-              </label>
-            ))}
-          </div>
-
-          <div className="stt-model-status">
-            {isLoadingSttStatus ? (
-              <p>正在检查模型状态...</p>
-            ) : sttModelStatus ? (
-              <div className="model-info">
-                <div className={`status-indicator ${sttModelStatus.exists ? 'ready' : 'missing'}`}>
-                  {sttModelStatus.exists ? (
-                    <>
-                      <CheckCircle size={20} />
-                      <span>模型已就绪</span>
-                    </>
-                  ) : (
-                    <>
-                      <AlertCircle size={20} />
-                      <span>模型未下载</span>
-                    </>
-                  )}
-                </div>
-                {sttModelStatus.exists && sttModelStatus.sizeBytes && (
-                  <p className="model-size">模型大小: {formatFileSize(sttModelStatus.sizeBytes)}</p>
-                )}
-              </div>
-            ) : (
-              <p>无法获取模型状态</p>
-            )}
-          </div>
-
-          {isDownloadingSttModel && (
-            <div className="download-progress">
-              <div className="progress-bar">
-                <div className="progress-fill" style={{ width: `${sttDownloadProgress}%` }} />
-              </div>
-              <span className="progress-text">{sttDownloadProgress.toFixed(1)}%</span>
-            </div>
-          )}
-
-          <h3 className="section-title" style={{ marginTop: '2rem' }}>支持语言</h3>
-          <p className="section-desc">选择需要识别的语言，支持多选。若选择多种语言，模型将自动检测。</p>
-          <div className="language-grid">
-            {sttLanguageOptions.map(opt => (
-              <label
-                key={opt.value}
-                className={`language-card ${sttLanguages.includes(opt.value) ? 'active' : ''}`}
-              >
-                <input
-                  type="checkbox"
-                  checked={sttLanguages.includes(opt.value)}
-                  onChange={() => handleSttLanguageToggle(opt.value)}
-                  disabled={sttLanguages.includes(opt.value) && sttLanguages.length === 1}
-                />
-                <div className="lang-info">
-                  <span className="lang-name">{opt.label}</span>
-                  <span className="lang-en">{opt.enLabel}</span>
-                </div>
-                {sttLanguages.includes(opt.value) && <div className="lang-check"><Check size={14} /></div>}
-              </label>
-            ))}
-          </div>
-
-          <div className="btn-row" style={{ marginTop: '1rem' }}>
-            {!sttModelStatus?.exists && (
-              <button
-                className="btn btn-primary"
-                onClick={handleDownloadSttModel}
-                disabled={isDownloadingSttModel}
-              >
-                <Download size={16} /> {isDownloadingSttModel ? '下载中...' : '下载模型'}
-              </button>
-            )}
-            {sttModelStatus?.exists && (
-              <button
-                className="btn btn-danger"
-                onClick={async () => {
-                  const currentModelSize = sttModelTypeOptions.find(o => o.value === sttModelType)?.size || '235 MB'
-                  if (confirm(`确定要清除语音识别模型吗？下次使用需要重新下载 (${currentModelSize})。`)) {
-                    try {
-                      const result = await window.electronAPI.stt.clearModel()
-                      if (result.success) {
-                        showMessage('模型清除成功', true)
-                        await loadSttModelStatus()
-                      } else {
-                        showMessage(result.error || '模型清除失败', false)
-                      }
-                    } catch (e) {
-                      showMessage(`模型清除失败: ${e}`, false)
-                    }
-                  }
-                }}
-              >
-                <Trash2 size={16} /> 清除模型
-              </button>
-            )}
-            <button
-              className="btn btn-secondary"
-              onClick={loadSttModelStatus}
-              disabled={isLoadingSttStatus}
-            >
-              <RefreshCw size={16} className={isLoadingSttStatus ? 'spin' : ''} /> 刷新状态
-            </button>
-          </div>
-        </>
-      )}
-
-      {/* GPU 模式 - Whisper */}
-      {sttMode === 'gpu' && (
-        <>
-          <h3 className="section-title">语音识别模型 (Whisper GPU)</h3>
-          <p className="section-desc">
-            使用 Whisper.cpp 进行 GPU 加速的语音识别，性能提升 10-15 倍。支持 NVIDIA GPU (CUDA)。
-          </p>
-
-          {/* GPU 状态卡片 */}
-          <div className="gpu-status-card" style={{ 
-            padding: '1rem', 
-            background: 'var(--bg-secondary)', 
-            borderRadius: '12px',
-            marginBottom: '1.5rem',
-            border: '1px solid var(--border-color)'
-          }}>
-            {isLoadingWhisperStatus ? (
-              <p style={{ margin: 0, color: 'var(--text-secondary)' }}>正在检测 GPU...</p>
-            ) : whisperGpuInfo ? (
-              <div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-                  {whisperGpuInfo.available ? (
-                    <CheckCircle size={20} style={{ color: 'var(--success-color)' }} />
-                  ) : (
-                    <AlertCircle size={20} style={{ color: 'var(--warning-color)' }} />
-                  )}
-                  <strong style={{ fontSize: '15px' }}>{whisperGpuInfo.provider}</strong>
-                </div>
-                <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-secondary)', lineHeight: '1.5' }}>
-                  {whisperGpuInfo.info}
-                </p>
-              </div>
-            ) : (
-              <p style={{ margin: 0, color: 'var(--text-secondary)' }}>无法检测 GPU 状态</p>
-            )}
-          </div>
-
-          {/* GPU 组件状态 */}
-          <div className="gpu-components-card" style={{ 
-            padding: '1.25rem', 
-            background: 'var(--bg-secondary)', 
-            borderRadius: '12px',
-            marginBottom: '1.5rem',
-            border: '1px solid var(--border-color)',
-            transition: 'all 0.3s ease'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <div style={{ 
-                  width: '32px', 
-                  height: '32px', 
-                  borderRadius: '8px', 
-                  background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center'
-                }}>
-                  <Download size={18} color="white" />
-                </div>
-                <strong style={{ fontSize: '15px' }}>GPU 加速组件</strong>
-              </div>
-              {gpuComponentsStatus?.installed ? (
-                <span style={{ 
-                  fontSize: '13px', 
-                  color: 'var(--success-color)', 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  gap: '0.25rem',
-                  padding: '0.25rem 0.75rem',
-                  background: 'var(--success-bg)',
-                  borderRadius: '12px',
-                  fontWeight: 500
-                }}>
-                  <CheckCircle size={16} /> 已安装
-                </span>
-              ) : (
-                <span style={{ 
-                  fontSize: '13px', 
-                  color: 'var(--warning-color)', 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  gap: '0.25rem',
-                  padding: '0.25rem 0.75rem',
-                  background: 'var(--warning-bg)',
-                  borderRadius: '12px',
-                  fontWeight: 500
-                }}>
-                  <AlertCircle size={16} /> 未安装
-                </span>
-              )}
-            </div>
-            
-            {gpuComponentsStatus?.installed ? (
-              <div style={{ 
-                padding: '0.75rem', 
-                background: 'var(--bg-tertiary)', 
-                borderRadius: '8px',
-                fontSize: '13px',
-                color: 'var(--text-secondary)',
-                wordBreak: 'break-all'
-              }}>
-                <div style={{ marginBottom: '0.25rem', color: 'var(--text-primary)', fontWeight: 500 }}>
-                  安装位置
-                </div>
-                {gpuComponentsStatus.gpuDir}
-              </div>
-            ) : (
-              <>
-                <div style={{ 
-                  padding: '0.75rem', 
-                  background: 'var(--bg-tertiary)', 
-                  borderRadius: '8px',
-                  marginBottom: '1rem'
-                }}>
-                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem' }}>
-                    <AlertCircle size={16} style={{ marginTop: '2px', flexShrink: 0, color: 'var(--primary-color)' }} />
-                    <div style={{ fontSize: '13px', color: 'var(--text-secondary)', lineHeight: '1.5' }}>
-                      GPU 加速需要下载约 <strong style={{ color: 'var(--text-primary)' }}>645 MB</strong> 的 CUDA 组件，将安装到缓存目录。
-                      <br />
-                      下载支持断点续传，可随时暂停和恢复。
-                    </div>
-                  </div>
-                </div>
-                {isDownloadingGpuComponents ? (
-                  <div>
-                    <div style={{ 
-                      marginBottom: '0.75rem', 
-                      fontSize: '13px', 
-                      color: 'var(--text-primary)',
-                      fontWeight: 500,
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '0.5rem'
-                    }}>
-                      <div className="spinner" style={{ 
-                        width: '14px', 
-                        height: '14px', 
-                        border: '2px solid var(--border-color)',
-                        borderTopColor: 'var(--primary-color)',
-                        borderRadius: '50%',
-                        animation: 'spin 0.8s linear infinite'
-                      }} />
-                      {gpuDownloadProgress.currentFile}
-                    </div>
-                    <div style={{ 
-                      background: 'var(--bg-tertiary)', 
-                      borderRadius: '8px', 
-                      overflow: 'hidden',
-                      height: '8px',
-                      position: 'relative'
-                    }}>
-                      <div style={{ 
-                        width: `${gpuDownloadProgress.overallProgress}%`,
-                        height: '100%',
-                        background: 'linear-gradient(90deg, #667eea 0%, #764ba2 100%)',
-                        transition: 'width 0.3s ease',
-                        position: 'relative',
-                        overflow: 'hidden'
-                      }}>
-                        <div style={{
-                          position: 'absolute',
-                          top: 0,
-                          left: 0,
-                          right: 0,
-                          bottom: 0,
-                          background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent)',
-                          animation: 'shimmer 1.5s infinite'
-                        }} />
-                      </div>
-                    </div>
-                    <div style={{ 
-                      marginTop: '0.75rem', 
-                      fontSize: '13px', 
-                      textAlign: 'center', 
-                      color: 'var(--text-secondary)',
-                      fontWeight: 500
-                    }}>
-                      {gpuDownloadProgress.overallProgress.toFixed(1)}%
-                    </div>
-                  </div>
-                ) : (
-                  <button 
-                    className="btn-primary"
-                    onClick={handleDownloadGpuComponents}
-                    style={{ 
-                      width: '100%', 
-                      padding: '0.75rem 1rem',
-                      borderRadius: '9999px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: '0.5rem',
-                      fontSize: '14px',
-                      fontWeight: 500
-                    }}
-                  >
-                    <Download size={16} />
-                    下载 GPU 组件 (645 MB)
-                  </button>
-                )}
-              </>
-            )}
-          </div>
-
-          {/* 模型选择 */}
-          <h4 className="subsection-title" style={{ marginTop: '1rem', marginBottom: '0.5rem', fontSize: '0.95rem', fontWeight: 500 }}>模型大小</h4>
-          <div className="model-type-grid">
-            {[
-              { value: 'tiny', label: 'Tiny 模型', size: '75 MB', desc: '最快速度，适合实时场景' },
-              { value: 'base', label: 'Base 模型', size: '145 MB', desc: '推荐使用，速度与精度平衡' },
-              { value: 'small', label: 'Small 模型', size: '488 MB', desc: '更高精度，适合准确识别' },
-              { value: 'large-v3-turbo-q5', label: 'Turbo-Q5 量化', size: '540 MB', desc: '极高精度 + 小体积（推荐）' },
-              { value: 'large-v3-turbo-q8', label: 'Turbo-Q8 量化', size: '835 MB', desc: '极高精度 + 高质量量化' },
-              { value: 'medium', label: 'Medium 模型', size: '1.5 GB', desc: '最佳精度，需要更多时间' },
-              { value: 'large-v3-turbo', label: 'Large-v3-Turbo', size: '1.62 GB', desc: '极高精度 + 快速' },
-              { value: 'large-v3', label: 'Large-v3 模型', size: '3.1 GB', desc: '极高精度，专业级识别' }
-            ].map(opt => (
-              <label
-                key={opt.value}
-                className={`model-card ${whisperModelType === opt.value ? 'active' : ''} ${isDownloadingWhisperModel ? 'disabled' : ''}`}
-              >
-                <input
-                  type="radio"
-                  name="whisperModelType"
-                  value={opt.value}
-                  checked={whisperModelType === opt.value}
-                  onChange={() => handleWhisperModelTypeChange(opt.value as any)}
-                  disabled={isDownloadingWhisperModel}
-                />
-                <div className="model-icon">
-                  <Zap size={24} />
-                </div>
-                <div className="model-info">
-                  <div className="model-header">
-                    <span className="model-name">{opt.label}</span>
-                    <span className="model-size">{opt.size}</span>
-                  </div>
-                  <span className="model-desc">{opt.desc}</span>
-                </div>
-                {whisperModelType === opt.value && <div className="model-check"><Check size={14} /></div>}
-              </label>
-            ))}
-          </div>
-
-          {/* 模型状态 */}
-          <div className="stt-model-status">
-            {isLoadingWhisperStatus ? (
-              <p>正在检查模型状态...</p>
-            ) : whisperModelStatus ? (
-              <div className="model-info">
-                <div className={`status-indicator ${whisperModelStatus.exists ? 'ready' : 'missing'}`}>
-                  {whisperModelStatus.exists ? (
-                    <>
-                      <CheckCircle size={20} />
-                      <span>模型已就绪</span>
-                    </>
-                  ) : (
-                    <>
-                      <AlertCircle size={20} />
-                      <span>模型未下载</span>
-                    </>
-                  )}
-                </div>
-                {whisperModelStatus.exists && whisperModelStatus.sizeBytes && (
-                  <p className="model-size">模型大小: {formatFileSize(whisperModelStatus.sizeBytes)}</p>
-                )}
-              </div>
-            ) : (
-              <p>无法获取模型状态</p>
-            )}
-          </div>
-
-          {/* 下载进度 */}
-          {isDownloadingWhisperModel && (
-            <div className="download-progress">
-              <div className="progress-bar">
-                <div className="progress-fill" style={{ width: `${whisperDownloadProgress}%` }} />
-              </div>
-              <span className="progress-text">{whisperDownloadProgress.toFixed(1)}%</span>
-            </div>
-          )}
-
-          {/* 操作按钮 */}
-          <div className="btn-row" style={{ marginTop: '1rem' }}>
-            {!whisperModelStatus?.exists && (
-              <button
-                className="btn btn-primary"
-                onClick={handleDownloadWhisperModel}
-                disabled={isDownloadingWhisperModel}
-              >
-                <Download size={16} /> {isDownloadingWhisperModel ? '下载中...' : '下载模型'}
-              </button>
-            )}
-            {whisperModelStatus?.exists && (
-              <button
-                className="btn btn-danger"
-                onClick={async () => {
-                  const modelSizes = {
-                    tiny: '75 MB',
-                    base: '145 MB',
-                    small: '488 MB',
-                    medium: '1.5 GB',
-                    'large-v3': '3.1 GB',
-                    'large-v3-turbo': '1.62 GB',
-                    'large-v3-turbo-q5': '540 MB',
-                    'large-v3-turbo-q8': '835 MB'
-                  }
-                  const currentModelSize = modelSizes[whisperModelType]
-                  if (confirm(`确定要清除 Whisper 模型吗？下次使用需要重新下载 (${currentModelSize})。`)) {
-                    try {
-                      const result = await window.electronAPI.sttWhisper.clearModel(whisperModelType)
-                      if (result.success) {
-                        showMessage('模型清除成功', true)
-                        await loadWhisperStatus()
-                      } else {
-                        showMessage(result.error || '模型清除失败', false)
-                      }
-                    } catch (e) {
-                      showMessage(`模型清除失败: ${e}`, false)
-                    }
-                  }
-                }}
-              >
-                <Trash2 size={16} /> 清除模型
-              </button>
-            )}
-            <button
-              className="btn btn-secondary"
-              onClick={loadWhisperStatus}
-              disabled={isLoadingWhisperStatus}
-            >
-              <RefreshCw size={16} className={isLoadingWhisperStatus ? 'spin' : ''} /> 刷新状态
-            </button>
-          </div>
-        </>
-      )}
-
-      <h3 className="section-title" style={{ marginTop: '2rem' }}>使用说明</h3>
-      <div className="stt-instructions">
-        <ol>
-          <li>选择 CPU 或 GPU 模式</li>
-          <li>下载对应的语音识别模型（仅需一次）</li>
-          <li>在聊天记录中点击语音消息</li>
-          <li>点击"转文字"按钮即可将语音转换为文字</li>
-        </ol>
-        <p className="note">
-          <strong>注意：</strong>所有语音识别均在本地完成，不会上传任何数据，保护您的隐私。
-        </p>
-      </div>
-    </div>
-  )
-
-
-
   const handleSecurityMethodSelect = async (method: 'biometric' | 'password') => {
     // 1. 如果点击的是当前已激活的方法 -> 关闭
     if (isAuthEnabled && authMethod === method) {
@@ -2166,16 +1204,6 @@ function SettingsPage() {
       {/* 导出设置 */}
       <section className="settings-section">
         <h3 className="section-title">导出设置</h3>
-
-        <div className="form-group">
-          <label>导出目录</label>
-          <span className="form-hint">聊天记录导出的默认保存位置</span>
-          <input type="text" placeholder={defaultExportPath || '系统下载目录'} value={exportPath || defaultExportPath} onChange={(e) => setExportPath(e.target.value)} />
-          <div className="btn-row">
-            <button className="btn btn-secondary" onClick={handleSelectExportPath}><FolderOpen size={16} /> 浏览选择</button>
-            <button className="btn btn-secondary" onClick={handleResetExportPath}><RotateCcw size={16} /> 恢复默认</button>
-          </div>
-        </div>
 
         <div className="form-group">
           <label>默认日期范围</label>
@@ -2588,26 +1616,6 @@ function SettingsPage() {
         {activeTab === 'appearance' && renderAppearanceTab()}
         {activeTab === 'database' && renderDatabaseTab()}
         {activeTab === 'security' && renderSecurityTab()}
-        {activeTab === 'stt' && renderSttTab()}
-        {activeTab === 'ai' && (
-          <AISummarySettings
-            provider={aiProvider}
-            setProvider={setAiProviderState}
-            apiKey={aiApiKey}
-            setApiKey={setAiApiKeyState}
-            model={aiModel}
-            setModel={setAiModelState}
-            defaultTimeRange={aiDefaultTimeRange}
-            setDefaultTimeRange={setAiDefaultTimeRangeState}
-            summaryDetail={aiSummaryDetail}
-            setSummaryDetail={setAiSummaryDetailState}
-            enableThinking={aiEnableThinking}
-            setEnableThinking={setAiEnableThinkingState}
-            messageLimit={aiMessageLimit}
-            setMessageLimit={setAiMessageLimitState}
-            showMessage={showMessage}
-          />
-        )}
         {activeTab === 'data' && renderDataManagementTab()}
         {activeTab === 'activation' && renderActivationTab()}
         {activeTab === 'about' && renderAboutTab()}
