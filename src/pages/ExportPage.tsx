@@ -646,28 +646,32 @@ function ExportPage() {
                                 <span>{new Date(sessionDetail.latestMessageTime * 1000).toLocaleDateString('zh-CN')}</span>
                               </div>
                             )}
-                            {sessionDetail.imageCount > 0 && (
-                              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-color, #e0e0e0)' }}>
-                                <span style={{ opacity: 0.6 }}>图片</span>
-                                <span>{sessionDetail.imageCount.toLocaleString()} 张</span>
-                              </div>
-                            )}
-                            {sessionDetail.emojiCount > 0 && (
-                              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-color, #e0e0e0)' }}>
-                                <span style={{ opacity: 0.6 }}>表情包</span>
-                                <span>{sessionDetail.emojiCount.toLocaleString()} 个</span>
-                              </div>
-                            )}
-                            {sessionDetail.videoCount > 0 && (
-                              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-color, #e0e0e0)' }}>
-                                <span style={{ opacity: 0.6 }}>视频</span>
-                                <span>{sessionDetail.videoCount.toLocaleString()} 条</span>
-                              </div>
-                            )}
-                            {sessionDetail.voiceCount > 0 && (
-                              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-color, #e0e0e0)' }}>
-                                <span style={{ opacity: 0.6 }}>语音</span>
-                                <span>{sessionDetail.voiceCount.toLocaleString()} 条</span>
+                            {(sessionDetail.imageCount > 0 || sessionDetail.emojiCount > 0 || sessionDetail.videoCount > 0 || sessionDetail.voiceCount > 0) && (
+                              <div style={{ display: 'flex', justifyContent: 'center', gap: 20, padding: '8px 0', flexWrap: 'wrap' }}>
+                                {sessionDetail.imageCount > 0 && (
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--text-secondary)' }}>
+                                    <Image size={14} />
+                                    <span style={{ fontSize: 13 }}>{sessionDetail.imageCount.toLocaleString()}</span>
+                                  </div>
+                                )}
+                                {sessionDetail.emojiCount > 0 && (
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--text-secondary)' }}>
+                                    <Smile size={14} />
+                                    <span style={{ fontSize: 13 }}>{sessionDetail.emojiCount.toLocaleString()}</span>
+                                  </div>
+                                )}
+                                {sessionDetail.videoCount > 0 && (
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--text-secondary)' }}>
+                                    <Video size={14} />
+                                    <span style={{ fontSize: 13 }}>{sessionDetail.videoCount.toLocaleString()}</span>
+                                  </div>
+                                )}
+                                {sessionDetail.voiceCount > 0 && (
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--text-secondary)' }}>
+                                    <Mic size={14} />
+                                    <span style={{ fontSize: 13 }}>{sessionDetail.voiceCount.toLocaleString()}</span>
+                                  </div>
+                                )}
                               </div>
                             )}
                           </div>
