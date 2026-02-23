@@ -1,0 +1,165 @@
+{
+  "name": "vxdaochu",
+  "version": "2.2.5",
+  "description": "密语 - 微信聊天记录查看工具",
+  "author": "ILoveBingLu",
+  "license": "CC-BY-NC-SA-4.0",
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "dev": "vite",
+    "prebuild": "node scripts/update-readme-version.js",
+    "build:full": "node scripts/build-full.js",
+    "build": "tsc && vite build && electron-builder && node scripts/add-size-to-yml.js",
+    "build:pro": "node scripts/build-full.js",
+    "preview": "vite preview",
+    "electron:dev": "vite --mode electron",
+    "electron:build": "npm run build",
+    "postinstall": "electron-rebuild",
+    "tuisong": "node scripts/push-release.js"
+  },
+  "dependencies": {
+    "@types/dompurify": "^3.0.5",
+    "@types/marked": "^5.0.2",
+    "@types/react-virtualized-auto-sizer": "^1.0.4",
+    "@types/react-window": "^1.8.8",
+    "@xmldom/xmldom": "^0.9.6",
+    "better-sqlite3": "^12.5.0",
+    "dom-to-image-more": "^3.7.2",
+    "dompurify": "^3.3.1",
+    "echarts": "^5.5.1",
+    "echarts-for-react": "^3.0.2",
+    "electron-store": "^10.0.0",
+    "electron-updater": "^6.3.9",
+    "ffmpeg-static": "^5.3.0",
+    "fzstd": "^0.1.1",
+    "html2canvas": "^1.4.1",
+    "https-proxy-agent": "^7.0.6",
+    "jieba-wasm": "^2.2.0",
+    "jszip": "^3.10.1",
+    "koffi": "^2.9.0",
+    "lucide-react": "^0.562.0",
+    "marked": "^17.0.1",
+    "onnxruntime-node": "^1.23.2",
+    "openai": "^4.70.0",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
+    "react-router-dom": "^7.1.1",
+    "react-virtualized-auto-sizer": "^2.0.2",
+    "react-window": "^2.2.5",
+    "sherpa-onnx-node": "^1.12.23",
+    "silk-wasm": "^3.7.1",
+    "wechat-emojis": "^1.0.2",
+    "xlsx": "^0.18.5",
+    "zustand": "^5.0.2"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^4.0.2",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "adm-zip": "^0.5.16",
+    "electron": "^39.2.7",
+    "electron-builder": "^25.1.8",
+    "sass": "^1.83.0",
+    "sharp": "^0.34.5",
+    "typescript": "^5.6.3",
+    "vite": "^6.0.5",
+    "vite-plugin-electron": "^0.28.8",
+    "vite-plugin-electron-renderer": "^0.14.6"
+  },
+  "build": {
+    "appId": "com.vxdaochu.app",
+    "productName": "VXdaochu",
+    "compression": "maximum",
+    "npmRebuild": false,
+    "afterPack": "scripts/clean-locales.js",
+    "artifactName": "${productName}-${version}-Setup.${ext}",
+    "directories": {
+      "output": "release"
+    },
+    "publish": {
+      "provider": "generic",
+      "url": "https://miyuapp.aiqji.com"
+    },
+    "win": {
+      "icon": "public/xinnian.ico",
+      "target": "nsis",
+      "requestedExecutionLevel": "asInvoker"
+    },
+    "nsis": {
+      "differentialPackage": false,
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "unicode": true,
+      "installerLanguages": [
+        "zh_CN",
+        "en_US"
+      ],
+      "language": "2052",
+      "displayLanguageSelector": false,
+      "include": "installer.nsh",
+      "installerIcon": "public/xinnian.ico",
+      "uninstallerIcon": "public/xinnian.ico",
+      "installerHeaderIcon": "public/xinnian.ico",
+      "perMachine": false,
+      "allowElevation": true,
+      "installerSidebar": null,
+      "uninstallerSidebar": null
+    },
+    "extraResources": [
+      {
+        "from": "resources/",
+        "to": "resources/",
+        "filter": [
+          "**/*",
+          "!whisper/**"
+        ]
+      },
+      {
+        "from": "electron/assets/",
+        "to": "assets/",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "public/icon.ico",
+        "to": "icon.ico"
+      },
+      {
+        "from": "public/xinnian.ico",
+        "to": "xinnian.ico"
+      }
+    ],
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "!node_modules/**/*.{txt,md,js.map,ts,html}",
+      "!node_modules/**/test/**/*",
+      "!node_modules/**/docs/**/*",
+      "!node_modules/**/examples/**/*",
+      "!node_modules/**/{linux,darwin,mac,android,ios,armhf,armv7l,ia32,wasm}/**/*",
+      "!node_modules/**/*.so",
+      "!node_modules/**/*.dylib",
+      "!node_modules/**/*.a",
+      "!node_modules/sherpa-onnx-node/bin/!(win-x64)/**/*",
+      "!node_modules/ffmpeg-static/bin/!(win32-x64)/**/*",
+      "!node_modules/**/*.obj",
+      "!node_modules/**/*.pdb",
+      "!node_modules/**/*.lib",
+      "!node_modules/**/build/!(Release)/**/*",
+      "!node_modules/**/deps/**/*",
+      "node_modules/koffi/build/**/*"
+    ],
+    "asarUnpack": [
+      "node_modules/ffmpeg-static/**/*",
+      "node_modules/silk-wasm/**/*",
+      "node_modules/sherpa-onnx-node/**/*",
+      "node_modules/koffi/**/*",
+      "dist-electron/workers/**/*",
+      "resources/**/*"
+    ]
+  }
+}

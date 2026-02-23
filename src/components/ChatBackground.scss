@@ -1,0 +1,25 @@
+.chat-background {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 0;
+
+  .bg-icon {
+    position: absolute;
+    color: var(--text-primary);
+    opacity: 0.045;
+    
+    [data-mode="dark"] & {
+      opacity: 0.055;
+    }
+  }
+}
+
+// 确保消息内容在背景之上
+.message-wrapper,
+.load-more-trigger,
+.date-divider {
+  position: relative;
+  z-index: 1;
+}

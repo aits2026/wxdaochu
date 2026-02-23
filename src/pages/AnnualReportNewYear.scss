@@ -1,0 +1,604 @@
+@import url('https://fonts.googleapis.com/css2?family=Ma+Shan+Zheng&family=Noto+Serif+SC:wght@300;400;700;900&family=Playfair+Display:ital,wght@0,400;0,700;1,400&display=swap');
+
+.ny-report {
+  // --- 调色盘：御风·赤兔 ---
+  --vermilion: #C21F30; // 朱砂红 - 核心主色
+  --vermilion-dark: #8A101C; // 胭脂红 - 深邃背景
+  --ink-black: #0F0F12; // 徽墨 - 主要文字/暗部
+  --paper-beige: #F7F5F0; // 宣纸 - 亮部背景
+  --gold-dust: #D4AF37; // 泥金 - 高光修饰
+  --gold-foil: #F2D68C; // 金箔 - 渐变亮部
+
+  // --- 排版系统 ---
+  --font-serif-en: "Playfair Display", serif;
+  --font-serif-cn: "Noto Serif SC", serif;
+  --font-calligraphy: "Ma Shan Zheng", cursive;
+
+  width: 100%;
+  min-height: 100vh;
+  background-color: var(--vermilion);
+  color: var(--paper-beige);
+  position: relative;
+  overflow-x: hidden;
+  font-family: var(--font-serif-cn);
+  -webkit-font-smoothing: antialiased;
+
+  /* 隐藏滚动条但保留功能 */
+  scrollbar-width: none;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+// --- 背景层级 ---
+
+// 1. 纹理层：宣纸/红纸质感
+.ny-texture {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg width='200' height='200' viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='paper'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 0.04 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23paper)' opacity='1'/%3E%3C/svg%3E");
+  opacity: 0.6;
+  mix-blend-mode: overlay;
+}
+
+// 2. 也是背景：巨大的装饰汉字（视差滚动）
+.ny-bg-character {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-family: var(--font-calligraphy);
+  font-size: 80vh;
+  color: rgba(0, 0, 0, 0.1);
+  z-index: 0;
+  pointer-events: none;
+  white-space: nowrap;
+  line-height: 1;
+  opacity: 0;
+  transition: opacity 1s;
+
+  &.active {
+    opacity: 1;
+  }
+
+  &.stroke-mode {
+    color: transparent;
+    -webkit-text-stroke: 2px rgba(255, 255, 255, 0.08);
+  }
+}
+
+// 3. 动态光影：流动金沙
+.ny-flow-gold {
+  position: fixed;
+  inset: 0;
+  background:
+    radial-gradient(circle at 20% 30%, rgba(212, 175, 55, 0.15) 0%, transparent 40%),
+    radial-gradient(circle at 80% 80%, rgba(194, 31, 48, 0.4) 0%, transparent 50%);
+  filter: blur(60px);
+  z-index: 0;
+  animation: flowLight 20s infinite alternate ease-in-out;
+}
+
+@keyframes flowLight {
+  0% {
+    opacity: 0.5;
+    transform: scale(1);
+  }
+
+  100% {
+    opacity: 0.8;
+    transform: scale(1.1);
+  }
+}
+
+// --- 核心布局：杂志级无边界 ---
+
+.ny-section {
+  min-height: 100vh;
+  position: relative;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  padding: 40px;
+  overflow: hidden;
+
+  // 每一屏的颜色主题反转，创造节奏感
+  &.theme-dark {
+    color: var(--paper-beige);
+    // 背景色在 DOM 层通过 ::before 实现或者父级控制
+
+    .big-stat-val {
+      background: linear-gradient(to bottom, #fff, #f0f0f0);
+      background-clip: text;
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+  }
+
+  &.theme-light {
+    position: relative;
+    color: var(--ink-black);
+
+    // 白色宣纸背景补丁
+    &::before {
+      content: '';
+      position: absolute;
+      inset: 20px;
+      background: var(--paper-beige);
+      z-index: -1;
+      transform: skewY(-2deg);
+      border-radius: 4px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
+    }
+
+    .big-stat-val {
+      background: linear-gradient(to bottom, var(--vermilion), var(--vermilion-dark));
+      background-clip: text;
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .ny-sub-label {
+      color: var(--vermilion-dark);
+      border-color: var(--vermilion);
+    }
+  }
+}
+
+// --- 封面：御风 ---
+.ny-cover-wrapper {
+  text-align: center;
+  position: relative;
+  z-index: 20;
+
+  .seal-mark {
+    width: 60px;
+    height: 60px;
+    border: 3px solid var(--paper-beige);
+    color: var(--paper-beige);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-calligraphy);
+    font-size: 32px;
+    margin: 0 auto 40px;
+    border-radius: 4px;
+    opacity: 0.8;
+  }
+
+  .main-title {
+    font-size: clamp(60px, 15vw, 160px); // 超大标题
+    font-family: var(--font-calligraphy);
+    line-height: 1.1;
+    margin-bottom: 20px;
+    text-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+
+    span {
+      display: inline-block;
+      animation: titleIn 1.2s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+      opacity: 0;
+      transform: translateY(50px);
+
+      &:nth-child(2) {
+        animation-delay: 0.2s;
+      }
+
+      &:nth-child(3) {
+        animation-delay: 0.4s;
+      }
+
+      &:nth-child(4) {
+        animation-delay: 0.6s;
+      }
+    }
+  }
+
+  .sub-meta {
+    font-family: var(--font-serif-en);
+    font-style: italic;
+    font-size: 24px;
+    letter-spacing: 2px;
+    color: var(--gold-foil);
+    margin-top: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+
+    &::before,
+    &::after {
+      content: '';
+      height: 1px;
+      width: 60px;
+      background: var(--gold-dust);
+    }
+  }
+}
+
+@keyframes titleIn {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+// --- 排版组件 ---
+
+// 竖排标题容器 (放在左侧或右侧)
+.vertical-title-box {
+  position: absolute;
+  top: 15%;
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  letter-spacing: 0.5em;
+  font-family: var(--font-calligraphy);
+  z-index: 20;
+
+  &.left {
+    left: 8%;
+  }
+
+  &.right {
+    right: 8%;
+  }
+
+  .cn {
+    font-size: 48px;
+    color: var(--gold-foil);
+    margin-left: 10px; // vertical mode margin
+    text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.2);
+  }
+
+  .en {
+    font-family: var(--font-serif-en);
+    font-size: 14px;
+    text-transform: uppercase;
+    letter-spacing: 4px;
+    color: rgba(255, 255, 255, 0.4);
+    border-right: 1px solid rgba(255, 255, 255, 0.2);
+    padding-right: 10px;
+  }
+}
+
+// 内容主轴
+.ny-content-axis {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  position: relative;
+  width: 100%;
+  max-width: 800px;
+  padding: 0 20px;
+  text-align: center;
+}
+
+// 核心数据展示：以更艺术的方式
+.stat-art {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin: 40px 0;
+  position: relative;
+
+  .stat-label {
+    font-size: 16px;
+    letter-spacing: 4px;
+    text-transform: uppercase;
+    margin-bottom: 10px;
+    opacity: 0.8;
+    font-family: var(--font-serif-cn);
+  }
+
+  .big-stat-val {
+    font-family: var(--font-serif-en);
+    font-size: clamp(80px, 18vw, 200px);
+    font-weight: 400; // 衬线体不需要太粗
+    line-height: 0.9;
+    letter-spacing: -5px;
+
+    // 艺术字效果：微弱的描边或阴影提升质感
+    filter: drop-shadow(0 20px 40px rgba(0, 0, 0, 0.2));
+  }
+
+  .stat-unit-cn {
+    font-size: 24px;
+    margin-top: -20px;
+    margin-left: 100px;
+    font-family: var(--font-calligraphy);
+    background: var(--vermilion);
+    color: #fff;
+    padding: 2px 12px;
+    border-radius: 4px;
+    transform: rotate(-5deg);
+    box-shadow: 2px 4px 8px rgba(0, 0, 0, 0.2);
+  }
+}
+
+// 叙述性文字
+.narrative-text {
+  font-size: 20px;
+  line-height: 1.8;
+  max-width: 600px;
+  font-weight: 300;
+  margin-top: 40px;
+
+  strong {
+    font-weight: 700;
+    color: var(--gold-foil);
+    margin: 0 4px;
+    font-size: 1.2em;
+  }
+}
+
+// 具体的组件样式重构
+
+// 1. 头像：不再是圆圈，可能是“印章”或“画框”风格
+.art-avatar {
+  position: relative;
+  width: 120px;
+  height: 120px;
+  margin-bottom: 30px;
+
+  &::after {
+    content: '';
+    position: absolute;
+    inset: -8px;
+    border: 1px solid var(--gold-foil);
+    transform: rotate(45deg);
+    opacity: 0.6;
+    transition: transform 10s linear infinite;
+  }
+
+  img,
+  .placeholder {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%); // 菱形剪裁
+    background: #000;
+  }
+
+  .placeholder {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 40px;
+    color: var(--gold-dust);
+    font-family: var(--font-calligraphy);
+  }
+}
+
+// 2. 双向奔赴可视化：传统的“结”或“流线”
+.resonance-flow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  margin: 60px 0;
+  position: relative;
+
+  &::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 10%;
+    right: 10%;
+    height: 1px;
+    background: rgba(255, 255, 255, 0.2);
+    z-index: 0;
+  }
+
+  .flow-node {
+    z-index: 1;
+    background: var(--vermilion-dark);
+    padding: 10px 20px;
+    border: 1px solid var(--gold-dust);
+
+    .label {
+      font-size: 12px;
+      opacity: 0.6;
+      margin-bottom: 4px;
+    }
+
+    .val {
+      font-family: var(--font-serif-en);
+      font-size: 28px;
+      color: var(--gold-foil);
+    }
+  }
+
+  .flow-center {
+    width: 60px;
+    height: 60px;
+    background: var(--paper-beige);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--vermilion);
+    font-size: 24px;
+    z-index: 2;
+    box-shadow: 0 0 20px var(--vermilion);
+
+    // 旋转动画
+    animation: spinSlow 10s linear infinite;
+  }
+}
+
+@keyframes spinSlow {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+// 3. 荣誉榜单：竹简风格 或 卷轴风格
+.scroll-rank-list {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+
+  .rank-row {
+    display: flex;
+    align-items: flex-end;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.1); // 浅色模式下的线
+    padding-bottom: 12px;
+
+    .rank-idx {
+      font-family: var(--font-serif-en);
+      font-size: 48px;
+      line-height: 0.8;
+      color: var(--vermilion);
+      margin-right: 20px;
+      opacity: 0.8;
+      font-style: italic;
+    }
+
+    .rank-avt {
+      width: 48px;
+      height: 48px;
+      margin-right: 16px;
+      border-radius: 4px;
+      filter: sepia(0.2); // 复古滤镜
+    }
+
+    .rank-info {
+      flex: 1;
+
+      .name {
+        font-size: 18px;
+        font-weight: 700;
+        margin-bottom: 4px;
+      }
+
+      .detail {
+        font-size: 12px;
+        font-family: var(--font-serif-en);
+        color: #666;
+      }
+    }
+
+    .rank-highlight {
+      font-family: var(--font-serif-en);
+      font-size: 24px;
+      color: var(--vermilion-dark);
+    }
+  }
+}
+
+// 4. 常用语：印章矩阵
+.seal-cloud {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 20px;
+  max-width: 600px;
+
+  .seal-item {
+    width: 60px;
+    height: 100px; // 竖长条
+    border: 2px solid var(--vermilion);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 4px;
+    position: relative;
+    background: rgba(255, 255, 255, 0.9);
+    transition: transform 0.3s;
+
+    &:hover {
+      transform: translateY(-5px) scale(1.05);
+      z-index: 10;
+      box-shadow: 0 10px 20px rgba(0, 0, 0, 0.1);
+    }
+
+    .seal-txt {
+      writing-mode: vertical-rl;
+      font-family: var(--font-calligraphy);
+      font-size: 18px;
+      color: var(--ink-black);
+      letter-spacing: 4px;
+    }
+
+    .seal-count {
+      position: absolute;
+      bottom: -10px;
+      background: var(--vermilion);
+      color: #fff;
+      font-size: 10px;
+      padding: 0 4px;
+      border-radius: 2px;
+    }
+  }
+}
+
+// --- 尾声 ---
+.ny-ending-section {
+  .horse-totem {
+    width: 150px;
+    height: 150px;
+    opacity: 0.8;
+    color: var(--gold-foil);
+    margin-bottom: 40px;
+  }
+
+  .final-poem {
+    writing-mode: vertical-rl;
+    font-family: var(--font-calligraphy);
+    font-size: 32px;
+    line-height: 2;
+    height: 300px;
+    color: rgba(255, 255, 255, 0.9);
+
+    p {
+      margin-left: 20px;
+    }
+  }
+
+  .stamp-logo {
+    margin-top: 60px;
+    border: 4px double var(--vermilion-dark); // 红色边框
+    padding: 10px 20px;
+    color: var(--vermilion-dark);
+    background: var(--paper-beige);
+    font-weight: bold;
+    letter-spacing: 4px;
+    transform: rotate(-3deg);
+  }
+}
+
+// 动画辅助
+.fade-in-up {
+  opacity: 0;
+  transform: translateY(30px);
+  transition: opacity 1s, transform 1s cubic-bezier(0.2, 0.8, 0.2, 1);
+
+  &.visible {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.scale-reveal {
+  opacity: 0;
+  transform: scale(0.8);
+  transition: all 1s cubic-bezier(0.2, 0.8, 0.2, 1);
+
+  &.visible {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+// 延迟辅助类
+@for $i from 1 through 10 {
+  .delay-#{$i}00 {
+    transition-delay: #{$i * 100}ms;
+  }
+}

@@ -1,0 +1,143 @@
+// 确保启动屏窗口背景透明（让 Electron 的 transparent: true 生效）
+html,
+body {
+  background: transparent !important;
+  overflow: hidden !important; // 隐藏滚动条
+}
+
+.splash-page {
+  width: calc(100% - 24px); // 减去外边距
+  height: calc(100vh - 24px); // 减去外边距
+  margin: 12px; // 添加外边距，让圆角更明显
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #F0EEE9 0%, #E8E6E1 100%);
+  color: #3d3d3d;
+  overflow: hidden;
+  position: relative;
+  border-radius: 24px; // 大圆角
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.15); // 添加阴影效果
+
+  // 入场动画
+  animation: fadeIn 0.4s ease-out;
+
+  &::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: radial-gradient(circle at 50% 50%, rgba(139, 115, 85, 0.05) 0%, transparent 70%);
+    pointer-events: none;
+  }
+
+  // 退出动画类
+  &.fade-out {
+    animation: fadeOut 0.3s ease-in forwards;
+  }
+
+  .splash-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 32px;
+    z-index: 1;
+  }
+
+  .splash-logo {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    .logo-icon {
+      font-size: 36px;
+      font-weight: 700;
+      letter-spacing: 2px;
+      color: #8B7355;
+      background: linear-gradient(135deg, #8B7355 0%, #A68B5B 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      // 每2秒翻转一次
+      animation: flip 2s ease-in-out infinite;
+    }
+
+    // logo 图片每2秒翻转一次
+    img {
+      width: 100px;
+      height: 100px;
+      object-fit: contain;
+      animation: flip 2s ease-in-out infinite;
+    }
+  }
+
+  .splash-text {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 15px;
+    font-weight: 500;
+    color: #666666;
+
+    .spin {
+      animation: spin 1s linear infinite;
+      color: #8B7355;
+    }
+  }
+}
+
+// 入场淡入动画
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+// 退出淡出动画
+@keyframes fadeOut {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  to {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+}
+
+// 翻转动画（每2秒翻转360度，中间有停顿）
+@keyframes flip {
+
+  0%,
+  25% {
+    transform: rotateY(0deg);
+  }
+
+  50% {
+    transform: rotateY(180deg);
+  }
+
+  75%,
+  100% {
+    transform: rotateY(360deg);
+  }
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
