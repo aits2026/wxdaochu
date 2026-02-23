@@ -64,7 +64,6 @@ function ExportPage() {
   // 聊天导出状态
   const [sessions, setSessions] = useState<ChatSession[]>([])
   const [filteredSessions, setFilteredSessions] = useState<ChatSession[]>([])
-  const [selectedSessions, setSelectedSessions] = useState<Set<string>>(new Set())
   const [isLoading, setIsLoading] = useState(true)
   const [searchKeyword, setSearchKeyword] = useState('')
   const [sessionTypeFilter, setSessionTypeFilter] = useState<SessionTypeFilter>('private')
