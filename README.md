@@ -1,10 +1,8 @@
 <div align="center">
 
-<img src="welcome.png" alt="VXdaochu VXdaochu" width="100%" />
-
 # 🔐 VXdaochu VXdaochu
 
-**一款现代化的微信聊天记录查看与分析工具**
+**一款现代化的微信聊天记录查看与导出工具**
 
 [![License](https://img.shields.io/badge/license-CC--BY--NC--SA--4.0-blue.svg)](LICENSE)
 [![Version](https://img.shields.io/badge/version-2.2.5-green.svg)](package.json)
@@ -34,22 +32,12 @@
   </tr>
   <tr>
     <td width="50%">
-      <h3>📊 数据可视化分析</h3>
-      <p>图表化展示聊天数据：消息数量统计、联系人活跃排行、每日/每月趋势、活跃时段分布、词云分析，以及群聊成员活跃度与互动关系图谱，深度洞察聊天习惯。</p>
-    </td>
-    <td width="50%">
-      <h3>🤖 AI 智能摘要</h3>
-      <p>集成 7 家主流 AI 服务商（智谱、DeepSeek、通义千问、Gemini、豆包、Kimi、硅基流动），一键生成聊天摘要，支持思考模式、自定义详细程度与历史记录管理。</p>
-    </td>
-  </tr>
-  <tr>
-    <td width="50%">
       <h3>🖼️ 数据管理与解密</h3>
       <p>支持对微信本地存储的图片与表情包进行批量解密还原，方便查看和管理媒体资源。</p>
     </td>
     <td width="50%">
-      <h3>📅 朋友圈 & 年度报告</h3>
-      <p>浏览微信朋友圈内容，并支持生成个人年度聊天报告，以可视化方式回顾一年中的聊天轨迹与高光时刻。</p>
+      <h3>📅 朋友圈浏览</h3>
+      <p>支持浏览微信朋友圈内容，方便统一查看与管理历史动态。</p>
     </td>
   </tr>
   <tr>
@@ -74,8 +62,6 @@
 | **桌面应用** | Electron 39 |
 | **构建工具** | Vite + electron-builder |
 | **样式方案** | SCSS + CSS Variables |
-| **图表库** | ECharts |
-| **AI 集成** | OpenAI SDK (支持多家 AI 服务商) |
 | **其他** | jieba-wasm (分词) • lucide-react (图标) • marked (Markdown) |
 
 </div>
@@ -126,12 +112,10 @@ npm run build:core
 VXdaochu VXdaochu/
 ├── 📂 src/                      # React 前端源码
 │   ├── 📂 components/          # 可复用组件
-│   │   ├── ai/                 # AI 相关组件
 │   │   ├── Sidebar.tsx         # 侧边栏
 │   │   └── TitleBar.tsx        # 标题栏
 │   ├── 📂 pages/               # 页面组件
 │   │   ├── ChatPage.tsx        # 聊天页面
-│   │   ├── AnalyticsPage.tsx   # 数据分析页面
 │   │   └── SettingsPage.tsx    # 设置页面
 │   ├── 📂 stores/              # Zustand 状态管理
 │   ├── 📂 services/            # 前端服务层
@@ -142,7 +126,6 @@ VXdaochu VXdaochu/
 │   ├── main.ts                 # 主进程入口
 │   ├── preload.ts              # 预加载脚本
 │   └── 📂 services/            # 后端服务
-│       ├── ai/                 # AI 服务
 │       ├── chatService.ts      # 聊天服务
 │       └── database.ts         # 数据库服务
 ├── 📂 public/                  # 静态资源
@@ -171,31 +154,6 @@ VXdaochu VXdaochu/
 - 微信 ID、备注名、昵称、微信号等身份信息
 - 图片、视频、语音、表情包数量统计
 - 历次导出记录及与当前消息总数的差值（帮助判断是否需要重新导出）
-
-### 🤖 AI 智能摘要
-
-支持多家 AI 服务商，自动生成聊天摘要：
-
-- **智谱 AI** (GLM-4)
-- **DeepSeek**
-- **通义千问** (Qwen)
-- **Google Gemini**
-- **豆包** (Doubao)
-- **Kimi**
-- **硅基流动** (SiliconCloud)
-
-**特性：**
-- ✅ 自动代理检测（支持系统代理）
-- ✅ 思考模式（显示 AI 推理过程）
-- ✅ 自定义摘要详细程度
-- ✅ 历史记录管理
-
-### 📊 数据分析
-
-- **消息统计**: 总消息数、发送 / 接收比例、联系人活跃排行
-- **时间分析**: 每日 / 每月趋势、活跃时段分布
-- **词云分析**: 高频词汇可视化
-- **群聊分析**: 成员活跃度、互动关系图谱
 
 ---
 
