@@ -2,7 +2,7 @@
 
 # 🔐 VXdaochu VXdaochu
 
-**一款现代化的微信聊天记录查看与导出工具**
+**一款功能强大交互简约的微信聊天记录和朋友圈数据查看和导出工具**
 
 [![License](https://img.shields.io/badge/license-CC--BY--NC--SA--4.0-blue.svg)](LICENSE)
 [![Version](https://img.shields.io/badge/version-2.2.5-green.svg)](package.json)
@@ -193,6 +193,7 @@ npm run build:core
 
 特别感谢：
 - **[WeFlow](https://github.com/hicccc77/WeFlow)** - 提供了部分功能参考
+- **[蜜语](https://github.com/ILoveBingLu/CipherTalk)** - 提供了部分功能参考
 - **所有贡献者** - 感谢每一位为本项目做出贡献的开发者
 
 ---
