@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Search, Download, FolderOpen, RefreshCw, Check, FileJson, FileText, Table, Loader2, X, FileSpreadsheet, Database, FileCode, CheckCircle, XCircle, ExternalLink, MessageSquare, Users, User, Filter, Image, Video, CircleUserRound, Smile, Mic, Newspaper } from 'lucide-react'
+import { Search, Download, FolderOpen, RefreshCw, Check, FileJson, FileText, Table, Loader2, X, FileSpreadsheet, Database, FileCode, CheckCircle, XCircle, ExternalLink, MessageSquare, Users, User, Filter, Image, Video, CircleUserRound, Smile, Mic, Newspaper, ChevronDown } from 'lucide-react'
 import DateRangePicker from '../components/DateRangePicker'
 import { useTitleBarStore } from '../stores/titleBarStore'
 import * as configService from '../services/config'
@@ -638,39 +638,89 @@ function ExportPage() {
 
             <div className="settings-content">
               <div className="setting-section">
-                <h3>导出格式</h3>
                 {(() => {
                   const currentFmt = chatFormatOptions.find(f => f.value === options.format) || chatFormatOptions[2]
                   return (
-                    <>
+                    <div style={{ position: 'relative' }}>
                       <div
-                        className="format-card active"
-                        style={{ cursor: 'pointer', display: 'inline-flex', marginBottom: showFormatPicker ? 8 : 0 }}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          cursor: 'pointer',
+                          padding: '8px 0',
+                        }}
                         onClick={() => setShowFormatPicker(!showFormatPicker)}
                       >
-                        <currentFmt.icon size={24} />
-                        <span className="format-label">{currentFmt.label}</span>
-                        <span className="format-desc">{showFormatPicker ? '点击收起' : '点击切换格式'}</span>
+                        <h3 style={{ margin: 0 }}>导出格式</h3>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <currentFmt.icon size={16} />
+                          <span>{currentFmt.label}</span>
+                          <ChevronDown
+                            size={16}
+                            style={{
+                              transition: 'transform 0.2s',
+                              transform: showFormatPicker ? 'rotate(180deg)' : 'rotate(0deg)',
+                            }}
+                          />
+                        </div>
                       </div>
                       {showFormatPicker && (
-                        <div className="format-options">
-                          {chatFormatOptions.map(fmt => (
-                            <div
-                              key={fmt.value}
-                              className={`format-card ${options.format === fmt.value ? 'active' : ''}`}
-                              onClick={() => {
-                                setOptions({ ...options, format: fmt.value as any })
-                                setShowFormatPicker(false)
-                              }}
-                            >
-                              <fmt.icon size={24} />
-                              <span className="format-label">{fmt.label}</span>
-                              <span className="format-desc">{fmt.desc}</span>
-                            </div>
-                          ))}
-                        </div>
+                        <>
+                          <div
+                            style={{ position: 'fixed', inset: 0, zIndex: 99 }}
+                            onClick={() => setShowFormatPicker(false)}
+                          />
+                          <div
+                            style={{
+                              position: 'absolute',
+                              right: 0,
+                              top: '100%',
+                              zIndex: 100,
+                              background: 'var(--bg-primary, #fff)',
+                              border: '1px solid var(--border-color, #e0e0e0)',
+                              borderRadius: 8,
+                              boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
+                              padding: 4,
+                              minWidth: 260,
+                              maxHeight: 360,
+                              overflowY: 'auto',
+                            }}
+                          >
+                            {chatFormatOptions.map(fmt => (
+                              <div
+                                key={fmt.value}
+                                style={{
+                                  display: 'flex',
+                                  flexDirection: 'column',
+                                  gap: 2,
+                                  padding: '10px 12px',
+                                  borderRadius: 6,
+                                  cursor: 'pointer',
+                                  background: options.format === fmt.value ? 'var(--bg-active, #f0f0f0)' : 'transparent',
+                                }}
+                                onMouseEnter={e => {
+                                  if (options.format !== fmt.value) e.currentTarget.style.background = 'var(--bg-hover, #f5f5f5)'
+                                }}
+                                onMouseLeave={e => {
+                                  if (options.format !== fmt.value) e.currentTarget.style.background = 'transparent'
+                                }}
+                                onClick={() => {
+                                  setOptions({ ...options, format: fmt.value as any })
+                                  setShowFormatPicker(false)
+                                }}
+                              >
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                  <fmt.icon size={16} />
+                                  <span style={{ fontWeight: 500 }}>{fmt.label}</span>
+                                </div>
+                                <span style={{ fontSize: 12, opacity: 0.6, paddingLeft: 24 }}>{fmt.desc}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </>
                       )}
-                    </>
+                    </div>
                   )
                 })()}
               </div>
