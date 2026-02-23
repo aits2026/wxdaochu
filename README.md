@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="welcome.png" alt="密语 VXdaochu" width="100%" />
+<img src="welcome.png" alt="VXdaochu VXdaochu" width="100%" />
 
-# 🔐 密语 VXdaochu
+# 🔐 VXdaochu VXdaochu
 
 **一款现代化的微信聊天记录查看与分析工具**
 
@@ -129,7 +129,7 @@ npm run build:core
 ## 📁 项目结构
 
 ```
-密语 VXdaochu/
+VXdaochu VXdaochu/
 ├── 📂 src/                      # React 前端源码
 │   ├── 📂 components/          # 可复用组件
 │   │   ├── ai/                 # AI 相关组件
@@ -312,7 +312,7 @@ export const useChatStore = create<ChatStore>((set) => ({
 
 | 渠道 | 链接 |
 |:---:|:---|
-| 🌐 **官方网站** | [密语 VXdaochu](https://miyuapp.aiqji.com) |
+| 🌐 **官方网站** | [VXdaochu VXdaochu](https://miyuapp.aiqji.com) |
 | 🐛 **问题反馈** | [GitHub Issues](https://github.com/ILoveBingLu/VXdaochu/issues) |
 | 💬 **讨论交流** | [GitHub Discussions](https://github.com/ILoveBingLu/VXdaochu/discussions) |
 | 📱 **Telegram 群组** | [加入群聊](https://t.me/+toZ7bY15IZo3NjVl) |

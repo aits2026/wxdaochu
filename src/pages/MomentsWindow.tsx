@@ -1069,7 +1069,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hira
     <span class="info">共 ${allPosts.length} 条动态 · 导出于 ${new Date().toLocaleString('zh-CN')}${dateRangeStr ? ` · ${dateRangeStr.replace(/<[^>]+>/g, '')}` : ''}</span>
   </div>
   ${postsHtml}
-  <div class="ft">由 密语 VXdaochu 导出</div>
+  <div class="ft">由 VXdaochu VXdaochu 导出</div>
 </div>
 
 <div class="lb" id="lb" onclick="closeLb(event)">

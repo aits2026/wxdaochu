@@ -1104,7 +1104,7 @@ function AnnualReportWindow() {
               <br />愿新的一年，所有期待，皆有回声
             </p>
             <div className="ending-year">{year}</div>
-            <div className="ending-brand">密语-VXdaochu</div>
+            <div className="ending-brand">VXdaochu-VXdaochu</div>
           </section>
         </div>
       )}

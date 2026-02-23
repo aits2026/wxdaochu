@@ -352,7 +352,7 @@ function App() {
               <h2>用户协议与隐私政策 <span style={{ fontSize: '14px', fontWeight: 'normal', opacity: 0.6 }}>v{configService.CURRENT_AGREEMENT_VERSION}.0</span></h2>
             </div>
             <div className="agreement-window-body">
-              <p className="agreement-intro">欢迎使用密语！在使用本软件前，请仔细阅读并同意以下条款：</p>
+              <p className="agreement-intro">欢迎使用VXdaochu！在使用本软件前，请仔细阅读并同意以下条款：</p>
 
               <div className="agreement-scroll">
                 <h3>一、用户协议</h3>

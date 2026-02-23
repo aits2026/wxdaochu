@@ -44,7 +44,7 @@ function WhatsNewModal({ onClose, version }: WhatsNewModalProps) {
             <div className="whats-new-modal">
                 <div className="modal-header">
                     <span className="version-tag">新版本 {version}</span>
-                    <h2>欢迎体验全新的密语</h2>
+                    <h2>欢迎体验全新的VXdaochu</h2>
                     <p>我们为您带来了一些令人兴奋的改进</p>
                 </div>
 

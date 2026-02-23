@@ -1,7 +1,7 @@
 {
   "name": "vxdaochu",
   "version": "2.2.5",
-  "description": "密语 - 微信聊天记录查看工具",
+  "description": "VXdaochu - 微信聊天记录查看工具",
   "author": "ILoveBingLu",
   "license": "CC-BY-NC-SA-4.0",
   "main": "dist-electron/main.js",

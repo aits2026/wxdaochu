@@ -26,7 +26,7 @@ function TitleBar({ rightContent, title }: TitleBarProps) {
   return (
     <div className="title-bar">
       <div className="title-bar-left">
-        <img src={appIcon === 'xinnian' ? "./xinnian.png" : "./logo.png"} alt="密语" className="title-logo" />
+        <img src={appIcon === 'xinnian' ? "./xinnian.png" : "./logo.png"} alt="VXdaochu" className="title-logo" />
         <span className="titles">{title || 'VXdaochu'}</span>
         {isUpdating && (
           <div className="update-status">

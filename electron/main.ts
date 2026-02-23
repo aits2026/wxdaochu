@@ -696,7 +696,7 @@ function createPurchaseWindow() {
       nodeIntegration: false,
       webSecurity: false  // 允许加载本地文件
     },
-    title: '获取激活码 - 密语',
+    title: '获取激活码 - VXdaochu',
     show: false,
     backgroundColor: '#FFFFFF',
     autoHideMenuBar: true

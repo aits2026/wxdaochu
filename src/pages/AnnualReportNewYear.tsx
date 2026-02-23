@@ -311,7 +311,7 @@ const AnnualReportNewYear = forwardRef<HTMLDivElement, NewYearReportProps>(({ da
           </div>
 
           <div className="stamp-logo scale-reveal delay-500">
-            VXdaochu · 密语
+            VXdaochu · VXdaochu
           </div>
         </section>
 

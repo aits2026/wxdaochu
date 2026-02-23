@@ -47,9 +47,9 @@ ollama pull llama3.3:latest
 ollama pull gemma2:latest
 ```
 
-## 在密语中配置 Ollama
+## 在VXdaochu中配置 Ollama
 
-1. 打开密语设置页面
+1. 打开VXdaochu设置页面
 2. 切换到「AI 摘要」标签
 3. 选择「Ollama (本地)」提供商
 4. 配置项说明：
@@ -88,7 +88,7 @@ ollama pull gemma2:latest
 
 ### Q: 修改了端口怎么办？
 
-**A:** 如果你修改了 Ollama 的默认端口（11434），在密语的「服务地址」中修改为对应的地址即可，例如：
+**A:** 如果你修改了 Ollama 的默认端口（11434），在VXdaochu的「服务地址」中修改为对应的地址即可，例如：
 - `http://localhost:8080/v1`
 - `http://192.168.1.100:11434/v1`（远程服务器）
 

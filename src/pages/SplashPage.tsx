@@ -37,7 +37,7 @@ function SplashPage() {
           {/* 尝试加载logo图片，如果不存在则显示文字 */}
           <img
             src={appIcon === 'xinnian' ? "./xinnian.png" : "./logo.png"}
-            alt="密语"
+            alt="VXdaochu"
             onError={(e) => {
               // 如果图片加载失败，隐藏img，显示文字
               e.currentTarget.style.display = 'none'
@@ -45,7 +45,7 @@ function SplashPage() {
               if (textEl) textEl.style.display = 'block'
             }}
           />
-          <div className="logo-icon" style={{ display: 'none' }}>密语</div>
+          <div className="logo-icon" style={{ display: 'none' }}>VXdaochu</div>
         </div>
         <div className="splash-text">
           <Loader2 size={20} className="spin" />

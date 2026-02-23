@@ -1,7 +1,7 @@
 # 项目核心上下文 (Context)
 
 ## 项目概述
-**项目名称**: 密语 (VXdaochu)
+**项目名称**: VXdaochu (VXdaochu)
 **核心功能**: 微信聊天记录查看、分析与导出工具。支持从 Android 设备（模拟器）中提取并解密微信数据库，提供现代化的查看界面。
 **技术栈**:
 - **前端**: React 19, TypeScript, Zustand, SCSS

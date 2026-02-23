@@ -1,6 +1,6 @@
 # 贡献指南
 
-感谢你对密语 VXdaochu 项目的关注！我们欢迎社区贡献，让这个项目变得更好。
+感谢你对VXdaochu VXdaochu 项目的关注！我们欢迎社区贡献，让这个项目变得更好。
 
 ## 🤝 如何贡献
 
@@ -245,4 +245,4 @@ export default React.memo(ChatMessage)
 
 ---
 
-再次感谢你的贡献！让我们一起打造更好的密语 VXdaochu！
+再次感谢你的贡献！让我们一起打造更好的VXdaochu VXdaochu！

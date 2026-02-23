@@ -884,7 +884,7 @@ function SettingsPage() {
             </label>
           </div>
           <div className="toggle-description">
-            <p>当检测到微信数据库文件变化时（如收到新消息），自动将新数据同步到密语。</p>
+            <p>当检测到微信数据库文件变化时（如收到新消息），自动将新数据同步到VXdaochu。</p>
           </div>
         </div>
       </div>
@@ -1121,7 +1121,7 @@ function SettingsPage() {
 
       {/* 图片解密部分 */}
       <h3 className="section-title" style={{ marginTop: '2rem' }}>图片解密</h3>
-      <p className="section-desc">您只负责获取密钥，其他的交给密语-VXdaochu</p>
+      <p className="section-desc">您只负责获取密钥，其他的交给VXdaochu-VXdaochu</p>
 
       <div className="form-group">
         <label>XOR 密钥</label>
@@ -2467,9 +2467,9 @@ function SettingsPage() {
     <div className="tab-content about-tab">
       <div className="about-card">
         <div className="about-logo">
-          <img src={appIcon === 'xinnian' ? "./xinnian.png" : "./logo.png"} alt="密语" />
+          <img src={appIcon === 'xinnian' ? "./xinnian.png" : "./logo.png"} alt="VXdaochu" />
         </div>
-        <h2 className="about-name">密语</h2>
+        <h2 className="about-name">VXdaochu</h2>
         <p className="about-slogan">VXdaochu</p>
         <p className="about-version">v{appVersion || '...'}</p>
 
@@ -2507,7 +2507,7 @@ function SettingsPage() {
             onClick={() => window.electronAPI.shell.openExternal('https://github.com/ILoveBingLu/miyu')}
           >
             <Github size={16} />
-            <span>密语 VXdaochu</span>
+            <span>VXdaochu VXdaochu</span>
           </button>
           <button
             className="btn btn-secondary"
@@ -2530,7 +2530,7 @@ function SettingsPage() {
           <span>·</span>
           <a href="#" onClick={(e) => { e.preventDefault(); window.electronAPI.window.openAgreementWindow() }}>用户协议</a>
         </div>
-        <p className="copyright">© {new Date().getFullYear()} 密语-VXdaochu. All rights reserved.</p>
+        <p className="copyright">© {new Date().getFullYear()} VXdaochu-VXdaochu. All rights reserved.</p>
       </div>
     </div>
   )
