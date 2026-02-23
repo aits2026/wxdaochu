@@ -11,7 +11,7 @@
 [![React](https://img.shields.io/badge/React-19-61DAFB.svg?logo=react)]()
 [![Telegram](https://img.shields.io/badge/Telegram-Join%20Group-26A5E4.svg?logo=telegram)](https://t.me/nobody2026go)
 
-[功能特性](#-功能特性) • [快速开始](#-快速开始) • [技术栈](#️-技术栈) • [贡献指南](#-贡献指南) • [许可证](#-许可证)
+[功能特性](#-功能特性) • [快速开始](#-快速开始) • [技术栈](#️-技术栈) • [许可证](#-许可证)
 
 </div>
 
@@ -106,34 +106,6 @@ npm run build:core
 
 ---
 
-## 📁 项目结构
-
-```
-VXdaochu VXdaochu/
-├── 📂 src/                      # React 前端源码
-│   ├── 📂 components/          # 可复用组件
-│   │   ├── Sidebar.tsx         # 侧边栏
-│   │   └── TitleBar.tsx        # 标题栏
-│   ├── 📂 pages/               # 页面组件
-│   │   ├── ChatPage.tsx        # 聊天页面
-│   │   └── SettingsPage.tsx    # 设置页面
-│   ├── 📂 stores/              # Zustand 状态管理
-│   ├── 📂 services/            # 前端服务层
-│   ├── 📂 types/               # TypeScript 类型定义
-│   ├── 📂 utils/               # 工具函数
-│   └── 📂 styles/              # 全局样式
-├── 📂 electron/                # Electron 主进程
-│   ├── main.ts                 # 主进程入口
-│   ├── preload.ts              # 预加载脚本
-│   └── 📂 services/            # 后端服务
-│       ├── chatService.ts      # 聊天服务
-│       └── database.ts         # 数据库服务
-├── 📂 public/                  # 静态资源
-└── 📂 Docs/                    # 项目文档
-```
-
----
-
 ## 🎯 核心功能说明
 
 ### 📤 数据导出
@@ -154,79 +126,6 @@ VXdaochu VXdaochu/
 - 微信 ID、备注名、昵称、微信号等身份信息
 - 图片、视频、语音、表情包数量统计
 - 历次导出记录及与当前消息总数的差值（帮助判断是否需要重新导出）
-
----
-
-## 💻 开发指南
-
-### 代码规范
-
-- **组件**: 使用函数组件 + Hooks
-- **命名**: PascalCase (组件) / camelCase (变量、函数)
-- **样式**: BEM 命名规范 + SCSS
-- **类型**: 严格的 TypeScript 类型检查
-
-### 主题系统
-
-项目使用 CSS 变量实现主题切换：
-
-```scss
-// 定义主题变量
-:root {
-  --primary-color: #1890ff;
-  --bg-color: #ffffff;
-  --text-color: #333333;
-}
-
-[data-theme="dark"] {
-  --bg-color: #1a1a1a;
-  --text-color: #ffffff;
-}
-```
-
-### 状态管理
-
-使用 Zustand 进行状态管理：
-
-```typescript
-// stores/chatStore.ts
-export const useChatStore = create<ChatStore>((set) => ({
-  messages: [],
-  setMessages: (messages) => set({ messages }),
-}))
-```
-
----
-
-## 🤝 贡献指南
-
-我们欢迎所有形式的贡献！无论是报告 Bug、提出新功能建议，还是提交代码改进。
-
-### 如何贡献
-
-1. **Fork** 本仓库
-2. **创建**特性分支 (`git checkout -b feature/AmazingFeature`)
-3. **提交**更改 (`git commit -m 'Add some AmazingFeature'`)
-4. **推送**到分支 (`git push origin feature/AmazingFeature`)
-5. **提交** Pull Request
-
-### 贡献领域
-
-| 领域 | 说明 |
-|:---:|:---|
-| 🐛 **Bug 修复** | 修复 UI 相关的 bug 和功能问题 |
-| ✨ **功能改进** | 改进用户界面和交互体验 |
-| 📝 **文档完善** | 完善文档、注释和使用说明 |
-| 🎨 **样式优化** | 优化样式、主题和视觉效果 |
-| 🌍 **国际化** | 添加多语言支持 |
-| 🧪 **测试** | 编写和完善测试用例 |
-
-### 开发建议
-
-- 遵循现有的代码风格和规范
-- 提交前确保代码通过 TypeScript 类型检查
-- 为新功能添加必要的注释和文档
-- 保持提交信息清晰明了
 
 ---
 
@@ -282,11 +181,7 @@ export const useChatStore = create<ChatStore>((set) => ({
 
 | 渠道 | 链接 |
 |:---:|:---|
-| 🌐 **官方网站** | [VXdaochu VXdaochu](https://miyuapp.aiqji.com) |
-| 🐛 **问题反馈** | [GitHub Issues](https://github.com/ILoveBingLu/VXdaochu/issues) |
-| 💬 **讨论交流** | [GitHub Discussions](https://github.com/ILoveBingLu/VXdaochu/discussions) |
 | 📱 **Telegram 群组** | [加入群聊](https://t.me/+toZ7bY15IZo3NjVl) |
-| ⭐ **项目主页** | [GitHub Repository](https://github.com/ILoveBingLu/VXdaochu) |
 
 </div>
 
