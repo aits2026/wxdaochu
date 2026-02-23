@@ -3921,6 +3921,61 @@ class ChatService extends EventEmitter {
   }
 
   /**
+   * 批量获取会话消息数量（一次扫描所有数据库）
+   */
+  async getSessionMessageCounts(usernames: string[]): Promise<{
+    success: boolean
+    counts?: { [username: string]: number }
+    error?: string
+  }> {
+    try {
+      if (!this.dbDir) {
+        return { success: false, error: '数据库未连接' }
+      }
+
+      const crypto = require('crypto')
+      // 预计算 hash → username 映射
+      const hashToUsername: { [hash: string]: string } = {}
+      for (const username of usernames) {
+        const hash = crypto.createHash('md5').update(username).digest('hex')
+        hashToUsername[hash] = username
+      }
+
+      const counts: { [username: string]: number } = {}
+      const { allDbs } = this.findMessageDbs()
+
+      for (const dbPath of allDbs) {
+        const db = this.getMessageDb(dbPath)
+        if (!db) continue
+
+        try {
+          const tables = db.prepare(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Msg_%'"
+          ).all() as any[]
+
+          for (const table of tables) {
+            const tableName = table.name as string
+            // 从表名中提取 hash 并查找对应 username
+            const matchedUsername = Object.keys(hashToUsername).find(hash => tableName.includes(hash))
+              ? hashToUsername[Object.keys(hashToUsername).find(hash => tableName.includes(hash))!]
+              : null
+            if (!matchedUsername) continue
+
+            try {
+              const result = db.prepare(`SELECT COUNT(*) as count FROM ${tableName}`).get() as any
+              counts[matchedUsername] = (counts[matchedUsername] || 0) + (result?.count || 0)
+            } catch { }
+          }
+        } catch { }
+      }
+
+      return { success: true, counts }
+    } catch (e) {
+      return { success: false, error: String(e) }
+    }
+  }
+
+  /**
    * 解析语音时长（秒）
    */
   private parseVoiceDuration(content: string): number | undefined {

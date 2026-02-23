@@ -1881,6 +1881,10 @@ function registerIpcHandlers() {
     return true
   })
 
+  ipcMain.handle('chat:getSessionMessageCounts', async (_, usernames: string[]) => {
+    return chatService.getSessionMessageCounts(usernames)
+  })
+
   ipcMain.handle('chat:getSessionDetail', async (_, sessionId: string) => {
     const result = await chatService.getSessionDetail(sessionId)
     if (!result.success) {

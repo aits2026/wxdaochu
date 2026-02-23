@@ -236,6 +236,11 @@ export interface ElectronAPI {
     refreshCache: () => Promise<boolean>
     setCurrentSession: (sessionId: string | null) => Promise<boolean>
     onNewMessages: (callback: (data: { sessionId: string; messages: Message[] }) => void) => () => void
+    getSessionMessageCounts: (usernames: string[]) => Promise<{
+      success: boolean
+      counts?: { [username: string]: number }
+      error?: string
+    }>
     getSessionDetail: (sessionId: string) => Promise<{
       success: boolean
       detail?: {

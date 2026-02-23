@@ -64,6 +64,7 @@ function ExportPage() {
   // 聊天导出状态
   const [sessions, setSessions] = useState<ChatSession[]>([])
   const [filteredSessions, setFilteredSessions] = useState<ChatSession[]>([])
+  const [sessionMessageCounts, setSessionMessageCounts] = useState<{ [username: string]: number }>({})
   const [isLoading, setIsLoading] = useState(true)
   const [searchKeyword, setSearchKeyword] = useState('')
   const [sessionTypeFilter, setSessionTypeFilter] = useState<SessionTypeFilter>('private')
@@ -212,6 +213,13 @@ function ExportPage() {
       if (sessionsResult.success && sessionsResult.sessions) {
         setSessions(sessionsResult.sessions)
         setFilteredSessions(sessionsResult.sessions)
+        // 批量加载消息数量（异步，不阻塞列表显示）
+        const usernames = sessionsResult.sessions.map(s => s.username)
+        window.electronAPI.chat.getSessionMessageCounts(usernames).then(countsResult => {
+          if (countsResult.success && countsResult.counts) {
+            setSessionMessageCounts(countsResult.counts)
+          }
+        })
       }
     } catch (e) {
       console.error('加载会话失败:', e)
@@ -316,8 +324,15 @@ function ExportPage() {
       )
     }
 
+    // 私聊和群聊按消息数量降序排列（公众号保持原顺序）
+    if (sessionTypeFilter !== 'official') {
+      filtered = [...filtered].sort((a, b) =>
+        (sessionMessageCounts[b.username] || 0) - (sessionMessageCounts[a.username] || 0)
+      )
+    }
+
     setFilteredSessions(filtered)
-  }, [searchKeyword, sessions, sessionTypeFilter])
+  }, [searchKeyword, sessions, sessionTypeFilter, sessionMessageCounts])
 
   // 通讯录搜索过滤
   useEffect(() => {
@@ -600,6 +615,11 @@ function ExportPage() {
                       <div className="export-session-name">{session.displayName || session.username}</div>
                       <div className="export-session-summary">{session.summary || '暂无消息'}</div>
                     </div>
+                    {sessionMessageCounts[session.username] !== undefined && (
+                      <div className="export-session-count">
+                        {sessionMessageCounts[session.username].toLocaleString()}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>

@@ -302,6 +302,13 @@
       min-width: 0;
     }
 
+    .export-session-count {
+      font-size: 12px;
+      color: var(--text-tertiary);
+      flex-shrink: 0;
+      white-space: nowrap;
+    }
+
     .export-session-name {
       font-size: 14px;
       font-weight: 500;
