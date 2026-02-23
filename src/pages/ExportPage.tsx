@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Search, Download, FolderOpen, RefreshCw, Check, FileJson, FileText, Table, Loader2, X, FileSpreadsheet, Database, FileCode, CheckCircle, XCircle, ExternalLink, MessageSquare, Users, User, Filter, Image, Video, CircleUserRound, Smile, Mic } from 'lucide-react'
+import { Search, Download, FolderOpen, RefreshCw, Check, FileJson, FileText, Table, Loader2, X, FileSpreadsheet, Database, FileCode, CheckCircle, XCircle, ExternalLink, MessageSquare, Users, User, Filter, Image, Video, CircleUserRound, Smile, Mic, Newspaper } from 'lucide-react'
 import DateRangePicker from '../components/DateRangePicker'
 import { useTitleBarStore } from '../stores/titleBarStore'
 import * as configService from '../services/config'
@@ -54,7 +54,7 @@ interface ExportResult {
 }
 
 // 会话类型筛选
-type SessionTypeFilter = 'all' | 'group' | 'private'
+type SessionTypeFilter = 'all' | 'group' | 'private' | 'official'
 
 function ExportPage() {
   const [activeTab, setActiveTab] = useState<ExportTab>('chat')
@@ -285,7 +285,9 @@ function ExportPage() {
     if (sessionTypeFilter === 'group') {
       filtered = filtered.filter(s => s.username.includes('@chatroom'))
     } else if (sessionTypeFilter === 'private') {
-      filtered = filtered.filter(s => !s.username.includes('@chatroom'))
+      filtered = filtered.filter(s => !s.username.includes('@chatroom') && !s.username.startsWith('gh_'))
+    } else if (sessionTypeFilter === 'official') {
+      filtered = filtered.filter(s => s.username.startsWith('gh_'))
     }
 
     // 关键词过滤
@@ -354,9 +356,17 @@ function ExportPage() {
   // 快捷选择：仅选私聊
   const selectOnlyPrivate = () => {
     const privateUsernames = filteredSessions
-      .filter(s => !s.username.includes('@chatroom'))
+      .filter(s => !s.username.includes('@chatroom') && !s.username.startsWith('gh_'))
       .map(s => s.username)
     setSelectedSessions(new Set(privateUsernames))
+  }
+
+  // 快捷选择：仅选公众号
+  const selectOnlyOfficial = () => {
+    const officialUsernames = filteredSessions
+      .filter(s => s.username.startsWith('gh_'))
+      .map(s => s.username)
+    setSelectedSessions(new Set(officialUsernames))
   }
 
   const toggleContact = (username: string) => {
@@ -556,6 +566,13 @@ function ExportPage() {
                 <User size={13} />
                 私聊
               </button>
+              <button
+                className={`type-filter-btn ${sessionTypeFilter === 'official' ? 'active' : ''}`}
+                onClick={() => setSessionTypeFilter('official')}
+              >
+                <Newspaper size={13} />
+                公众号
+              </button>
             </div>
 
             <div className="select-actions">
@@ -570,6 +587,10 @@ function ExportPage() {
                 <button className="select-type-btn" onClick={selectOnlyPrivate} title="仅选中列表中的私聊">
                   <User size={12} />
                   选私聊
+                </button>
+                <button className="select-type-btn" onClick={selectOnlyOfficial} title="仅选中列表中的公众号">
+                  <Newspaper size={12} />
+                  选公众号
                 </button>
               </div>
               <span className="selected-count">已选 {selectedSessions.size} 个</span>

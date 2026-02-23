@@ -2462,8 +2462,6 @@ class ChatService extends EventEmitter {
 
   private shouldKeepSession(username: string): boolean {
     if (!username) return false
-    if (username.startsWith('gh_')) return false
-
     // 过滤折叠对话占位符
     if (username === '@placeholder_foldgroup') return false
 
