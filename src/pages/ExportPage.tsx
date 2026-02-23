@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Search, Download, FolderOpen, RefreshCw, Check, FileJson, FileText, Table, Loader2, X, FileSpreadsheet, Database, FileCode, CheckCircle, XCircle, ExternalLink, MessageSquare, Users, User, Filter, Image, Video, CircleUserRound, Smile, Mic, Newspaper, ChevronDown } from 'lucide-react'
+import { Search, Download, FolderOpen, RefreshCw, Check, FileJson, FileText, Table, Loader2, X, FileSpreadsheet, Database, FileCode, CheckCircle, XCircle, ExternalLink, MessageSquare, Users, User, Filter, Image, Video, CircleUserRound, Smile, Mic, Newspaper, ChevronDown, MoreHorizontal, ArrowLeft } from 'lucide-react'
 import DateRangePicker from '../components/DateRangePicker'
 import { useTitleBarStore } from '../stores/titleBarStore'
 import * as configService from '../services/config'
@@ -97,6 +97,7 @@ function ExportPage() {
   const [isLoadingDetail, setIsLoadingDetail] = useState(false)
   const [exportRecords, setExportRecords] = useState<{ exportTime: number; format: string; messageCount: number }[]>([])
   const [showExportSettings, setShowExportSettings] = useState(false)
+  const [showMoreMenu, setShowMoreMenu] = useState(false)
   const [options, setOptions] = useState<ExportOptions>({
     format: 'json',
     startDate: '',
@@ -278,30 +279,10 @@ function ExportPage() {
     }
   }, [activeTab, contacts.length, loadContacts])
 
-  // 设置标题栏右侧内容
+  // 离开页面时清除标题栏
   useEffect(() => {
-    setTitleBarContent(
-      <div className="export-tabs">
-        <button
-          className={`export-tab ${activeTab === 'chat' ? 'active' : ''}`}
-          onClick={() => setActiveTab('chat')}
-        >
-          <MessageSquare size={14} />
-          <span>聊天记录</span>
-        </button>
-        <button
-          className={`export-tab ${activeTab === 'contacts' ? 'active' : ''}`}
-          onClick={() => setActiveTab('contacts')}
-        >
-          <Users size={14} />
-          <span>通讯录</span>
-        </button>
-      </div>
-    )
-
-    // 离开页面时清除
     return () => setTitleBarContent(null)
-  }, [activeTab, setTitleBarContent])
+  }, [setTitleBarContent])
 
   // 聊天会话搜索与类型过滤
   useEffect(() => {
@@ -553,9 +534,6 @@ function ExportPage() {
           <div className="session-panel">
             <div className="panel-header">
               <h2>选择会话</h2>
-              <button className="icon-btn" onClick={loadSessions} disabled={isLoading}>
-                <RefreshCw size={18} className={isLoading ? 'spin' : ''} />
-              </button>
             </div>
 
             <div className="search-bar">
@@ -610,6 +588,37 @@ function ExportPage() {
                   {sessions.filter(s => s.accountType === 'official').length}
                 </div>
               </button>
+
+              {/* 三点更多菜单 */}
+              <div className="session-more-wrap">
+                <button
+                  className="session-more-btn"
+                  onClick={() => setShowMoreMenu(v => !v)}
+                >
+                  <MoreHorizontal size={16} />
+                </button>
+                {showMoreMenu && (
+                  <>
+                    <div className="more-menu-overlay" onClick={() => setShowMoreMenu(false)} />
+                    <div className="more-menu-dropdown">
+                      <button
+                        className="more-menu-item"
+                        onClick={() => { loadSessions(); setShowMoreMenu(false) }}
+                      >
+                        <RefreshCw size={14} className={isLoading ? 'spin' : ''} />
+                        <span>刷新</span>
+                      </button>
+                      <button
+                        className="more-menu-item"
+                        onClick={() => { setActiveTab('contacts'); setShowMoreMenu(false) }}
+                      >
+                        <Users size={14} />
+                        <span>导出通讯录</span>
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
 
             {isLoading ? (
@@ -985,7 +994,12 @@ function ExportPage() {
         <>
           <div className="session-panel contacts-panel">
             <div className="panel-header">
-              <h2>通讯录预览</h2>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <button className="icon-btn" onClick={() => setActiveTab('chat')}>
+                  <ArrowLeft size={18} />
+                </button>
+                <h2>通讯录预览</h2>
+              </div>
               <button className="icon-btn" onClick={loadContacts} disabled={isLoadingContacts}>
                 <RefreshCw size={18} className={isLoadingContacts ? 'spin' : ''} />
               </button>
