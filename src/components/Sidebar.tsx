@@ -68,36 +68,6 @@ function Sidebar() {
           <span className="nav-label">朋友圈</span>
         </button>
 
-        {/* 私聊分析 */}
-        <NavLink
-          to="/analytics"
-          className={`nav-item ${isActive('/analytics') ? 'active' : ''}`}
-          title={collapsed ? '私聊分析' : undefined}
-        >
-          <span className="nav-icon"><BarChart3 size={20} /></span>
-          <span className="nav-label">私聊分析</span>
-        </NavLink>
-
-        {/* 群聊分析 - 打开独立窗口 */}
-        <button
-          className="nav-item"
-          onClick={openGroupAnalyticsWindow}
-          title={collapsed ? '群聊分析' : undefined}
-        >
-          <span className="nav-icon"><Users size={20} /></span>
-          <span className="nav-label">群聊分析</span>
-        </button>
-
-        {/* 年度报告 */}
-        <NavLink
-          to="/annual-report"
-          className={`nav-item ${isActive('/annual-report') ? 'active' : ''}`}
-          title={collapsed ? '年度报告' : undefined}
-        >
-          <span className="nav-icon"><FileText size={20} /></span>
-          <span className="nav-label">年度报告</span>
-        </NavLink>
-
         {/* 导出 */}
         <NavLink
           to="/export"
