@@ -95,6 +95,7 @@ function ExportPage() {
     emojiCount: number
   } | null>(null)
   const [isLoadingDetail, setIsLoadingDetail] = useState(false)
+  const [exportRecords, setExportRecords] = useState<{ exportTime: number; format: string; messageCount: number }[]>([])
   const [showExportSettings, setShowExportSettings] = useState(false)
   const [options, setOptions] = useState<ExportOptions>({
     format: 'json',
@@ -363,24 +364,29 @@ function ExportPage() {
     setSelectedSession(username)
     setShowExportSettings(false)
     setSessionDetail(null)
+    setExportRecords([])
     setIsLoadingDetail(true)
     try {
-      const result = await window.electronAPI.chat.getSessionDetail(username)
-      if (result.success && result.detail) {
+      const [detailResult, records] = await Promise.all([
+        window.electronAPI.chat.getSessionDetail(username),
+        window.electronAPI.export.getExportRecords(username),
+      ])
+      if (detailResult.success && detailResult.detail) {
         setSessionDetail({
-          wxid: result.detail.wxid,
-          remark: result.detail.remark,
-          nickName: result.detail.nickName,
-          alias: result.detail.alias,
-          messageCount: result.detail.messageCount,
-          firstMessageTime: result.detail.firstMessageTime,
-          latestMessageTime: result.detail.latestMessageTime,
-          imageCount: result.detail.imageCount,
-          videoCount: result.detail.videoCount,
-          voiceCount: result.detail.voiceCount,
-          emojiCount: result.detail.emojiCount,
+          wxid: detailResult.detail.wxid,
+          remark: detailResult.detail.remark,
+          nickName: detailResult.detail.nickName,
+          alias: detailResult.detail.alias,
+          messageCount: detailResult.detail.messageCount,
+          firstMessageTime: detailResult.detail.firstMessageTime,
+          latestMessageTime: detailResult.detail.latestMessageTime,
+          imageCount: detailResult.detail.imageCount,
+          videoCount: detailResult.detail.videoCount,
+          voiceCount: detailResult.detail.voiceCount,
+          emojiCount: detailResult.detail.emojiCount,
         })
       }
+      setExportRecords(records)
     } catch { }
     setIsLoadingDetail(false)
   }
@@ -462,6 +468,12 @@ function ExportPage() {
           exportOptions
         )
         setExportResult(result)
+        // 导出成功后保存记录并刷新
+        if (result.success && sessionDetail) {
+          await window.electronAPI.export.saveExportRecord(selectedSession, options.format, sessionDetail.messageCount)
+          const records = await window.electronAPI.export.getExportRecords(selectedSession)
+          setExportRecords(records)
+        }
       } else {
         setExportResult({ success: false, error: `${options.format.toUpperCase()} 格式导出功能开发中...` })
       }
@@ -724,6 +736,38 @@ function ExportPage() {
                                 ))}
                               </div>
                             )}
+                            {/* 导出记录 */}
+                            <div style={{ marginTop: 8 }}>
+                              <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginBottom: 6 }}>导出记录</div>
+                              {exportRecords.length === 0 ? (
+                                <div style={{ fontSize: 13, color: 'var(--text-tertiary)', padding: '4px 0' }}>暂无导出记录</div>
+                              ) : exportRecords.map((rec, i) => {
+                                const diff = sessionDetail ? sessionDetail.messageCount - rec.messageCount : 0
+                                const date = new Date(rec.exportTime)
+                                const dateStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+                                return (
+                                  <div key={i} style={{
+                                    padding: '8px 10px',
+                                    marginBottom: 6,
+                                    background: 'var(--bg-secondary)',
+                                    borderRadius: 8,
+                                    fontSize: 12,
+                                  }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                                      <span style={{ color: 'var(--text-secondary)' }}>{dateStr}</span>
+                                      <span style={{ color: 'var(--text-tertiary)', textTransform: 'uppercase' }}>{rec.format}</span>
+                                    </div>
+                                    <div style={{ color: 'var(--text-secondary)' }}>
+                                      导出时 {rec.messageCount.toLocaleString()} 条，
+                                      {diff > 0
+                                        ? <span style={{ color: 'var(--primary)' }}> 现在新增 +{diff.toLocaleString()} 条</span>
+                                        : <span style={{ color: 'var(--text-tertiary)' }}> ✓ 暂无新增</span>
+                                      }
+                                    </div>
+                                  </div>
+                                )
+                              })}
+                            </div>
                           </div>
                         ) : null}
                       </div>

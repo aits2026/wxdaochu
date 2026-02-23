@@ -17,6 +17,7 @@ import { analyticsService } from './services/analyticsService'
 import { groupAnalyticsService } from './services/groupAnalyticsService'
 import { annualReportService } from './services/annualReportService'
 import { exportService, ExportOptions } from './services/exportService'
+import { exportRecordService } from './services/exportRecordService'
 import { activationService } from './services/activationService'
 import { LogService } from './services/logService'
 import { videoService } from './services/videoService'
@@ -2040,6 +2041,15 @@ function registerIpcHandlers() {
     } catch (e: any) {
       return { success: false, error: e.message }
     }
+  })
+
+  // 导出记录
+  ipcMain.handle('export:getExportRecords', (_, sessionUsername: string) => {
+    return exportRecordService.getRecords(sessionUsername)
+  })
+
+  ipcMain.handle('export:saveExportRecord', (_, sessionUsername: string, format: string, messageCount: number) => {
+    exportRecordService.saveRecord(sessionUsername, format, messageCount)
   })
 
   // 导出相关

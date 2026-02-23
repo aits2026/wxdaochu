@@ -296,7 +296,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     onProgress: (callback: (data: any) => void) => {
       ipcRenderer.on('export:progress', (_, data) => callback(data))
       return () => ipcRenderer.removeAllListeners('export:progress')
-    }
+    },
+    getExportRecords: (sessionUsername: string) =>
+      ipcRenderer.invoke('export:getExportRecords', sessionUsername),
+    saveExportRecord: (sessionUsername: string, format: string, messageCount: number) =>
+      ipcRenderer.invoke('export:saveExportRecord', sessionUsername, format, messageCount),
   },
 
   // 激活

@@ -497,6 +497,12 @@ export interface ElectronAPI {
       phase?: string
       detail?: string
     }) => void) => () => void
+    getExportRecords: (sessionUsername: string) => Promise<{
+      exportTime: number
+      format: string
+      messageCount: number
+    }[]>
+    saveExportRecord: (sessionUsername: string, format: string, messageCount: number) => Promise<void>
   }
   activation: {
     getDeviceId: () => Promise<string>
