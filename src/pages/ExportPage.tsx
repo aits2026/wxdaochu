@@ -80,6 +80,14 @@ function ExportPage() {
   const [exportResult, setExportResult] = useState<ExportResult | null>(null)
 
   const [showFormatPicker, setShowFormatPicker] = useState(false)
+  const [selectedSession, setSelectedSession] = useState<string | null>(null)
+  const [sessionDetail, setSessionDetail] = useState<{
+    messageCount: number
+    firstMessageTime?: number
+    latestMessageTime?: number
+  } | null>(null)
+  const [isLoadingDetail, setIsLoadingDetail] = useState(false)
+  const [showExportSettings, setShowExportSettings] = useState(false)
   const [options, setOptions] = useState<ExportOptions>({
     format: 'json',
     startDate: '',
@@ -329,46 +337,22 @@ function ExportPage() {
     setFilteredContacts(filtered)
   }, [contactSearchKeyword, contacts, contactOptions.contactTypes])
 
-  const toggleSession = (username: string) => {
-    const newSet = new Set(selectedSessions)
-    if (newSet.has(username)) {
-      newSet.delete(username)
-    } else {
-      newSet.add(username)
-    }
-    setSelectedSessions(newSet)
-  }
-
-  const toggleSelectAll = () => {
-    if (selectedSessions.size === filteredSessions.length && filteredSessions.length > 0) {
-      setSelectedSessions(new Set())
-    } else {
-      setSelectedSessions(new Set(filteredSessions.map(s => s.username)))
-    }
-  }
-
-  // 快捷选择：仅选群聊
-  const selectOnlyGroups = () => {
-    const groupUsernames = filteredSessions
-      .filter(s => s.accountType === 'group')
-      .map(s => s.username)
-    setSelectedSessions(new Set(groupUsernames))
-  }
-
-  // 快捷选择：仅选私聊
-  const selectOnlyPrivate = () => {
-    const privateUsernames = filteredSessions
-      .filter(s => s.accountType === 'friend')
-      .map(s => s.username)
-    setSelectedSessions(new Set(privateUsernames))
-  }
-
-  // 快捷选择：仅选公众号
-  const selectOnlyOfficial = () => {
-    const officialUsernames = filteredSessions
-      .filter(s => s.accountType === 'official')
-      .map(s => s.username)
-    setSelectedSessions(new Set(officialUsernames))
+  const selectSession = async (username: string) => {
+    setSelectedSession(username)
+    setShowExportSettings(false)
+    setSessionDetail(null)
+    setIsLoadingDetail(true)
+    try {
+      const result = await window.electronAPI.chat.getSessionDetail(username)
+      if (result.success && result.detail) {
+        setSessionDetail({
+          messageCount: result.detail.messageCount,
+          firstMessageTime: result.detail.firstMessageTime,
+          latestMessageTime: result.detail.latestMessageTime,
+        })
+      }
+    } catch { }
+    setIsLoadingDetail(false)
   }
 
   const toggleContact = (username: string) => {
@@ -420,14 +404,14 @@ function ExportPage() {
 
   // 导出聊天记录
   const startExport = async () => {
-    if (selectedSessions.size === 0 || !exportFolder) return
+    if (!selectedSession || !exportFolder) return
 
     setIsExporting(true)
-    setExportProgress({ current: 0, total: selectedSessions.size, currentName: '', phase: '准备导出', detail: '' })
+    setExportProgress({ current: 0, total: 1, currentName: '', phase: '准备导出', detail: '' })
     setExportResult(null)
 
     try {
-      const sessionList = Array.from(selectedSessions)
+      const sessionList = [selectedSession]
       const exportOptions = {
         format: options.format,
         dateRange: (options.startDate && options.endDate) ? {
@@ -571,27 +555,6 @@ function ExportPage() {
               </button>
             </div>
 
-            <div className="select-actions">
-              <div className="select-actions-left">
-                <button className="select-all-btn" onClick={toggleSelectAll}>
-                  {selectedSessions.size === filteredSessions.length && filteredSessions.length > 0 ? '取消全选' : '全选'}
-                </button>
-                <button className="select-type-btn" onClick={selectOnlyGroups} title="仅选中列表中的群聊">
-                  <Users size={12} />
-                  选群聊
-                </button>
-                <button className="select-type-btn" onClick={selectOnlyPrivate} title="仅选中列表中的私聊">
-                  <User size={12} />
-                  选私聊
-                </button>
-                <button className="select-type-btn" onClick={selectOnlyOfficial} title="仅选中列表中的公众号">
-                  <Newspaper size={12} />
-                  选公众号
-                </button>
-              </div>
-              <span className="selected-count">已选 {selectedSessions.size} 个</span>
-            </div>
-
             {isLoading ? (
               <div className="loading-state">
                 <Loader2 size={24} className="spin" />
@@ -606,12 +569,9 @@ function ExportPage() {
                 {filteredSessions.map(session => (
                   <div
                     key={session.username}
-                    className={`export-session-item ${selectedSessions.has(session.username) ? 'selected' : ''}`}
-                    onClick={() => toggleSession(session.username)}
+                    className={`export-session-item ${selectedSession === session.username ? 'selected' : ''}`}
+                    onClick={() => selectSession(session.username)}
                   >
-                    <div className="check-box">
-                      {selectedSessions.has(session.username) && <Check size={14} />}
-                    </div>
                     <div className="export-avatar">
                       {session.avatarUrl ? (
                         <img src={session.avatarUrl} alt="" />
@@ -632,197 +592,246 @@ function ExportPage() {
           </div>
 
           <div className="settings-panel">
-            <div className="panel-header">
-              <h2>导出设置</h2>
-            </div>
-
-            <div className="settings-content">
-              <div className="setting-section">
-                {(() => {
-                  const currentFmt = chatFormatOptions.find(f => f.value === options.format) || chatFormatOptions[2]
-                  return (
-                    <div style={{ position: 'relative' }}>
-                      <div
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'space-between',
-                          cursor: 'pointer',
-                          padding: '8px 0',
-                        }}
-                        onClick={() => setShowFormatPicker(!showFormatPicker)}
-                      >
-                        <h3 style={{ margin: 0 }}>导出格式</h3>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                          <currentFmt.icon size={16} />
-                          <span>{currentFmt.label}</span>
-                          <ChevronDown
-                            size={16}
-                            style={{
-                              transition: 'transform 0.2s',
-                              transform: showFormatPicker ? 'rotate(180deg)' : 'rotate(0deg)',
-                            }}
-                          />
+            {!selectedSession ? (
+              <div className="empty-state" style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <span>请从左侧选择一个会话</span>
+              </div>
+            ) : !showExportSettings ? (
+              <>
+                <div className="panel-header">
+                  <h2>会话信息</h2>
+                </div>
+                <div className="settings-content">
+                  {(() => {
+                    const session = filteredSessions.find(s => s.username === selectedSession) || sessions.find(s => s.username === selectedSession)
+                    return (
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16, padding: '32px 16px' }}>
+                        <div className="export-avatar" style={{ width: 64, height: 64, fontSize: 24 }}>
+                          {session?.avatarUrl ? (
+                            <img src={session.avatarUrl} alt="" style={{ width: 64, height: 64, borderRadius: 8 }} />
+                          ) : (
+                            <span style={{ width: 64, height: 64, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 8, background: 'var(--bg-secondary, #f0f0f0)' }}>
+                              {session?.username.includes('@chatroom') ? '群' : getAvatarLetter(session?.displayName || session?.username || '')}
+                            </span>
+                          )}
                         </div>
+                        <h3 style={{ margin: 0, textAlign: 'center' }}>{session?.displayName || selectedSession}</h3>
+                        {isLoadingDetail ? (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, opacity: 0.6 }}>
+                            <Loader2 size={16} className="spin" />
+                            <span>加载中...</span>
+                          </div>
+                        ) : sessionDetail ? (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: '100%', padding: '0 16px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-color, #e0e0e0)' }}>
+                              <span style={{ opacity: 0.6 }}>消息总数</span>
+                              <span style={{ fontWeight: 500 }}>{sessionDetail.messageCount.toLocaleString()} 条</span>
+                            </div>
+                            {sessionDetail.firstMessageTime && (
+                              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-color, #e0e0e0)' }}>
+                                <span style={{ opacity: 0.6 }}>最早消息</span>
+                                <span>{new Date(sessionDetail.firstMessageTime * 1000).toLocaleDateString('zh-CN')}</span>
+                              </div>
+                            )}
+                            {sessionDetail.latestMessageTime && (
+                              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-color, #e0e0e0)' }}>
+                                <span style={{ opacity: 0.6 }}>最新消息</span>
+                                <span>{new Date(sessionDetail.latestMessageTime * 1000).toLocaleDateString('zh-CN')}</span>
+                              </div>
+                            )}
+                          </div>
+                        ) : null}
                       </div>
-                      {showFormatPicker && (
-                        <>
-                          <div
-                            style={{ position: 'fixed', inset: 0, zIndex: 99 }}
-                            onClick={() => setShowFormatPicker(false)}
-                          />
+                    )
+                  })()}
+                </div>
+                <div className="export-action">
+                  <button
+                    className="export-btn"
+                    onClick={() => setShowExportSettings(true)}
+                    disabled={!sessionDetail || sessionDetail.messageCount === 0}
+                  >
+                    <Download size={18} />
+                    <span>导出此会话</span>
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="panel-header">
+                  <h2 style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }} onClick={() => setShowExportSettings(false)}>
+                    ← 导出设置
+                  </h2>
+                </div>
+                <div className="settings-content">
+                  <div className="setting-section">
+                    {(() => {
+                      const currentFmt = chatFormatOptions.find(f => f.value === options.format) || chatFormatOptions[2]
+                      return (
+                        <div style={{ position: 'relative' }}>
                           <div
                             style={{
-                              position: 'absolute',
-                              right: 0,
-                              top: '100%',
-                              zIndex: 100,
-                              background: 'var(--bg-primary, #fff)',
-                              border: '1px solid var(--border-color, #e0e0e0)',
-                              borderRadius: 8,
-                              boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
-                              padding: 4,
-                              minWidth: 260,
-                              maxHeight: 360,
-                              overflowY: 'auto',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              cursor: 'pointer',
+                              padding: '8px 0',
                             }}
+                            onClick={() => setShowFormatPicker(!showFormatPicker)}
                           >
-                            {chatFormatOptions.map(fmt => (
-                              <div
-                                key={fmt.value}
+                            <h3 style={{ margin: 0 }}>导出格式</h3>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                              <currentFmt.icon size={16} />
+                              <span>{currentFmt.label}</span>
+                              <ChevronDown
+                                size={16}
                                 style={{
-                                  display: 'flex',
-                                  flexDirection: 'column',
-                                  gap: 2,
-                                  padding: '10px 12px',
-                                  borderRadius: 6,
-                                  cursor: 'pointer',
-                                  background: options.format === fmt.value ? 'var(--bg-active, #f0f0f0)' : 'transparent',
+                                  transition: 'transform 0.2s',
+                                  transform: showFormatPicker ? 'rotate(180deg)' : 'rotate(0deg)',
                                 }}
-                                onMouseEnter={e => {
-                                  if (options.format !== fmt.value) e.currentTarget.style.background = 'var(--bg-hover, #f5f5f5)'
-                                }}
-                                onMouseLeave={e => {
-                                  if (options.format !== fmt.value) e.currentTarget.style.background = 'transparent'
-                                }}
-                                onClick={() => {
-                                  setOptions({ ...options, format: fmt.value as any })
-                                  setShowFormatPicker(false)
+                              />
+                            </div>
+                          </div>
+                          {showFormatPicker && (
+                            <>
+                              <div
+                                style={{ position: 'fixed', inset: 0, zIndex: 99 }}
+                                onClick={() => setShowFormatPicker(false)}
+                              />
+                              <div
+                                style={{
+                                  position: 'absolute',
+                                  right: 0,
+                                  top: '100%',
+                                  zIndex: 100,
+                                  background: 'var(--bg-primary, #fff)',
+                                  border: '1px solid var(--border-color, #e0e0e0)',
+                                  borderRadius: 8,
+                                  boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
+                                  padding: 4,
+                                  minWidth: 260,
+                                  maxHeight: 360,
+                                  overflowY: 'auto',
                                 }}
                               >
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                                  <fmt.icon size={16} />
-                                  <span style={{ fontWeight: 500 }}>{fmt.label}</span>
-                                </div>
-                                <span style={{ fontSize: 12, opacity: 0.6, paddingLeft: 24 }}>{fmt.desc}</span>
+                                {chatFormatOptions.map(fmt => (
+                                  <div
+                                    key={fmt.value}
+                                    style={{
+                                      display: 'flex',
+                                      flexDirection: 'column',
+                                      gap: 2,
+                                      padding: '10px 12px',
+                                      borderRadius: 6,
+                                      cursor: 'pointer',
+                                      background: options.format === fmt.value ? 'var(--bg-active, #f0f0f0)' : 'transparent',
+                                    }}
+                                    onMouseEnter={e => {
+                                      if (options.format !== fmt.value) e.currentTarget.style.background = 'var(--bg-hover, #f5f5f5)'
+                                    }}
+                                    onMouseLeave={e => {
+                                      if (options.format !== fmt.value) e.currentTarget.style.background = 'transparent'
+                                    }}
+                                    onClick={() => {
+                                      setOptions({ ...options, format: fmt.value as any })
+                                      setShowFormatPicker(false)
+                                    }}
+                                  >
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                      <fmt.icon size={16} />
+                                      <span style={{ fontWeight: 500 }}>{fmt.label}</span>
+                                    </div>
+                                    <span style={{ fontSize: 12, opacity: 0.6, paddingLeft: 24 }}>{fmt.desc}</span>
+                                  </div>
+                                ))}
                               </div>
-                            ))}
-                          </div>
-                        </>
-                      )}
+                            </>
+                          )}
+                        </div>
+                      )
+                    })()}
+                  </div>
+
+                  <div className="setting-section">
+                    <h3>时间范围</h3>
+                    <div className="time-options">
+                      <DateRangePicker
+                        startDate={options.startDate}
+                        endDate={options.endDate}
+                        onStartDateChange={(date) => setOptions(prev => ({ ...prev, startDate: date }))}
+                        onEndDateChange={(date) => setOptions(prev => ({ ...prev, endDate: date }))}
+                      />
+                      <p className="time-hint">不选择时间范围则导出全部消息</p>
                     </div>
-                  )
-                })()}
-              </div>
+                  </div>
 
-              <div className="setting-section">
-                <h3>时间范围</h3>
-                <div className="time-options">
-                  <DateRangePicker
-                    startDate={options.startDate}
-                    endDate={options.endDate}
-                    onStartDateChange={(date) => setOptions(prev => ({ ...prev, startDate: date }))}
-                    onEndDateChange={(date) => setOptions(prev => ({ ...prev, endDate: date }))}
-                  />
-                  <p className="time-hint">不选择时间范围则导出全部消息</p>
+                  <div className="setting-section">
+                    <h3>导出选项</h3>
+                    <div className="export-options">
+                      <label className="checkbox-item">
+                        <input type="checkbox" checked={options.exportAvatars} onChange={e => setOptions(prev => ({ ...prev, exportAvatars: e.target.checked }))} />
+                        <div className="custom-checkbox"></div>
+                        <CircleUserRound size={16} style={{ color: 'var(--text-tertiary)' }} />
+                        <span>导出头像</span>
+                      </label>
+                      <label className="checkbox-item">
+                        <input type="checkbox" checked={options.exportImages} onChange={e => setOptions(prev => ({ ...prev, exportImages: e.target.checked }))} />
+                        <div className="custom-checkbox"></div>
+                        <Image size={16} style={{ color: 'var(--text-tertiary)' }} />
+                        <span>导出图片</span>
+                      </label>
+                      <label className="checkbox-item">
+                        <input type="checkbox" checked={options.exportVideos} onChange={e => setOptions(prev => ({ ...prev, exportVideos: e.target.checked }))} />
+                        <div className="custom-checkbox"></div>
+                        <Video size={16} style={{ color: 'var(--text-tertiary)' }} />
+                        <span>导出视频</span>
+                      </label>
+                      <label className="checkbox-item">
+                        <input type="checkbox" checked={options.exportEmojis} onChange={e => setOptions(prev => ({ ...prev, exportEmojis: e.target.checked }))} />
+                        <div className="custom-checkbox"></div>
+                        <Smile size={16} style={{ color: 'var(--text-tertiary)' }} />
+                        <span>导出表情包</span>
+                      </label>
+                      <label className="checkbox-item">
+                        <input type="checkbox" checked={options.exportVoices} onChange={e => setOptions(prev => ({ ...prev, exportVoices: e.target.checked }))} />
+                        <div className="custom-checkbox"></div>
+                        <Mic size={16} style={{ color: 'var(--text-tertiary)' }} />
+                        <span>导出语音</span>
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="setting-section">
+                    <h3>导出位置</h3>
+                    <div className="export-path-select" onClick={selectExportFolder}>
+                      <FolderOpen size={16} />
+                      <span className="path-text">{exportFolder || '点击选择导出位置'}</span>
+                      <span className="change-text">更改</span>
+                    </div>
+                  </div>
                 </div>
-              </div>
 
-              <div className="setting-section">
-                <h3>导出选项</h3>
-                <div className="export-options">
-                  <label className="checkbox-item">
-                    <input
-                      type="checkbox"
-                      checked={options.exportAvatars}
-                      onChange={e => setOptions(prev => ({ ...prev, exportAvatars: e.target.checked }))}
-                    />
-                    <div className="custom-checkbox"></div>
-                    <CircleUserRound size={16} style={{ color: 'var(--text-tertiary)' }} />
-                    <span>导出头像</span>
-                  </label>
-                  <label className="checkbox-item">
-                    <input
-                      type="checkbox"
-                      checked={options.exportImages}
-                      onChange={e => setOptions(prev => ({ ...prev, exportImages: e.target.checked }))}
-                    />
-                    <div className="custom-checkbox"></div>
-                    <Image size={16} style={{ color: 'var(--text-tertiary)' }} />
-                    <span>导出图片</span>
-                  </label>
-                  <label className="checkbox-item">
-                    <input
-                      type="checkbox"
-                      checked={options.exportVideos}
-                      onChange={e => setOptions(prev => ({ ...prev, exportVideos: e.target.checked }))}
-                    />
-                    <div className="custom-checkbox"></div>
-                    <Video size={16} style={{ color: 'var(--text-tertiary)' }} />
-                    <span>导出视频</span>
-                  </label>
-                  <label className="checkbox-item">
-                    <input
-                      type="checkbox"
-                      checked={options.exportEmojis}
-                      onChange={e => setOptions(prev => ({ ...prev, exportEmojis: e.target.checked }))}
-                    />
-                    <div className="custom-checkbox"></div>
-                    <Smile size={16} style={{ color: 'var(--text-tertiary)' }} />
-                    <span>导出表情包</span>
-                  </label>
-                  <label className="checkbox-item">
-                    <input
-                      type="checkbox"
-                      checked={options.exportVoices}
-                      onChange={e => setOptions(prev => ({ ...prev, exportVoices: e.target.checked }))}
-                    />
-                    <div className="custom-checkbox"></div>
-                    <Mic size={16} style={{ color: 'var(--text-tertiary)' }} />
-                    <span>导出语音</span>
-                  </label>
+                <div className="export-action">
+                  <button
+                    className="export-btn"
+                    onClick={startExport}
+                    disabled={!selectedSession || !exportFolder || isExporting}
+                  >
+                    {isExporting ? (
+                      <>
+                        <Loader2 size={18} className="spin" />
+                        <span>导出中...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Download size={18} />
+                        <span>开始导出</span>
+                      </>
+                    )}
+                  </button>
                 </div>
-              </div>
-
-              <div className="setting-section">
-                <h3>导出位置</h3>
-                <div className="export-path-select" onClick={selectExportFolder}>
-                  <FolderOpen size={16} />
-                  <span className="path-text">{exportFolder || '点击选择导出位置'}</span>
-                  <span className="change-text">更改</span>
-                </div>
-              </div>
-            </div>
-
-            <div className="export-action">
-              <button
-                className="export-btn"
-                onClick={startExport}
-                disabled={selectedSessions.size === 0 || !exportFolder || isExporting}
-              >
-                {isExporting ? (
-                  <>
-                    <Loader2 size={18} className="spin" />
-                    <span>导出中...</span>
-                  </>
-                ) : (
-                  <>
-                    <Download size={18} />
-                    <span>开始导出</span>
-                  </>
-                )}
-              </button>
-            </div>
+              </>
+            )}
           </div>
         </>
       )}
