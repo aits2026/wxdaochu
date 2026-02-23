@@ -54,7 +54,7 @@ interface ExportResult {
 }
 
 // 会话类型筛选
-type SessionTypeFilter = 'all' | 'group' | 'private' | 'official'
+type SessionTypeFilter = 'group' | 'private' | 'official'
 
 function ExportPage() {
   const [activeTab, setActiveTab] = useState<ExportTab>('chat')
@@ -66,7 +66,7 @@ function ExportPage() {
   const [selectedSessions, setSelectedSessions] = useState<Set<string>>(new Set())
   const [isLoading, setIsLoading] = useState(true)
   const [searchKeyword, setSearchKeyword] = useState('')
-  const [sessionTypeFilter, setSessionTypeFilter] = useState<SessionTypeFilter>('all')
+  const [sessionTypeFilter, setSessionTypeFilter] = useState<SessionTypeFilter>('private')
   const [exportFolder, setExportFolder] = useState<string>('')
   const [isExporting, setIsExporting] = useState(false)
   const [exportProgress, setExportProgress] = useState({
@@ -546,12 +546,6 @@ function ExportPage() {
             </div>
 
             <div className="session-type-filter">
-              <button
-                className={`type-filter-btn ${sessionTypeFilter === 'all' ? 'active' : ''}`}
-                onClick={() => setSessionTypeFilter('all')}
-              >
-                全部
-              </button>
               <button
                 className={`type-filter-btn ${sessionTypeFilter === 'group' ? 'active' : ''}`}
                 onClick={() => setSessionTypeFilter('group')}
