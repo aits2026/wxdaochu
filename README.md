@@ -19,22 +19,6 @@
 
 ---
 
-## 💖 赞助支持
-
-如果这个项目对你有帮助，欢迎通过爱发电支持我们的开发工作！
-
-<div align="center">
-
-<a href="https://afdian.com/a/ILoveBingLu">
-  <img src="aifadian.jpg" alt="爱发电" width="300" />
-</a>
-
-你的支持是我们持续更新的动力 ❤️
-
-</div>
-
----
-
 ## ✨ 功能特性
 
 <table>
