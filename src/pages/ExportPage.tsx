@@ -578,22 +578,37 @@ function ExportPage() {
                 className={`type-filter-btn ${sessionTypeFilter === 'group' ? 'active' : ''}`}
                 onClick={() => setSessionTypeFilter('group')}
               >
-                <Users size={13} />
-                群聊
+                <div className="type-filter-label">
+                  <Users size={13} />
+                  <span>群聊</span>
+                </div>
+                <div className="type-filter-count">
+                  {sessions.filter(s => s.accountType === 'group').length}
+                </div>
               </button>
               <button
                 className={`type-filter-btn ${sessionTypeFilter === 'private' ? 'active' : ''}`}
                 onClick={() => setSessionTypeFilter('private')}
               >
-                <User size={13} />
-                私聊
+                <div className="type-filter-label">
+                  <User size={13} />
+                  <span>私聊</span>
+                </div>
+                <div className="type-filter-count">
+                  {sessions.filter(s => s.accountType === 'friend').length}
+                </div>
               </button>
               <button
                 className={`type-filter-btn ${sessionTypeFilter === 'official' ? 'active' : ''}`}
                 onClick={() => setSessionTypeFilter('official')}
               >
-                <Newspaper size={13} />
-                公众号
+                <div className="type-filter-label">
+                  <Newspaper size={13} />
+                  <span>公众号</span>
+                </div>
+                <div className="type-filter-count">
+                  {sessions.filter(s => s.accountType === 'official').length}
+                </div>
               </button>
             </div>
 
