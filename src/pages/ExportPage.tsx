@@ -79,8 +79,9 @@ function ExportPage() {
   })
   const [exportResult, setExportResult] = useState<ExportResult | null>(null)
 
+  const [showFormatPicker, setShowFormatPicker] = useState(false)
   const [options, setOptions] = useState<ExportOptions>({
-    format: 'chatlab',
+    format: 'json',
     startDate: '',
     endDate: '',
     exportAvatars: true,
@@ -638,19 +639,40 @@ function ExportPage() {
             <div className="settings-content">
               <div className="setting-section">
                 <h3>导出格式</h3>
-                <div className="format-options">
-                  {chatFormatOptions.map(fmt => (
-                    <div
-                      key={fmt.value}
-                      className={`format-card ${options.format === fmt.value ? 'active' : ''}`}
-                      onClick={() => setOptions({ ...options, format: fmt.value as any })}
-                    >
-                      <fmt.icon size={24} />
-                      <span className="format-label">{fmt.label}</span>
-                      <span className="format-desc">{fmt.desc}</span>
-                    </div>
-                  ))}
-                </div>
+                {(() => {
+                  const currentFmt = chatFormatOptions.find(f => f.value === options.format) || chatFormatOptions[2]
+                  return (
+                    <>
+                      <div
+                        className="format-card active"
+                        style={{ cursor: 'pointer', display: 'inline-flex', marginBottom: showFormatPicker ? 8 : 0 }}
+                        onClick={() => setShowFormatPicker(!showFormatPicker)}
+                      >
+                        <currentFmt.icon size={24} />
+                        <span className="format-label">{currentFmt.label}</span>
+                        <span className="format-desc">{showFormatPicker ? '点击收起' : '点击切换格式'}</span>
+                      </div>
+                      {showFormatPicker && (
+                        <div className="format-options">
+                          {chatFormatOptions.map(fmt => (
+                            <div
+                              key={fmt.value}
+                              className={`format-card ${options.format === fmt.value ? 'active' : ''}`}
+                              onClick={() => {
+                                setOptions({ ...options, format: fmt.value as any })
+                                setShowFormatPicker(false)
+                              }}
+                            >
+                              <fmt.icon size={24} />
+                              <span className="format-label">{fmt.label}</span>
+                              <span className="format-desc">{fmt.desc}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  )
+                })()}
               </div>
 
               <div className="setting-section">
