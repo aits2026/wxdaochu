@@ -1568,9 +1568,6 @@ function ExportPage() {
               </div>
             ) : !showExportSettings ? (
               <>
-                <div className="panel-header">
-                  <h2>会话信息</h2>
-                </div>
                 <div className="settings-content">
                   {(() => {
                     const session = selectedSession ? sessionByUsername.get(selectedSession) : undefined
