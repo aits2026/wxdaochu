@@ -3,6 +3,7 @@ import { Search, Download, FolderOpen, RefreshCw, Check, FileJson, FileText, Tab
 import { List, RowComponentProps } from 'react-window'
 import DateRangePicker from '../components/DateRangePicker'
 import { useTitleBarStore } from '../stores/titleBarStore'
+import { useAppStore } from '../stores/appStore'
 import * as configService from '../services/config'
 import './ExportPage.scss'
 
@@ -116,6 +117,22 @@ const ExportSessionRow = (props: RowComponentProps<ExportSessionRowData>) => {
 function ExportPage() {
   const [activeTab, setActiveTab] = useState<ExportTab>('chat')
   const setTitleBarContent = useTitleBarStore(state => state.setRightContent)
+  const isDbConnected = useAppStore(state => state.isDbConnected)
+  const preloadedUserInfo = useAppStore(state => state.userInfo)
+  const userInfoLoaded = useAppStore(state => state.userInfoLoaded)
+  const [exportAccountInfo, setExportAccountInfo] = useState<{
+    connected: boolean
+    wxid: string
+    nickName: string
+    alias: string
+    avatarUrl: string
+  }>({
+    connected: false,
+    wxid: '',
+    nickName: '',
+    alias: '',
+    avatarUrl: ''
+  })
 
   // 聊天导出状态
   const [sessions, setSessions] = useState<ChatSession[]>([])
@@ -199,6 +216,57 @@ function ExportPage() {
   useEffect(() => {
     sessionTypeFilterRef.current = sessionTypeFilter
   }, [sessionTypeFilter])
+
+  const loadExportAccountInfo = useCallback(async () => {
+    try {
+      const result = await window.electronAPI.chat.getMyUserInfo()
+      if (result.success && result.userInfo) {
+        setExportAccountInfo({
+          connected: true,
+          wxid: result.userInfo.wxid,
+          nickName: result.userInfo.nickName,
+          alias: result.userInfo.alias,
+          avatarUrl: result.userInfo.avatarUrl
+        })
+        return
+      }
+    } catch (e) {
+      console.error('导出页加载当前账号信息失败:', e)
+    }
+
+    setExportAccountInfo(prev => ({
+      ...prev,
+      connected: true
+    }))
+  }, [])
+
+  useEffect(() => {
+    if (!isDbConnected) {
+      setExportAccountInfo({
+        connected: false,
+        wxid: '',
+        nickName: '',
+        alias: '',
+        avatarUrl: ''
+      })
+      return
+    }
+
+    if (userInfoLoaded && preloadedUserInfo) {
+      setExportAccountInfo({
+        connected: true,
+        wxid: preloadedUserInfo.wxid,
+        nickName: preloadedUserInfo.nickName,
+        alias: preloadedUserInfo.alias,
+        avatarUrl: preloadedUserInfo.avatarUrl
+      })
+      return
+    }
+
+    if (!userInfoLoaded || (userInfoLoaded && !preloadedUserInfo)) {
+      loadExportAccountInfo()
+    }
+  }, [isDbConnected, userInfoLoaded, preloadedUserInfo, loadExportAccountInfo])
 
   // 加载默认导出配置
   const loadDefaultExportConfig = useCallback(async () => {
@@ -668,8 +736,82 @@ function ExportPage() {
       {activeTab === 'chat' && (
         <>
           <div className="session-panel">
-            <div className="panel-header">
-              <h2>选择会话</h2>
+            <div className="session-account-header">
+              <div className="session-account-avatar">
+                {exportAccountInfo.avatarUrl ? (
+                  <img src={exportAccountInfo.avatarUrl} alt="" />
+                ) : (
+                  <User size={18} />
+                )}
+              </div>
+              <div className="session-account-main">
+                <div className="session-account-name-row">
+                  <div className="session-account-name">
+                    {exportAccountInfo.connected
+                      ? (exportAccountInfo.nickName || exportAccountInfo.wxid || '当前账号')
+                      : '未连接数据库'}
+                  </div>
+                  {exportAccountInfo.connected && (
+                    <span className="session-account-badge">当前导出账号</span>
+                  )}
+                </div>
+                <div className="session-account-id">
+                  {exportAccountInfo.connected
+                    ? (exportAccountInfo.alias
+                      ? `微信号: ${exportAccountInfo.alias}${exportAccountInfo.wxid ? ` · wxid: ${exportAccountInfo.wxid}` : ''}`
+                      : (exportAccountInfo.wxid ? `wxid: ${exportAccountInfo.wxid}` : '未识别账号信息'))
+                    : '请先配置并连接数据源'}
+                </div>
+                <div className={`session-account-status ${exportAccountInfo.connected ? 'connected' : 'disconnected'}`}>
+                  <span className="status-dot" />
+                  <span>{exportAccountInfo.connected ? '已连接数据库' : '未连接'}</span>
+                </div>
+              </div>
+              <div className="session-more-wrap">
+                <button
+                  className="session-more-btn"
+                  onClick={() => setShowMoreMenu(v => !v)}
+                  title="更多操作"
+                >
+                  <MoreHorizontal size={16} />
+                </button>
+                {showMoreMenu && (
+                  <>
+                    <div className="more-menu-overlay" onClick={() => setShowMoreMenu(false)} />
+                    <div className="more-menu-dropdown">
+                      <button
+                        className="more-menu-item"
+                        onClick={() => { loadSessions(); setShowMoreMenu(false) }}
+                      >
+                        <RefreshCw size={14} className={isLoading ? 'spin' : ''} />
+                        <span>刷新</span>
+                      </button>
+                      <button
+                        className="more-menu-item"
+                        onClick={async () => {
+                          try {
+                            await window.electronAPI.window.openMomentsWindow({ preset: 'self' })
+                          } catch (e) {
+                            console.error('打开我的朋友圈失败:', e)
+                          } finally {
+                            setShowMoreMenu(false)
+                          }
+                        }}
+                      >
+                        <Aperture size={14} />
+                        <span>我的朋友圈</span>
+                      </button>
+                      <button
+                        className="more-menu-item"
+                        onClick={() => { setActiveTab('contacts'); setShowMoreMenu(false) }}
+                      >
+                        <Users size={14} />
+                        <span>导出通讯录</span>
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
 
             <div className="search-bar">
@@ -724,52 +866,6 @@ function ExportPage() {
                   {sessionTypeCounts.official}
                 </div>
               </button>
-
-              {/* 三点更多菜单 */}
-              <div className="session-more-wrap">
-                <button
-                  className="session-more-btn"
-                  onClick={() => setShowMoreMenu(v => !v)}
-                >
-                  <MoreHorizontal size={16} />
-                </button>
-                {showMoreMenu && (
-                  <>
-                    <div className="more-menu-overlay" onClick={() => setShowMoreMenu(false)} />
-                    <div className="more-menu-dropdown">
-                      <button
-                        className="more-menu-item"
-                        onClick={() => { loadSessions(); setShowMoreMenu(false) }}
-                      >
-                        <RefreshCw size={14} className={isLoading ? 'spin' : ''} />
-                        <span>刷新</span>
-                      </button>
-                      <button
-                        className="more-menu-item"
-                        onClick={async () => {
-                          try {
-                            await window.electronAPI.window.openMomentsWindow({ preset: 'self' })
-                          } catch (e) {
-                            console.error('打开我的朋友圈失败:', e)
-                          } finally {
-                            setShowMoreMenu(false)
-                          }
-                        }}
-                      >
-                        <Aperture size={14} />
-                        <span>我的朋友圈</span>
-                      </button>
-                      <button
-                        className="more-menu-item"
-                        onClick={() => { setActiveTab('contacts'); setShowMoreMenu(false) }}
-                      >
-                        <Users size={14} />
-                        <span>导出通讯录</span>
-                      </button>
-                    </div>
-                  </>
-                )}
-              </div>
             </div>
             {isLoadingSessionCounts && (
               <div className="session-count-loading-hint">
