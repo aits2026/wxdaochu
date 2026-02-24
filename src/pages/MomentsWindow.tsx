@@ -1,11 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Loader2, RefreshCw, Search, Calendar, User, X, AlertTriangle, Play, Download, Heart, Copy, Link, Music, FileDown } from 'lucide-react'
+import { Loader2, RefreshCw, Search, User, X, AlertTriangle, Play, Download, Heart, Copy, Link, Music, FileDown } from 'lucide-react'
 import { ImagePreview } from '../components/ImagePreview'
 import { LivePhotoIcon } from '../components/LivePhotoIcon'
 import { parseWechatEmoji } from '../utils/wechatEmoji'
 import * as configService from '../services/config'
 import TitleBar from '../components/TitleBar'
-import JumpToDateDialog from '../components/JumpToDateDialog'
 import DateRangePicker from '../components/DateRangePicker'
 import './MomentsWindow.scss'
 
@@ -570,13 +569,10 @@ function MomentsWindow() {
   const [error, setError] = useState<string | null>(null)
 
   // 筛选状态
-  const [searchKeyword, setSearchKeyword] = useState('')
   const [selectedUsernames, setSelectedUsernames] = useState<string[]>([])
-  const [jumpTargetDate, setJumpTargetDate] = useState<Date | undefined>(undefined)
   const [contacts, setContacts] = useState<Contact[]>([])
   const [contactsLoaded, setContactsLoaded] = useState(false)
   const [contactSearch, setContactSearch] = useState('')
-  const [showJumpDialog, setShowJumpDialog] = useState(false)
   const [selfWxid, setSelfWxid] = useState<string>('')
   const [selfProfile, setSelfProfile] = useState<SelfProfile | null>(null)
   const [pendingMomentsPresetRequest, setPendingMomentsPresetRequest] = useState<MomentsPresetPayload | null>(null)
@@ -609,8 +605,6 @@ function MomentsWindow() {
   }, [selfWxid])
 
   const applyResolvedUserMomentsPreset = useCallback((targetUsername: string, label: string, options?: { contactSearchText?: string }) => {
-    setSearchKeyword('')
-    setJumpTargetDate(undefined)
     setContactSearch(options?.contactSearchText || '')
     setSelectedUsernames([targetUsername])
     setActiveUserPresetFilter({ username: targetUsername, label })
@@ -623,8 +617,6 @@ function MomentsWindow() {
       || (payload.username || '').trim()
     )
 
-    setSearchKeyword('')
-    setJumpTargetDate(undefined)
     setSelectedUsernames([])
     setActiveUserPresetFilter(null)
     setContactSearch(contactSearchText)
@@ -768,7 +760,7 @@ function MomentsWindow() {
       if (contentEl) contentEl.scrollTo({ top: 0, behavior: 'smooth' })
     }
     isInitialLoad.current = false
-  }, [searchKeyword, selectedUsernames, jumpTargetDate])
+  }, [selectedUsernames])
 
   // 加载联系人
   const loadContacts = useCallback(async () => {
@@ -938,15 +930,9 @@ function MomentsWindow() {
       }
 
       let startTs: number | undefined
-      let endTs: number | undefined
       let currentOffset = 0
 
       if (reset) {
-        if (jumpTargetDate) {
-          const d = new Date(jumpTargetDate)
-          d.setHours(23, 59, 59, 999)
-          endTs = Math.floor(d.getTime() / 1000)
-        }
         currentOffset = 0
       } else if (direction === 'newer') {
         const topPost = posts[0]
@@ -954,19 +940,9 @@ function MomentsWindow() {
           startTs = topPost.createTime + 1
         }
         currentOffset = 0
-        endTs = undefined // Ensure endTs is cleared for newer posts check
       } else {
         // Load older
         currentOffset = posts.length
-
-        // Maintain jumpTargetDate filter if active
-        if (jumpTargetDate) {
-          const d = new Date(jumpTargetDate)
-          d.setHours(23, 59, 59, 999)
-          endTs = Math.floor(d.getTime() / 1000)
-        } else {
-          endTs = undefined
-        }
       }
 
       const currentLimit = 20
@@ -975,9 +951,9 @@ function MomentsWindow() {
         currentLimit,
         currentOffset,
         selectedUsernames,
-        searchKeyword,
+        undefined,
         startTs,
-        endTs
+        undefined
       )
 
       if (result.success && result.timeline) {
@@ -1018,12 +994,12 @@ function MomentsWindow() {
       setLoadingNewer(false)
       loadingRef.current = false
     }
-  }, [posts, selectedUsernames, searchKeyword, jumpTargetDate])
+  }, [posts, selectedUsernames])
 
   // 监听筛选条件变化，自动重置加载
   useEffect(() => {
     loadPosts({ reset: true })
-  }, [selectedUsernames, searchKeyword, jumpTargetDate]) // Removed loadPosts dependency to avoid loop
+  }, [selectedUsernames]) // Removed loadPosts dependency to avoid loop
 
   // 无限滚动
   useEffect(() => {
@@ -1052,7 +1028,6 @@ function MomentsWindow() {
   }
 
   const toggleUserSelection = (username: string) => {
-    setJumpTargetDate(undefined) // 切换用户时清除时间筛选
     setPresetResolutionNotice(null)
     setSelectedUsernames(prev =>
       prev.includes(username)
@@ -1062,9 +1037,8 @@ function MomentsWindow() {
   }
 
   const clearFilters = () => {
-    setSearchKeyword('')
     setSelectedUsernames([])
-    setJumpTargetDate(undefined)
+    setContactSearch('')
     setActiveUserPresetFilter(null)
     setPresetResolutionNotice(null)
   }
@@ -1098,7 +1072,7 @@ function MomentsWindow() {
         const res = await window.electronAPI.sns.getTimeline(
           batchSize, offset,
           selectedUsernames.length > 0 ? selectedUsernames : undefined,
-          searchKeyword || undefined,
+          undefined,
           startTs,
           endTs
         )
@@ -1507,14 +1481,14 @@ document.querySelectorAll('.vi video').forEach(function(v) {
         setExportProgress({ current: 0, total: 0, status: '' })
       }, 3000)
     }
-  }, [exporting, selectedUsernames, searchKeyword, exportOptions, exportDateRange])
+  }, [exporting, selectedUsernames, exportOptions, exportDateRange])
 
   const filteredContacts = contacts.filter(c =>
     c.displayName.toLowerCase().includes(contactSearch.toLowerCase()) ||
     c.username.toLowerCase().includes(contactSearch.toLowerCase())
   )
 
-  const isUserPresetOnlyFilterActive = !!activeUserPresetFilter && selectedUsernames.length === 1 && selectedUsernames[0] === activeUserPresetFilter.username && !searchKeyword && !jumpTargetDate
+  const isUserPresetOnlyFilterActive = !!activeUserPresetFilter && selectedUsernames.length === 1 && selectedUsernames[0] === activeUserPresetFilter.username
 
   return (
     <div className="moments-window">
@@ -1533,46 +1507,7 @@ document.querySelectorAll('.vi video').forEach(function(v) {
         {/* 侧边栏 (左侧) */}
         <aside className="sns-sidebar">
           <div className="filter-content custom-scrollbar">
-            {/* 1. 搜索 */}
-            <div className="filter-card">
-              <div className="filter-section">
-                <label><Search size={14} /> 关键词搜索</label>
-                <div className="search-input-wrapper">
-                  <Search size={14} className="input-icon" />
-                  <input
-                    type="text"
-                    placeholder="搜索动态内容..."
-                    value={searchKeyword}
-                    onChange={e => setSearchKeyword(e.target.value)}
-                  />
-                  {searchKeyword && (
-                    <button className="clear-input" onClick={() => setSearchKeyword('')}>
-                      <X size={14} />
-                    </button>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {/* 2. 日期 */}
-            <div className="filter-card jump-date-card">
-              <div className="filter-section">
-                <label><Calendar size={14} /> 时间跳转</label>
-                <button className={`jump-date-btn ${jumpTargetDate ? 'active' : ''}`} onClick={() => setShowJumpDialog(true)}>
-                  <span className="text">
-                    {jumpTargetDate ? jumpTargetDate.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' }) : '选择跳转日期...'}
-                  </span>
-                  <Calendar size={14} className="icon" />
-                </button>
-                {jumpTargetDate && (
-                  <button className="clear-jump-date-inline" onClick={() => setJumpTargetDate(undefined)}>
-                    返回最新动态
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {/* 3. 联系人 */}
+            {/* 联系人 */}
             <div className="filter-card contact-card">
               <div className="contact-filter-section">
                 <div className="section-header">
@@ -1689,7 +1624,7 @@ document.querySelectorAll('.vi video').forEach(function(v) {
                 <div className="moments-placeholder">
                   <Search size={64} opacity={0.3} />
                   <p>暂无朋友圈动态</p>
-                  {(selectedUsernames.length > 0 || searchKeyword || jumpTargetDate) && (
+                  {selectedUsernames.length > 0 && (
                     <button onClick={clearFilters} style={{ marginTop: 10 }}>重置筛选条件</button>
                   )}
                 </div>
@@ -1960,16 +1895,6 @@ document.querySelectorAll('.vi video').forEach(function(v) {
           </div>
         )
       }
-
-      <JumpToDateDialog
-        isOpen={showJumpDialog}
-        onClose={() => setShowJumpDialog(false)}
-        onSelect={(date) => {
-          setJumpTargetDate(date)
-          setShowJumpDialog(false)
-        }}
-        currentDate={jumpTargetDate || new Date()}
-      />
     </div >
   )
 }
