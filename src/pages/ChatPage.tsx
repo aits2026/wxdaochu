@@ -213,6 +213,7 @@ function ChatPage(_props: ChatPageProps) {
   const [myAvatarUrl, setMyAvatarUrl] = useState<string | undefined>(undefined)
   const [showScrollToBottom, setShowScrollToBottom] = useState(false)
   const [showDetailPanel, setShowDetailPanel] = useState(false)
+  const [showGroupMembersPopover, setShowGroupMembersPopover] = useState(false)
   const [sessionDetail, setSessionDetail] = useState<SessionDetail | null>(null)
   const [isLoadingDetail, setIsLoadingDetail] = useState(false)
   const [groupMembers, setGroupMembers] = useState<GroupMemberListItem[]>([])
@@ -248,6 +249,7 @@ function ChatPage(_props: ChatPageProps) {
   const [dropdownPosition, setDropdownPosition] = useState<{ top: number; left: number } | null>(null)
   const datePickerRef = useRef<HTMLDivElement>(null) // 日期选择器容器引用
   const dateButtonRef = useRef<HTMLButtonElement>(null) // 日期按钮引用
+  const groupMembersPopoverRef = useRef<HTMLDivElement>(null)
   const groupMembersRequestIdRef = useRef(0)
   
   // 批量语音转文字相关状态
@@ -374,6 +376,7 @@ function ChatPage(_props: ChatPageProps) {
       accountType: inferredType
     })
     setSessionDetail(null)
+    setShowGroupMembersPopover(false)
     groupMembersRequestIdRef.current += 1
     setGroupMembers([])
     setIsLoadingGroupMembers(false)
@@ -402,6 +405,7 @@ function ChatPage(_props: ChatPageProps) {
   // 切换详情面板
   const toggleDetailPanel = useCallback(() => {
     if (!showDetailPanel && currentSessionId) {
+      setShowGroupMembersPopover(false)
       loadSessionDetail(currentSessionId)
       if (currentSessionId.includes('@chatroom')) {
         loadGroupMembers(currentSessionId)
@@ -413,6 +417,20 @@ function ChatPage(_props: ChatPageProps) {
     }
     setShowDetailPanel(!showDetailPanel)
   }, [showDetailPanel, currentSessionId, loadSessionDetail, loadGroupMembers])
+
+  const toggleGroupMembersPopover = useCallback(() => {
+    if (!currentSessionId || !currentSessionId.includes('@chatroom')) return
+
+    const nextOpen = !showGroupMembersPopover
+    if (nextOpen) {
+      setShowDetailPanel(false)
+      void loadGroupMembers(currentSessionId)
+      if (!sessionDetail?.groupInfo?.ownerUsername) {
+        void loadSessionDetail(currentSessionId)
+      }
+    }
+    setShowGroupMembersPopover(nextOpen)
+  }, [currentSessionId, showGroupMembersPopover, loadGroupMembers, loadSessionDetail, sessionDetail?.groupInfo?.ownerUsername])
 
   // 连接数据库
   const connect = useCallback(async () => {
@@ -985,6 +1003,21 @@ function ChatPage(_props: ChatPageProps) {
     }
   }, [showDatePicker])
 
+  // 点击外部关闭群成员弹层
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as Node
+      if (!groupMembersPopoverRef.current?.contains(target)) {
+        setShowGroupMembersPopover(false)
+      }
+    }
+
+    if (showGroupMembersPopover) {
+      document.addEventListener('mousedown', handleClickOutside)
+      return () => document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [showGroupMembersPopover])
+
   // 同步 messages 和 currentSessionId 到 ref，供自动更新使用
   useEffect(() => {
     messagesRef.current = messages
@@ -1152,6 +1185,8 @@ function ChatPage(_props: ChatPageProps) {
       return (a.displayName || a.username).localeCompare((b.displayName || b.username), 'zh-Hans-CN')
     })
   }, [groupMembers, sessionDetail?.groupInfo?.ownerUsername])
+
+  const displayedGroupMemberCount = sessionDetail?.groupInfo?.memberCount ?? (groupMembers.length || undefined)
 
   // 判断是否为群聊
   const isGroupChat = (username: string) => username.includes('@chatroom')
@@ -1425,6 +1460,86 @@ function ChatPage(_props: ChatPageProps) {
                 >
                   <Info size={18} />
                 </button>
+                {currentSession.username.includes('@chatroom') && (
+                  <div className="group-members-popover-wrapper" ref={groupMembersPopoverRef}>
+                    <button
+                      className={`icon-btn group-members-entry-btn ${showGroupMembersPopover ? 'active' : ''}`}
+                      onClick={toggleGroupMembersPopover}
+                      title="群成员列表"
+                    >
+                      {isLoadingGroupMembers && showGroupMembersPopover ? (
+                        <Loader2 size={16} className="spin" />
+                      ) : (
+                        <Users size={16} />
+                      )}
+                      <span className="btn-label">群成员</span>
+                      {displayedGroupMemberCount !== undefined && (
+                        <span className="btn-count">{displayedGroupMemberCount}</span>
+                      )}
+                    </button>
+
+                    {showGroupMembersPopover && (
+                      <div className="group-members-popover-panel" onMouseDown={(e) => e.stopPropagation()}>
+                        <div className="popover-header">
+                          <div className="popover-title">
+                            <Users size={14} />
+                            <span>群成员列表</span>
+                            {displayedGroupMemberCount !== undefined && (
+                              <span className="popover-count">({displayedGroupMemberCount})</span>
+                            )}
+                          </div>
+                          <button
+                            className="popover-close-btn"
+                            onClick={() => setShowGroupMembersPopover(false)}
+                            title="关闭"
+                          >
+                            <X size={14} />
+                          </button>
+                        </div>
+
+                        {isLoadingGroupMembers ? (
+                          <div className="group-members-loading">
+                            <Loader2 size={14} className="spin" />
+                            <span>加载群成员中...</span>
+                          </div>
+                        ) : sortedGroupMembers.length > 0 ? (
+                          <div className="group-member-list">
+                            {sortedGroupMembers.map(member => {
+                              const isOwner = member.username === sessionDetail?.groupInfo?.ownerUsername
+                              const avatarLetter = [...(member.displayName || member.username || '?')][0] || '?'
+
+                              return (
+                                <div key={member.username} className={`group-member-item ${isOwner ? 'is-owner' : ''}`}>
+                                  <div className="group-member-avatar">
+                                    {member.avatarUrl ? (
+                                      <img src={member.avatarUrl} alt="" />
+                                    ) : (
+                                      <span>{avatarLetter}</span>
+                                    )}
+                                  </div>
+                                  <div className="group-member-meta">
+                                    <div className="group-member-name-row">
+                                      <span className="group-member-name">{member.displayName || member.username}</span>
+                                      {isOwner && (
+                                        <span className="group-owner-badge">
+                                          <Crown size={11} />
+                                          <span>群主</span>
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div className="group-member-username">{member.username}</div>
+                                  </div>
+                                </div>
+                              )
+                            })}
+                          </div>
+                        ) : (
+                          <div className="detail-empty-inline">暂无群成员数据</div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
 
