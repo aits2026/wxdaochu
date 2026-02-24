@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { createPortal } from 'react-dom'
-import { Search, MessageSquare, AlertCircle, Loader2, RefreshCw, X, ChevronDown, Info, Calendar, Database, Hash, Image as ImageIcon, Play, Video, Copy, ZoomIn, CheckSquare, Check, Edit, Link, Sparkles, FileText, FileArchive, Users, Mic, CheckCircle, XCircle } from 'lucide-react'
+import { MessageSquare, Loader2, RefreshCw, X, ChevronDown, Info, Calendar, Database, Hash, Image as ImageIcon, Play, Video, Copy, ZoomIn, CheckSquare, Check, Edit, Link, Sparkles, FileText, FileArchive, Users, Mic, CheckCircle, XCircle } from 'lucide-react'
 import { useChatStore } from '../stores/chatStore'
 import { useUpdateStatusStore } from '../stores/updateStatusStore'
 import ChatBackground from '../components/ChatBackground'
@@ -9,17 +9,7 @@ import { getImageXorKey, getImageAesKey, getQuoteStyle } from '../services/confi
 import { LRUCache } from '../utils/lruCache'
 import { LivePhotoIcon } from '../components/LivePhotoIcon'
 import type { ChatSession, Message } from '../types/models'
-import { List, RowComponentProps } from 'react-window'
 import './ChatPage.scss'
-
-interface SessionRowData {
-  sessions: ChatSession[]
-  currentSessionId: string | null
-  onSelect: (s: ChatSession) => void
-  formatTime: (t: number) => string
-}
-
-
 
 interface ChatPageProps {
   // 保留接口以备将来扩展
@@ -165,48 +155,6 @@ function SessionAvatar({ session, size = 48 }: { session: ChatSession; size?: nu
   )
 }
 
-// 会话列表行组件（使用 memo 优化性能）
-const SessionRow = (props: RowComponentProps<SessionRowData>) => {
-  const { index, style, sessions, currentSessionId, onSelect, formatTime } = props
-  const session = sessions[index]
-
-  return (
-    <div
-      style={style}
-      className={`session-item ${currentSessionId === session.username ? 'active' : ''}`}
-      onClick={() => onSelect(session)}
-    >
-      <SessionAvatar session={session} size={48} />
-      <div className="session-info">
-        <div className="session-top">
-          <span className="session-name">{session.displayName || session.username}</span>
-          <span className="session-time">{formatTime(session.lastTimestamp || session.sortTimestamp)}</span>
-        </div>
-        <div className="session-bottom">
-          <span className="session-summary">
-            {(() => {
-              const summary = session.summary || '暂无消息'
-              const firstLine = summary.split('\n')[0]
-              const hasMoreLines = summary.includes('\n')
-              return (
-                <>
-                  <MessageContent content={firstLine} disableLinks={true} />
-                  {hasMoreLines && <span>...</span>}
-                </>
-              )
-            })()}
-          </span>
-          {session.unreadCount > 0 && (
-            <span className="unread-badge">
-              {session.unreadCount > 99 ? '99+' : session.unreadCount}
-            </span>
-          )}
-        </div>
-      </div>
-    </div>
-  )
-}
-
 function ChatPage(_props: ChatPageProps) {
   const [quoteStyle, setQuoteStyle] = useState<'default' | 'wechat'>('default')
 
@@ -217,35 +165,24 @@ function ChatPage(_props: ChatPageProps) {
   const {
     isConnected,
     isConnecting,
-    connectionError,
-    sessions,
-    filteredSessions,
     currentSessionId,
-    isLoadingSessions,
     messages,
     isLoadingMessages,
     isLoadingMore,
     hasMoreMessages,
-    searchKeyword,
     setConnected,
     setConnecting,
     setConnectionError,
-    setSessions,
-    setFilteredSessions,
     setCurrentSession,
-    setLoadingSessions,
     setMessages,
     appendMessages,
     setLoadingMessages,
     setLoadingMore,
     setHasMoreMessages,
-    setSearchKeyword,
     incrementSyncVersion
   } = useChatStore()
 
   const messageListRef = useRef<HTMLDivElement>(null)
-  const searchInputRef = useRef<HTMLInputElement>(null)
-  const sidebarRef = useRef<HTMLDivElement>(null)
   const messagesRef = useRef<Message[]>([])
   const currentSessionIdRef = useRef<string | null>(null)
   const lastUpdateTimeRef = useRef<number>(0)
@@ -253,6 +190,7 @@ function ChatPage(_props: ChatPageProps) {
   const updateStatusTimerRef = useRef<NodeJS.Timeout | null>(null)
   const isUserOperatingRef = useRef<boolean>(false) // 标记用户是否正在操作
   const autoSelectSession = useRef<string | null>(null) // 从 URL 或 IPC 传入的待自动选中会话
+  const sessionMetaRequestIdRef = useRef(0)
   const [currentOffset, setCurrentOffset] = useState(0)
 
   // 更新状态管理
@@ -260,11 +198,10 @@ function ChatPage(_props: ChatPageProps) {
   const isUpdating = useUpdateStatusStore(state => state.isUpdating)
   const [myAvatarUrl, setMyAvatarUrl] = useState<string | undefined>(undefined)
   const [showScrollToBottom, setShowScrollToBottom] = useState(false)
-  const [sidebarWidth, setSidebarWidth] = useState(260)
-  const [isResizing, setIsResizing] = useState(false)
   const [showDetailPanel, setShowDetailPanel] = useState(false)
   const [sessionDetail, setSessionDetail] = useState<SessionDetail | null>(null)
   const [isLoadingDetail, setIsLoadingDetail] = useState(false)
+  const [currentSessionMeta, setCurrentSessionMeta] = useState<Pick<ChatSession, 'username' | 'displayName' | 'avatarUrl' | 'accountType'> | null>(null)
   const [hasImageKey, setHasImageKey] = useState<boolean | null>(null)
   const [contextMenu, setContextMenu] = useState<{
     x: number
@@ -343,6 +280,15 @@ function ChatPage(_props: ChatPageProps) {
       const result = await window.electronAPI.chat.getSessionDetail(sessionId)
       if (result.success && result.detail) {
         setSessionDetail(result.detail)
+        setCurrentSessionMeta(prev => {
+          if (!prev || prev.username !== sessionId) return prev
+          return {
+            ...prev,
+            displayName: result.detail?.displayName || prev.displayName,
+            avatarUrl: result.detail?.avatarUrl || prev.avatarUrl,
+            accountType: sessionId.includes('@chatroom') ? 'group' : prev.accountType
+          }
+        })
       }
     } catch (e) {
       console.error('加载会话详情失败:', e)
@@ -350,6 +296,54 @@ function ChatPage(_props: ChatPageProps) {
       setIsLoadingDetail(false)
     }
   }, [])
+
+  const loadCurrentSessionMeta = useCallback(async (sessionId: string) => {
+    const requestId = ++sessionMetaRequestIdRef.current
+    try {
+      const result = await window.electronAPI.chat.getContactAvatar(sessionId)
+      if (requestId !== sessionMetaRequestIdRef.current) return
+      if (!result) return
+
+      setCurrentSessionMeta(prev => {
+        if (!prev || prev.username !== sessionId) return prev
+        return {
+          ...prev,
+          displayName: result.displayName || prev.displayName,
+          avatarUrl: result.avatarUrl || prev.avatarUrl,
+          accountType: sessionId.includes('@chatroom') ? 'group' : (sessionId.startsWith('gh_') ? 'official' : 'friend')
+        }
+      })
+    } catch (e) {
+      console.error('加载当前会话元信息失败:', e)
+    }
+  }, [])
+
+  const openSessionByUsername = useCallback((username: string) => {
+    const inferredType: ChatSession['accountType'] =
+      username.includes('@chatroom') ? 'group' : (username.startsWith('gh_') ? 'official' : 'friend')
+
+    setCurrentSessionMeta({
+      username,
+      displayName: username,
+      avatarUrl: undefined,
+      accountType: inferredType
+    })
+    setSessionDetail(null)
+
+    if (username === currentSessionId) {
+      setCurrentOffset(0)
+      void loadMessages(username, 0)
+      if (showDetailPanel) void loadSessionDetail(username)
+      void loadCurrentSessionMeta(username)
+      return
+    }
+
+    setCurrentSession(username)
+    setCurrentOffset(0)
+    void loadMessages(username, 0)
+    if (showDetailPanel) void loadSessionDetail(username)
+    void loadCurrentSessionMeta(username)
+  }, [currentSessionId, loadCurrentSessionMeta, loadSessionDetail, setCurrentSession, showDetailPanel])
 
   // 切换详情面板
   const toggleDetailPanel = useCallback(() => {
@@ -369,16 +363,12 @@ function ChatPage(_props: ChatPageProps) {
         setConnected(true)
         const targetSessionId = autoSelectSession.current
 
-        // 从导出页携带 session 参数打开时，优先直达目标会话消息，列表与头像后台补齐
+        // 单会话模式：优先直达目标会话消息，不再加载左侧会话列表
         if (targetSessionId) {
           autoSelectSession.current = null
-          setCurrentSession(targetSessionId)
-          setCurrentOffset(0)
-          void loadMessages(targetSessionId, 0)
-          void loadSessions()
+          openSessionByUsername(targetSessionId)
           void loadMyAvatar()
         } else {
-          await loadSessions()
           await loadMyAvatar()
         }
       } else {
@@ -389,66 +379,7 @@ function ChatPage(_props: ChatPageProps) {
     } finally {
       setConnecting(false)
     }
-  }, [loadMyAvatar])
-
-  // 加载会话列表
-  const loadSessions = async () => {
-    setLoadingSessions(true)
-    try {
-      const result = await window.electronAPI.chat.getSessions()
-      if (result.success && result.sessions) {
-        // 智能合并更新，避免闪烁
-        setSessions((prevSessions: ChatSession[]) => {
-          // 如果是首次加载，直接设置
-          if (prevSessions.length === 0) {
-            return result.sessions!
-          }
-
-          // 创建新会话的 Map，用于快速查找
-          const newSessionsMap = new Map(
-            result.sessions!.map(s => [s.username, s])
-          )
-
-          // 创建旧会话的 Map
-          const oldSessionsMap = new Map(
-            prevSessions.map(s => [s.username, s])
-          )
-
-          // 合并：保留顺序，只更新变化的字段
-          const merged = result.sessions!.map(newSession => {
-            const oldSession = oldSessionsMap.get(newSession.username)
-
-            // 如果是新会话，直接返回
-            if (!oldSession) {
-              return newSession
-            }
-
-            // 检查是否有实质性变化
-            const hasChanges =
-              oldSession.summary !== newSession.summary ||
-              oldSession.lastTimestamp !== newSession.lastTimestamp ||
-              oldSession.unreadCount !== newSession.unreadCount ||
-              oldSession.displayName !== newSession.displayName ||
-              oldSession.avatarUrl !== newSession.avatarUrl
-
-            // 如果有变化，返回新数据；否则保留旧对象引用（避免重新渲染）
-            return hasChanges ? newSession : oldSession
-          })
-
-          return merged
-        })
-      }
-    } catch (e) {
-      console.error('加载会话失败:', e)
-    } finally {
-      setLoadingSessions(false)
-    }
-  }
-
-  // 刷新会话列表
-  const handleRefresh = async () => {
-    await loadSessions()
-  }
+  }, [loadMyAvatar, openSessionByUsername])
 
   // 刷新当前会话消息（清空缓存后重新加载）
   const [isRefreshingMessages, setIsRefreshingMessages] = useState(false)
@@ -459,11 +390,10 @@ function ChatPage(_props: ChatPageProps) {
     try {
       // 清空后端缓存
       await window.electronAPI.chat.refreshCache()
-      // 重新加载会话列表，以确保联系人信息被重新加载
-      await loadSessions()
       // 重新加载消息
       setCurrentOffset(0)
       await loadMessages(currentSessionId, 0)
+      void loadCurrentSessionMeta(currentSessionId)
     } catch (e) {
       console.error('刷新消息失败:', e)
     } finally {
@@ -568,46 +498,6 @@ function ChatPage(_props: ChatPageProps) {
     }
   }, [])
 
-  // 选择会话
-  const handleSelectSession = (session: ChatSession) => {
-    if (session.username === currentSessionId) {
-      // 如果是当前会话，重新加载消息（用于刷新）
-      setCurrentOffset(0)
-      loadMessages(session.username, 0)
-      return
-    }
-    setCurrentSession(session.username)
-    setCurrentOffset(0)
-    loadMessages(session.username, 0)
-    // 重置详情面板
-    setSessionDetail(null)
-    if (showDetailPanel) {
-      loadSessionDetail(session.username)
-    }
-  }
-
-  // 搜索过滤
-  const handleSearch = (keyword: string) => {
-    setSearchKeyword(keyword)
-    if (!keyword.trim()) {
-      setFilteredSessions(sessions)
-      return
-    }
-    const lower = keyword.toLowerCase()
-    const filtered = sessions.filter(s =>
-      s.displayName?.toLowerCase().includes(lower) ||
-      s.username.toLowerCase().includes(lower) ||
-      s.summary.toLowerCase().includes(lower)
-    )
-    setFilteredSessions(filtered)
-  }
-
-  // 关闭搜索框
-  const handleCloseSearch = () => {
-    setSearchKeyword('')
-    setFilteredSessions(sessions)
-  }
-
   // 滚动加载更多 + 显示/隐藏回到底部按钮
   const handleScroll = useCallback(() => {
     if (!messageListRef.current) return
@@ -689,13 +579,6 @@ function ChatPage(_props: ChatPageProps) {
       return
     }
     
-    const session = sessions.find(s => s.username === currentSessionId)
-    
-    if (!session) {
-      alert('未找到当前会话')
-      return
-    }
-    
     if (isBatchTranscribing) {
       return
     }
@@ -725,7 +608,7 @@ function ChatPage(_props: ChatPageProps) {
     setBatchVoiceDates(sortedDates)
     setBatchSelectedDates(new Set(sortedDates)) // 默认全选
     setShowBatchConfirm(true)
-  }, [sessions, currentSessionId, isBatchTranscribing])
+  }, [currentSessionId, isBatchTranscribing])
 
   // 确认批量转写（仅转写选中日期内的语音）
   const confirmBatchTranscribe = useCallback(async () => {
@@ -756,9 +639,6 @@ function ChatPage(_props: ChatPageProps) {
     setBatchVoiceDates([])
     setBatchSelectedDates(new Set())
 
-    const session = sessions.find(s => s.username === currentSessionId)
-    if (!session) return
-    
     setIsBatchTranscribing(true)
     setShowBatchProgress(true) // 显示进度对话框
     setBatchTranscribeProgress({ current: 0, total: voiceMessages.length })
@@ -802,7 +682,7 @@ function ChatPage(_props: ChatPageProps) {
     const transcribeOne = async (msg: any) => {
       try {
         // 检查是否已有缓存
-        const cached = await window.electronAPI.stt.getCachedTranscript(session.username, msg.createTime)
+        const cached = await window.electronAPI.stt.getCachedTranscript(currentSessionId, msg.createTime)
         
         if (cached && cached.success && cached.transcript) {
           return { success: true, cached: true }
@@ -810,7 +690,7 @@ function ChatPage(_props: ChatPageProps) {
 
         // 获取语音数据
         const result = await window.electronAPI.chat.getVoiceData(
-          session.username,
+          currentSessionId,
           String(msg.localId),
           msg.createTime
         )
@@ -822,7 +702,7 @@ function ChatPage(_props: ChatPageProps) {
         // 转写
         const transcribeResult = await window.electronAPI.stt.transcribe(
           result.data,
-          session.username,
+          currentSessionId,
           msg.createTime,
           false
         )
@@ -859,7 +739,7 @@ function ChatPage(_props: ChatPageProps) {
     // 显示结果对话框
     setBatchResult({ success: successCount, fail: failCount })
     setShowBatchResult(true)
-  }, [sessions, currentSessionId, batchSelectedDates, batchVoiceMessages])
+  }, [currentSessionId, batchSelectedDates, batchVoiceMessages])
 
   // 批量转写：按日期的消息数量
   const batchCountByDate = useMemo(() => {
@@ -931,9 +811,6 @@ function ChatPage(_props: ChatPageProps) {
   const handleBatchDecrypt = useCallback(async () => {
     if (!currentSessionId || isBatchDecrypting) return
 
-    const session = sessions.find(s => s.username === currentSessionId)
-    if (!session) return
-
     const result = await window.electronAPI.chat.getAllImageMessages(currentSessionId)
     if (!result.success || !result.images || result.images.length === 0) {
       alert(result.error || '当前会话没有图片消息')
@@ -950,7 +827,7 @@ function ChatPage(_props: ChatPageProps) {
     setBatchImageDates(sortedDates)
     setBatchImageSelectedDates(new Set(sortedDates))
     setShowBatchDecryptConfirm(true)
-  }, [currentSessionId, sessions, isBatchDecrypting])
+  }, [currentSessionId, isBatchDecrypting])
 
   // 确认批量解密（仅解密选中日期内的图片）
   const confirmBatchDecrypt = useCallback(async () => {
@@ -970,9 +847,6 @@ function ChatPage(_props: ChatPageProps) {
       return
     }
 
-    const session = sessions.find(s => s.username === currentSessionId)
-    if (!session) return
-
     setShowBatchDecryptConfirm(false)
     setBatchImageMessages(null)
     setBatchImageDates([])
@@ -986,7 +860,7 @@ function ChatPage(_props: ChatPageProps) {
     for (let i = 0; i < images.length; i++) {
       try {
         const r = await window.electronAPI.image.decrypt({
-          sessionId: session.username,
+          sessionId: currentSessionId,
           imageMd5: images[i].imageMd5,
           imageDatName: images[i].imageDatName,
           force: false
@@ -1003,7 +877,7 @@ function ChatPage(_props: ChatPageProps) {
     setIsBatchDecrypting(false)
     setShowBatchDecryptProgress(false)
     alert(`解密完成：成功 ${success} 张，失败 ${fail} 张`)
-  }, [currentSessionId, sessions, batchImageMessages, batchImageSelectedDates])
+  }, [currentSessionId, batchImageMessages, batchImageSelectedDates])
 
   // 加载当前月份有消息的日期
   useEffect(() => {
@@ -1050,30 +924,6 @@ function ChatPage(_props: ChatPageProps) {
     }
   }, [showDatePicker])
 
-  // 拖动调节侧边栏宽度
-  const handleResizeStart = useCallback((e: React.MouseEvent) => {
-    e.preventDefault()
-    setIsResizing(true)
-
-    const startX = e.clientX
-    const startWidth = sidebarWidth
-
-    const handleMouseMove = (e: MouseEvent) => {
-      const delta = e.clientX - startX
-      const newWidth = Math.min(Math.max(startWidth + delta, 200), 400)
-      setSidebarWidth(newWidth)
-    }
-
-    const handleMouseUp = () => {
-      setIsResizing(false)
-      document.removeEventListener('mousemove', handleMouseMove)
-      document.removeEventListener('mouseup', handleMouseUp)
-    }
-
-    document.addEventListener('mousemove', handleMouseMove)
-    document.addEventListener('mouseup', handleMouseUp)
-  }, [sidebarWidth])
-
   // 同步 messages 和 currentSessionId 到 ref，供自动更新使用
   useEffect(() => {
     messagesRef.current = messages
@@ -1096,81 +946,27 @@ function ChatPage(_props: ChatPageProps) {
     }
   }, [])
 
-  // 当会话列表加载后，自动选中目标会话
-  useEffect(() => {
-    if (!autoSelectSession.current || sessions.length === 0) return
-    const target = sessions.find(s => s.username === autoSelectSession.current)
-    if (target) {
-      autoSelectSession.current = null
-      handleSelectSession(target)
-    }
-  }, [sessions])
-
   // 监听来自主进程的跳转指令（聊天窗口已开启时）
   useEffect(() => {
     const remove = window.electronAPI.chat.onNavigateToSession((username) => {
-      const target = sessions.find(s => s.username === username)
-      if (target) {
-        handleSelectSession(target)
-      } else {
-        autoSelectSession.current = username
-      }
+      autoSelectSession.current = null
+      openSessionByUsername(username)
     })
     return remove
-  }, [sessions])
+  }, [openSessionByUsername])
 
   // 监听会话更新事件（来自后台自动同步）
   useEffect(() => {
     if (!isConnected) return
 
     // 监听会话列表更新
-    const removeSessionsListener = window.electronAPI.chat.onSessionsUpdated?.(async (newSessions) => {
+    const removeSessionsListener = window.electronAPI.chat.onSessionsUpdated?.(async (_newSessions) => {
       // 更新增量更新时间戳
       lastIncrementalUpdateTime = Date.now()
 
-      // 智能合并更新会话列表，避免闪烁
-      setSessions((prevSessions: ChatSession[]) => {
-        // 如果之前没有会话，直接设置
-        if (prevSessions.length === 0) {
-          return newSessions
-        }
-
-        // 创建旧会话的 Map
-        const oldSessionsMap = new Map(
-          prevSessions.map(s => [s.username, s])
-        )
-
-        // 合并：保留顺序，只更新变化的字段
-        const merged = newSessions.map(newSession => {
-          const oldSession = oldSessionsMap.get(newSession.username)
-
-          // 如果是新会话，直接返回
-          if (!oldSession) {
-            return newSession
-          }
-
-          // 检查是否有实质性变化
-          const hasChanges =
-            oldSession.summary !== newSession.summary ||
-            oldSession.lastTimestamp !== newSession.lastTimestamp ||
-            oldSession.unreadCount !== newSession.unreadCount ||
-            oldSession.displayName !== newSession.displayName ||
-            oldSession.avatarUrl !== newSession.avatarUrl
-
-          // 如果有变化，返回新数据；否则保留旧对象引用（避免重新渲染）
-          return hasChanges ? newSession : oldSession
-        })
-
-        return merged
-      })
-
       const currentId = currentSessionIdRef.current
-      // 如果当前没有打开会话，只需要更新列表（App.tsx 已处理）
+      // 单会话模式下，如果当前没有打开会话则无需处理
       if (!currentId) return
-
-      // 2. 检查当前会话是否有新消息
-      const currentSession = newSessions.find(s => s.username === currentId)
-      if (!currentSession) return // 当前会话可能被删除了？
 
       // 简单判断：如果当前会话的 lastTimestamp 变了，或者有新消息
       // 这里我们采取积极策略：只要有更新事件，就尝试拉取最新消息
@@ -1266,34 +1062,22 @@ function ChatPage(_props: ChatPageProps) {
     }
   }, [contextMenu])
 
-  // 格式化会话时间（相对时间）- 与原项目一致
-  const formatSessionTime = (timestamp: number): string => {
-    if (!timestamp) return ''
-
-    const now = Date.now()
-    const msgTime = timestamp * 1000
-    const diff = now - msgTime
-
-    const minutes = Math.floor(diff / 60000)
-    const hours = Math.floor(diff / 3600000)
-
-    if (minutes < 1) return '刚刚'
-    if (minutes < 60) return `${minutes}分钟前`
-    if (hours < 24) return `${hours}小时前`
-
-    // 超过24小时显示日期
-    const date = new Date(msgTime)
-    const nowDate = new Date()
-
-    if (date.getFullYear() === nowDate.getFullYear()) {
-      return `${date.getMonth() + 1}/${date.getDate()}`
-    }
-
-    return `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()}`
-  }
-
   // 获取当前会话信息
-  const currentSession = sessions.find(s => s.username === currentSessionId)
+  const currentSession = useMemo<ChatSession | null>(() => {
+    if (!currentSessionId) return null
+    return {
+      username: currentSessionId,
+      displayName: currentSessionMeta?.displayName || currentSessionId,
+      avatarUrl: currentSessionMeta?.avatarUrl,
+      accountType: currentSessionMeta?.accountType,
+      type: 0,
+      unreadCount: 0,
+      summary: '',
+      sortTimestamp: 0,
+      lastTimestamp: 0,
+      lastMsgType: 0
+    }
+  }, [currentSessionId, currentSessionMeta])
 
   // 判断是否为群聊
   const isGroupChat = (username: string) => username.includes('@chatroom')
@@ -1325,91 +1109,8 @@ function ChatPage(_props: ChatPageProps) {
   }
 
   return (
-    <div className={`chat-page standalone ${isResizing ? 'resizing' : ''}`}>
-      {/* 左侧会话列表 */}
-      <div
-        className="session-sidebar"
-        ref={sidebarRef}
-        style={{ width: sidebarWidth, minWidth: sidebarWidth, maxWidth: sidebarWidth }}
-      >
-        <div className="session-header">
-          <div className="search-row">
-            <div className="search-box expanded">
-              <Search size={14} />
-              <input
-                ref={searchInputRef}
-                type="text"
-                placeholder="搜索"
-                value={searchKeyword}
-                onChange={(e) => handleSearch(e.target.value)}
-              />
-              {searchKeyword && (
-                <button className="close-search" onClick={handleCloseSearch}>
-                  <X size={12} />
-                </button>
-              )}
-            </div>
-            <button
-              className="icon-btn refresh-btn"
-              onClick={handleRefresh}
-              disabled={isLoadingSessions}
-              title="刷新会话列表"
-            >
-              <RefreshCw size={16} className={isLoadingSessions || isUpdating ? 'spin' : ''} />
-            </button>
-          </div>
-        </div>
-
-        {connectionError && (
-          <div className="connection-error">
-            <AlertCircle size={16} />
-            <span>{connectionError}</span>
-            <button onClick={connect}>重试</button>
-          </div>
-        )}
-
-        {isLoadingSessions ? (
-          <div className="loading-sessions">
-            {[1, 2, 3, 4, 5].map(i => (
-              <div key={i} className="skeleton-item">
-                <div className="skeleton-avatar" />
-                <div className="skeleton-content">
-                  <div className="skeleton-line" />
-                  <div className="skeleton-line" />
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : filteredSessions.length > 0 ? (
-          <div className="session-list" style={{ flex: 1, overflow: 'hidden', minHeight: 0 }}>
-            {/* @ts-ignore - 类型定义不匹配但不影响运行 */}
-            <List
-              style={{ height: '100%', width: '100%' }}
-              rowCount={filteredSessions.length}
-              rowHeight={72}
-              rowProps={{
-                sessions: filteredSessions,
-                currentSessionId,
-                onSelect: handleSelectSession,
-                formatTime: formatSessionTime
-              }}
-              rowComponent={SessionRow}
-            />
-          </div>
-
-        ) : (
-          <div className="empty-sessions">
-            <MessageSquare />
-            <p>暂无会话</p>
-            <p className="hint">请先在数据管理页面解密数据库</p>
-          </div>
-        )}
-      </div>
-
-      {/* 拖动调节条 */}
-      <div className="resize-handle" onMouseDown={handleResizeStart} />
-
-      {/* 右侧消息区域 */}
+    <div className="chat-page standalone">
+      {/* 单会话消息区域 */}
       <div className="message-area">
         {currentSession ? (
           <>
@@ -1856,14 +1557,14 @@ function ChatPage(_props: ChatPageProps) {
               </div>
             </div>
             <div className="message-content-wrapper">
-              <div className="message-list">
-                <ChatBackground />
-                <div className="empty-chat">
-                  <MessageSquare />
-                  <p>选择一个会话开始查看聊天记录</p>
+                <div className="message-list">
+                  <ChatBackground />
+                  <div className="empty-chat">
+                    <MessageSquare />
+                    <p>请从导出数据页面选择会话后查看</p>
+                  </div>
                 </div>
               </div>
-            </div>
           </>
         )}
       </div>
