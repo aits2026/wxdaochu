@@ -524,6 +524,44 @@ interface Contact {
   avatarUrl?: string
 }
 
+type UsernameResolution =
+  | { username: string; matched: true; source: 'exact' | 'normalized' | 'label-contact' | 'label-post' | 'heuristic-clean' }
+  | { username: string; matched: false; source: 'fallback' }
+  | { username: null; matched: false; source: 'none' }
+
+const normalizeMatchText = (value?: string) => (value || '').trim().toLowerCase()
+
+const cleanSnsUsernameCandidate = (value?: string) => {
+  const trimmed = (value || '').trim()
+  if (!trimmed) return ''
+
+  if (trimmed.toLowerCase().startsWith('wxid_')) {
+    const match = trimmed.match(/^(wxid_[a-zA-Z0-9]+)/i)
+    if (match) return match[1]
+    return trimmed
+  }
+
+  const suffixMatch = trimmed.match(/^(.+)_([a-zA-Z0-9]{4})$/)
+  if (suffixMatch) return suffixMatch[1]
+
+  return trimmed
+}
+
+const buildUsernameCandidates = (value?: string) => {
+  const raw = (value || '').trim()
+  if (!raw) return []
+  const cleaned = cleanSnsUsernameCandidate(raw)
+  return Array.from(new Set([raw, cleaned].filter(Boolean)))
+}
+
+const usernamesLooselyEqual = (a?: string, b?: string) => {
+  const aNorm = normalizeMatchText(a)
+  const bNorm = normalizeMatchText(b)
+  if (!aNorm || !bNorm) return false
+  if (aNorm === bNorm) return true
+  return normalizeMatchText(cleanSnsUsernameCandidate(aNorm)) === normalizeMatchText(cleanSnsUsernameCandidate(bNorm))
+}
+
 function MomentsWindow() {
   const [isLoading, setIsLoading] = useState(true)
   const [loadingNewer, setLoadingNewer] = useState(false)
@@ -536,6 +574,7 @@ function MomentsWindow() {
   const [selectedUsernames, setSelectedUsernames] = useState<string[]>([])
   const [jumpTargetDate, setJumpTargetDate] = useState<Date | undefined>(undefined)
   const [contacts, setContacts] = useState<Contact[]>([])
+  const [contactsLoaded, setContactsLoaded] = useState(false)
   const [contactSearch, setContactSearch] = useState('')
   const [isSidebarOpen, setIsSidebarOpen] = useState(true)
   const [showJumpDialog, setShowJumpDialog] = useState(false)
@@ -543,6 +582,7 @@ function MomentsWindow() {
   const [selfProfile, setSelfProfile] = useState<SelfProfile | null>(null)
   const [pendingMomentsPresetRequest, setPendingMomentsPresetRequest] = useState<MomentsPresetPayload | null>(null)
   const [activeUserPresetFilter, setActiveUserPresetFilter] = useState<{ username: string; label: string } | null>(null)
+  const [presetResolutionNotice, setPresetResolutionNotice] = useState<string | null>(null)
 
   // 其他状态
   const [previewImage, setPreviewImage] = useState<{ src: string, isVideo?: boolean, liveVideoPath?: string } | null>(null)
@@ -575,10 +615,29 @@ function MomentsWindow() {
     setContactSearch(options?.contactSearchText || '')
     setSelectedUsernames([targetUsername])
     setActiveUserPresetFilter({ username: targetUsername, label })
+    setPresetResolutionNotice(null)
     setIsSidebarOpen(true)
   }, [])
 
+  const applyUserPresetSearchFallback = useCallback((payload: { username?: string; label?: string }) => {
+    const contactSearchText = (
+      (payload.label || '').trim().replace(/的朋友圈\s*$/, '').trim()
+      || (payload.username || '').trim()
+    )
+
+    setSearchKeyword('')
+    setJumpTargetDate(undefined)
+    setSelectedUsernames([])
+    setActiveUserPresetFilter(null)
+    setContactSearch(contactSearchText)
+    setIsSidebarOpen(true)
+
+    const displayText = contactSearchText || '该联系人'
+    setPresetResolutionNotice(`未精确匹配到“${displayText}”，已在左侧通讯录填入搜索词，请手动选择联系人。`)
+  }, [])
+
   const requestMomentsPreset = useCallback((payload: MomentsPresetPayload) => {
+    setPresetResolutionNotice(null)
     if (payload.preset === 'user') {
       const contactSearchText = (
         (payload.label || '').trim().replace(/的朋友圈\s*$/, '').trim()
@@ -592,77 +651,120 @@ function MomentsWindow() {
     setPendingMomentsPresetRequest(payload)
   }, [])
 
-  const resolveUserMomentsUsername = useCallback((payload: { username?: string; label?: string }): string | null => {
-    const normalized = (value?: string) => (value || '').trim().toLowerCase()
-
-    const exactUsernameCandidates = Array.from(new Set(
-      [payload.username]
-        .map(v => v?.trim())
-        .filter((v): v is string => !!v)
+  const findKnownUsernameMatch = useCallback((rawCandidates: Array<string | undefined>): UsernameResolution => {
+    const candidates = Array.from(new Set(
+      rawCandidates
+        .flatMap(v => buildUsernameCandidates(v))
+        .map(v => v.trim())
+        .filter(Boolean)
     ))
 
-    for (const candidate of exactUsernameCandidates) {
-      if (contacts.some(c => c.username === candidate)) return candidate
-      if (posts.some(p => p.username === candidate)) return candidate
+    if (candidates.length === 0) {
+      return { username: null, matched: false, source: 'none' }
     }
+
+    for (const candidate of candidates) {
+      if (contacts.some(c => c.username === candidate)) return { username: candidate, matched: true, source: 'exact' }
+      if (posts.some(p => p.username === candidate)) return { username: candidate, matched: true, source: 'exact' }
+    }
+
+    const contactLooseMatches = Array.from(new Set(
+      contacts
+        .filter(c => candidates.some(candidate => usernamesLooselyEqual(c.username, candidate)))
+        .map(c => c.username)
+        .filter(Boolean)
+    ))
+    if (contactLooseMatches.length === 1) {
+      return { username: contactLooseMatches[0], matched: true, source: 'normalized' }
+    }
+
+    const postLooseMatches = Array.from(new Set(
+      posts
+        .filter(p => candidates.some(candidate => usernamesLooselyEqual(p.username, candidate)))
+        .map(p => p.username)
+        .filter(Boolean)
+    ))
+    if (postLooseMatches.length === 1) {
+      return { username: postLooseMatches[0], matched: true, source: 'normalized' }
+    }
+
+    const primaryRaw = (rawCandidates.find(v => (v || '').trim()) || '').trim()
+    const primaryClean = cleanSnsUsernameCandidate(primaryRaw)
+    if (primaryClean && primaryClean !== primaryRaw) {
+      return { username: primaryClean, matched: true, source: 'heuristic-clean' }
+    }
+
+    return { username: candidates[0], matched: false, source: 'fallback' }
+  }, [contacts, posts])
+
+  const resolveUserMomentsUsername = useCallback((payload: { username?: string; label?: string }): UsernameResolution => {
+    const usernameMatch = findKnownUsernameMatch([payload.username])
+    if (usernameMatch.matched) return usernameMatch
 
     const rawLabel = (payload.label || '').trim()
     const labelBase = rawLabel.replace(/的朋友圈$/, '').trim()
     const nameCandidates = Array.from(new Set(
       [labelBase]
-        .map(v => normalized(v))
+        .map(v => normalizeMatchText(v))
         .filter(Boolean)
     ))
 
     for (const name of nameCandidates) {
-      const contactMatches = contacts.filter(c => normalized(c.displayName) === name || normalized(c.username) === name)
-      if (contactMatches.length === 1) return contactMatches[0].username
+      const contactMatches = Array.from(new Set(
+        contacts
+          .filter(c => normalizeMatchText(c.displayName) === name || normalizeMatchText(c.username) === name)
+          .map(c => c.username)
+          .filter(Boolean)
+      ))
+      if (contactMatches.length === 1) {
+        return { username: contactMatches[0], matched: true, source: 'label-contact' }
+      }
 
-      const postMatches = Array.from(new Set(posts
-        .filter(p => normalized(p.nickname) === name)
-        .map(p => p.username)
-        .filter(Boolean)))
-      if (postMatches.length === 1) return postMatches[0]
+      const postMatches = Array.from(new Set(
+        posts
+          .filter(p => normalizeMatchText(p.nickname) === name)
+          .map(p => p.username)
+          .filter(Boolean)
+      ))
+      if (postMatches.length === 1) {
+        return { username: postMatches[0], matched: true, source: 'label-post' }
+      }
     }
 
-    return exactUsernameCandidates[0] || null
-  }, [contacts, posts])
+    return usernameMatch
+  }, [contacts, posts, findKnownUsernameMatch])
 
   const resolveSelfMomentsUsername = useCallback((usernameFromPayload?: string): string | null => {
-    const normalized = (value?: string) => (value || '').trim().toLowerCase()
-
-    const exactUsernameCandidates = Array.from(new Set(
-      [usernameFromPayload, selfProfile?.wxid, selfWxidRef.current]
-        .map(v => v?.trim())
-        .filter((v): v is string => !!v)
-    ))
-
-    for (const candidate of exactUsernameCandidates) {
-      if (contacts.some(c => c.username === candidate)) return candidate
-      if (posts.some(p => p.username === candidate)) return candidate
-    }
+    const usernameMatch = findKnownUsernameMatch([usernameFromPayload, selfProfile?.wxid, selfWxidRef.current])
+    if (usernameMatch.matched) return usernameMatch.username
 
     const nicknameCandidates = Array.from(new Set(
       [selfProfile?.nickName, selfProfile?.alias]
-        .map(v => normalized(v))
+        .map(v => normalizeMatchText(v))
         .filter(Boolean)
     ))
 
     for (const name of nicknameCandidates) {
-      const contactMatches = contacts.filter(c => normalized(c.displayName) === name || normalized(c.username) === name)
-      if (contactMatches.length === 1) return contactMatches[0].username
+      const contactMatches = Array.from(new Set(
+        contacts
+          .filter(c => normalizeMatchText(c.displayName) === name || normalizeMatchText(c.username) === name)
+          .map(c => c.username)
+          .filter(Boolean)
+      ))
+      if (contactMatches.length === 1) return contactMatches[0]
 
-      const postMatches = Array.from(new Set(posts
-        .filter(p => normalized(p.nickname) === name)
-        .map(p => p.username)
-        .filter(Boolean)))
+      const postMatches = Array.from(new Set(
+        posts
+          .filter(p => normalizeMatchText(p.nickname) === name)
+          .map(p => p.username)
+          .filter(Boolean)
+      ))
       if (postMatches.length === 1) return postMatches[0]
     }
 
     // 最后兜底（如果没有映射成功，至少尝试现有值）
-    const fallback = exactUsernameCandidates[0]
-    return fallback || null
-  }, [contacts, posts, selfProfile])
+    return usernameMatch.username
+  }, [contacts, posts, selfProfile, findKnownUsernameMatch])
 
   // 处理滚动，当有新筛选项时回滚到顶部
   useEffect(() => {
@@ -675,6 +777,7 @@ function MomentsWindow() {
 
   // 加载联系人
   const loadContacts = useCallback(async () => {
+    setContactsLoaded(false)
     try {
       const result = await window.electronAPI.chat.getSessions()
       if (result.success && result.sessions) {
@@ -698,6 +801,8 @@ function MomentsWindow() {
       }
     } catch (error) {
       console.error('Failed to load contacts:', error)
+    } finally {
+      setContactsLoaded(true)
     }
   }, [])
 
@@ -763,29 +868,41 @@ function MomentsWindow() {
     if (!pendingMomentsPresetRequest) return
 
     if (pendingMomentsPresetRequest.preset === 'user') {
-      const hasResolutionContext = contacts.length > 0 || posts.length > 0
-      if (!hasResolutionContext && !(pendingMomentsPresetRequest.username || '').trim()) return
+      const hasResolutionContext = contactsLoaded || contacts.length > 0 || posts.length > 0 || !isLoading
+      if (!hasResolutionContext) return
 
-      const targetUsername = resolveUserMomentsUsername(pendingMomentsPresetRequest)
-      if (!targetUsername) {
+      const resolution = resolveUserMomentsUsername(pendingMomentsPresetRequest)
+      if (!resolution.username) {
         console.warn('[MomentsWindow] 无法应用“指定联系人朋友圈”筛选：未解析到对应用户名')
+        applyUserPresetSearchFallback(pendingMomentsPresetRequest)
         setPendingMomentsPresetRequest(null)
         return
       }
+
+      if (!resolution.matched) {
+        console.warn('[MomentsWindow] 指定联系人朋友圈筛选未精确命中，回退到通讯录搜索', {
+          username: pendingMomentsPresetRequest.username,
+          label: pendingMomentsPresetRequest.label
+        })
+        applyUserPresetSearchFallback(pendingMomentsPresetRequest)
+        setPendingMomentsPresetRequest(null)
+        return
+      }
+
       const contactSearchText = (
         (pendingMomentsPresetRequest.label || '').trim().replace(/的朋友圈$/, '').trim()
         || (pendingMomentsPresetRequest.username || '').trim()
       )
       applyResolvedUserMomentsPreset(
-        targetUsername,
-        pendingMomentsPresetRequest.label?.trim() || `${targetUsername}的朋友圈`,
+        resolution.username,
+        pendingMomentsPresetRequest.label?.trim() || `${resolution.username}的朋友圈`,
         { contactSearchText }
       )
       setPendingMomentsPresetRequest(null)
       return
     }
 
-    const hasResolutionContext = contacts.length > 0 || posts.length > 0 || !!selfProfile || !!selfWxidRef.current
+    const hasResolutionContext = contactsLoaded || contacts.length > 0 || posts.length > 0 || !!selfProfile || !!selfWxidRef.current || !isLoading
     if (!hasResolutionContext) return
 
     const resolvedUsername = resolveSelfMomentsUsername(pendingMomentsPresetRequest.username)
@@ -801,7 +918,7 @@ function MomentsWindow() {
       { contactSearchText: '' }
     )
     setPendingMomentsPresetRequest(null)
-  }, [pendingMomentsPresetRequest, contacts.length, posts.length, selfProfile, resolveSelfMomentsUsername, resolveUserMomentsUsername, applyResolvedUserMomentsPreset])
+  }, [pendingMomentsPresetRequest, contactsLoaded, contacts.length, posts.length, isLoading, selfProfile, resolveSelfMomentsUsername, resolveUserMomentsUsername, applyResolvedUserMomentsPreset, applyUserPresetSearchFallback])
 
   // 加载数据
   const loadPosts = useCallback(async (options: { reset?: boolean, direction?: 'older' | 'newer' } = {}) => {
@@ -941,6 +1058,7 @@ function MomentsWindow() {
 
   const toggleUserSelection = (username: string) => {
     setJumpTargetDate(undefined) // 切换用户时清除时间筛选
+    setPresetResolutionNotice(null)
     setSelectedUsernames(prev =>
       prev.includes(username)
         ? prev.filter(u => u !== username)
@@ -953,6 +1071,7 @@ function MomentsWindow() {
     setSelectedUsernames([])
     setJumpTargetDate(undefined)
     setActiveUserPresetFilter(null)
+    setPresetResolutionNotice(null)
   }
 
   // 导出朋友圈为 HTML
@@ -1547,6 +1666,22 @@ document.querySelectorAll('.vi video').forEach(function(v) {
                   }}
                 >
                   清除
+                </button>
+              </div>
+            )}
+            {presetResolutionNotice && (
+              <div className="moments-preset-warning-banner" role="status" aria-live="polite">
+                <div className="warning-label">
+                  <AlertTriangle size={14} />
+                  <span>{presetResolutionNotice}</span>
+                </div>
+                <button
+                  type="button"
+                  className="warning-dismiss-btn"
+                  onClick={() => setPresetResolutionNotice(null)}
+                  aria-label="关闭提示"
+                >
+                  <X size={14} />
                 </button>
               </div>
             )}

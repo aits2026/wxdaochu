@@ -1797,7 +1797,12 @@ function ExportPage() {
                                   type="button"
                                   className="group-friend-count-btn"
                                   onClick={async () => {
-                                    const targetUsername = (selectedSession || sessionDetail.wxid || '').trim()
+                                    const targetUsername = (
+                                      sessionDetail.wxid
+                                      || session?.username
+                                      || selectedSession
+                                      || ''
+                                    ).trim()
                                     if (!targetUsername) return
                                     const targetName = (sessionDetail.remark || sessionDetail.nickName || session?.displayName || targetUsername).trim()
                                     try {

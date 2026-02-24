@@ -447,6 +447,48 @@
     }
   }
 
+  .moments-preset-warning-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 16px;
+    background: rgba(255, 152, 0, 0.08);
+    border-bottom: 1px solid rgba(255, 152, 0, 0.2);
+
+    .warning-label {
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: #c77700;
+      font-size: 12px;
+
+      span {
+        line-height: 1.4;
+      }
+    }
+
+    .warning-dismiss-btn {
+      flex-shrink: 0;
+      border: none;
+      background: rgba(255, 152, 0, 0.12);
+      color: #c77700;
+      width: 24px;
+      height: 24px;
+      border-radius: 999px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: background 0.15s ease;
+
+      &:hover {
+        background: rgba(255, 152, 0, 0.2);
+      }
+    }
+  }
+
   .moments-content {
     flex: 1;
     overflow-y: auto;
