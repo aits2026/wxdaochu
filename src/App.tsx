@@ -208,9 +208,9 @@ function App() {
             setDbConnected(true, dbPath)
             // 预加载用户信息
             await preloadUserInfo()
-            // 如果当前在欢迎页，跳转到首页
+            // 如果当前在欢迎页，跳转到导出数据页
             if (window.location.hash === '#/' || window.location.hash === '') {
-              navigate('/home')
+              navigate('/export')
             }
             return
           }
@@ -224,9 +224,9 @@ function App() {
             setDbConnected(true, dbPath)
             // 预加载用户信息
             await preloadUserInfo()
-            // 如果当前在欢迎页，跳转到首页
+            // 如果当前在欢迎页，跳转到导出数据页
             if (window.location.hash === '#/' || window.location.hash === '') {
-              navigate('/home')
+              navigate('/export')
             }
           } else {
             console.log('自动连接失败:', result.error)
