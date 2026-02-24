@@ -4302,40 +4302,188 @@ class ChatService extends EventEmitter {
     if (!this.contactDb) return undefined
 
     try {
+      const quoteIdent = (name: string) => `"${String(name).replace(/"/g, '""')}"`
+      const normalizeKey = (name: string) => String(name || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+      const getRowValueByAliases = (row: any, aliases: string[]) => {
+        if (!row || typeof row !== 'object') return undefined
+        const aliasSet = new Set(aliases.map(normalizeKey))
+        for (const key of Object.keys(row)) {
+          if (aliasSet.has(normalizeKey(key))) return row[key]
+        }
+        return undefined
+      }
+      const normalizeOwnerCandidate = (value: any): string | undefined => {
+        if (value == null) return undefined
+        let s = String(value).replace(/\0/g, '').trim()
+        if (!s) return undefined
+        s = s.replace(/^<!\[CDATA\[/i, '').replace(/\]\]>$/i, '').trim()
+        if (!s) return undefined
+        // 有些字段会把字符串包在引号里
+        if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
+          s = s.slice(1, -1).trim()
+        }
+        if (!s) return undefined
+        // 排除明显不是 username 的文本
+        if (/\s/.test(s)) return undefined
+        if (s.length < 2 || s.length > 128) return undefined
+        if (/^[0-9]+$/.test(s)) return undefined
+        if (/[<>{}\\]/.test(s)) return undefined
+        // 常见微信 username 允许字符（覆盖 wxid、gh_、@openim 等）
+        if (!/^[A-Za-z0-9_@.\-+]+$/.test(s)) return undefined
+        return s
+      }
+      const extractOwnerFromText = (text: string): string | undefined => {
+        if (!text) return undefined
+        const patterns = [
+          /<roomowner>\s*(?:<!\[CDATA\[)?([^<\]\s]+)(?:\]\]>)?\s*<\/roomowner>/i,
+          /<ownerusername>\s*(?:<!\[CDATA\[)?([^<\]\s]+)(?:\]\]>)?\s*<\/ownerusername>/i,
+          /<chatroomowner>\s*(?:<!\[CDATA\[)?([^<\]\s]+)(?:\]\]>)?\s*<\/chatroomowner>/i,
+          /<room_owner>\s*(?:<!\[CDATA\[)?([^<\]\s]+)(?:\]\]>)?\s*<\/room_owner>/i,
+          /"(?:roomowner|room_owner|ownerusername|owner_user_name|chatroomowner|m_nsRoomOwner)"\s*:\s*"([^"]+)"/i,
+          /'(?:roomowner|room_owner|ownerusername|owner_user_name|chatroomowner|m_nsRoomOwner)'\s*:\s*'([^']+)'/i,
+          /\b(?:roomowner|room_owner|ownerusername|owner_user_name|chatroomowner|m_nsRoomOwner)\b\s*[=:]\s*["']?([A-Za-z0-9_@.\-+]{2,128})["']?/i,
+        ]
+        for (const pattern of patterns) {
+          const match = pattern.exec(text)
+          const normalized = normalizeOwnerCandidate(match?.[1])
+          if (normalized) return normalized
+        }
+        return undefined
+      }
+      const decodeFieldToText = (raw: any): string => {
+        if (raw == null) return ''
+        if (typeof raw === 'string') return raw
+        return this.decodeMaybeCompressed(raw)
+      }
+
+      const name2IdTableRow = this.contactDb.prepare(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('name2id','Name2Id') LIMIT 1"
+      ).get() as any
+      const name2IdTable = name2IdTableRow?.name as string | undefined
+      const resolveUsernameByName2IdRowid = (raw: any): string | undefined => {
+        if (!name2IdTable || raw == null) return undefined
+        const id = Number(raw)
+        if (!Number.isFinite(id)) return undefined
+        try {
+          const row = this.contactDb!.prepare(
+            `SELECT * FROM ${quoteIdent(name2IdTable)} WHERE rowid = ? LIMIT 1`
+          ).get(id) as any
+          const username = getRowValueByAliases(row, ['username', 'user_name'])
+          return normalizeOwnerCandidate(username)
+        } catch {
+          return undefined
+        }
+      }
+
+      const getRowsForChatroomTable = (tableName: string): any[] => {
+        try {
+          const columnRows = this.contactDb!.prepare(`PRAGMA table_info(${quoteIdent(tableName)})`).all() as any[]
+          const columnNames = columnRows.map((c: any) => String(c.name))
+          const selectorCols = columnNames.filter((col) => {
+            const key = normalizeKey(col)
+            return [
+              'chatroomname',
+              'chatroom_name',
+              'username',
+              'user_name',
+              'strusrname',
+              'usrname',
+              'talker'
+            ].includes(key)
+          })
+
+          if (selectorCols.length === 0) return []
+          const where = selectorCols.map(col => `${quoteIdent(col)} = ?`).join(' OR ')
+          const params = selectorCols.map(() => chatroomId)
+          return this.contactDb!.prepare(
+            `SELECT * FROM ${quoteIdent(tableName)} WHERE ${where}`
+          ).all(...params) as any[]
+        } catch {
+          return []
+        }
+      }
+
+      const scanRowForOwnerUsername = (row: any): string | undefined => {
+        // 1) 先尝试显式 owner 列（最可靠）
+        const explicitOwner = getRowValueByAliases(row, [
+          'roomowner',
+          'room_owner',
+          'ownerusername',
+          'owner_user_name',
+          'chatroomowner',
+          'owner',
+          'm_nsRoomOwner'
+        ])
+        const explicitOwnerUsername = normalizeOwnerCandidate(explicitOwner)
+        if (explicitOwnerUsername) return explicitOwnerUsername
+
+        // 2) 兼容 owner_id / room_owner_id 等 rowid 场景
+        const explicitOwnerId = getRowValueByAliases(row, [
+          'ownerid',
+          'owner_id',
+          'roomownerid',
+          'room_owner_id',
+          'chatroomownerid'
+        ])
+        const ownerById = resolveUsernameByName2IdRowid(explicitOwnerId)
+        if (ownerById) return ownerById
+
+        // 3) 从常见房间数据字段解析 XML/JSON/BLOB
+        const preferredPayloadFields = [
+          'room_data',
+          'roomdata',
+          'ext_buffer',
+          'extbuffer',
+          'member_list',
+          'memberlist',
+          'chatroom_data',
+          'chatroomdata',
+          'room_info',
+          'roominfo'
+        ]
+        for (const fieldAlias of preferredPayloadFields) {
+          const value = getRowValueByAliases(row, [fieldAlias])
+          const text = decodeFieldToText(value)
+          const owner = extractOwnerFromText(text)
+          if (owner) return owner
+        }
+
+        // 4) 最后遍历其余可能的文本/BLOB 字段（兼容不同版本字段名）
+        for (const [rawKey, rawValue] of Object.entries(row || {})) {
+          if (rawValue == null) continue
+          const key = normalizeKey(rawKey)
+          if (!/(room|member|owner|data|buffer|xml|json)/.test(key)) continue
+          const text = decodeFieldToText(rawValue)
+          const owner = extractOwnerFromText(text)
+          if (owner) return owner
+        }
+
+        return undefined
+      }
+
       const tables = this.contactDb.prepare(
         "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '%chatroom%'"
       ).all() as any[]
 
       for (const t of tables) {
         try {
-          const rows = this.contactDb.prepare(
-            `SELECT * FROM ${t.name} WHERE chatroom_name = ? OR username = ?`
-          ).all(chatroomId, chatroomId) as any[]
+          const rows = getRowsForChatroomTable(String(t.name))
 
           for (const row of rows) {
-            const rawRoomData = row.room_data ?? row.ext_buffer ?? row.member_list ?? ''
-            const roomData = typeof rawRoomData === 'string'
-              ? rawRoomData
-              : this.decodeMaybeCompressed(rawRoomData)
-            if (!roomData) continue
-
-            const patterns = [
-              /<roomowner>(.*?)<\/roomowner>/i,
-              /<ownerusername>(.*?)<\/ownerusername>/i,
-              /<chatroomowner>(.*?)<\/chatroomowner>/i,
-              /"roomowner"\s*:\s*"([^"]+)"/i,
-              /"owner(?:username)?"\s*:\s*"([^"]+)"/i,
-            ]
-            for (const pattern of patterns) {
-              const match = pattern.exec(roomData)
-              if (match?.[1]) {
-                const owner = String(match[1]).trim()
-                if (owner) return owner
-              }
-            }
+            const owner = scanRowForOwnerUsername(row)
+            if (owner) return owner
           }
         } catch { }
       }
+
+      // 一些版本把群资料存在 contact 表里，补一层兜底
+      try {
+        const contactRow = this.contactDb.prepare(
+          `SELECT * FROM ${quoteIdent('contact')} WHERE username = ? LIMIT 1`
+        ).get(chatroomId) as any
+        const owner = scanRowForOwnerUsername(contactRow)
+        if (owner) return owner
+      } catch { }
     } catch { }
 
     return undefined
