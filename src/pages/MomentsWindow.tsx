@@ -579,6 +579,16 @@ function MomentsWindow() {
   }, [])
 
   const requestMomentsPreset = useCallback((payload: MomentsPresetPayload) => {
+    if (payload.preset === 'user') {
+      const contactSearchText = (
+        (payload.label || '').trim().replace(/的朋友圈\s*$/, '').trim()
+        || (payload.username || '').trim()
+      )
+      if (contactSearchText) {
+        setContactSearch(contactSearchText)
+        setIsSidebarOpen(true)
+      }
+    }
     setPendingMomentsPresetRequest(payload)
   }, [])
 
