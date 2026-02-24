@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { FileText, CheckCircle, XCircle, User } from 'lucide-react'
+import { CheckCircle, XCircle, User } from 'lucide-react'
 import { useAppStore, UserInfo } from '../stores/appStore'
 import WhatsNewModal from '../components/WhatsNewModal'
 import './HomePage.scss'
@@ -157,15 +157,6 @@ function HomePage() {
             </button>
           </div>
         )}
-      </div>
-
-      <div className="tips">
-        <h3><FileText size={16} /> 使用提示</h3>
-        <ul>
-          <li>联网功能仅用来支持在线更新！</li>
-          <li>记得到「数据管理」界面解密数据库哦！</li>
-          <li>除使用 AI 功能外，所有数据仅在本地处理，不会上传到任何服务器！</li>
-        </ul>
       </div>
     </div>
   )

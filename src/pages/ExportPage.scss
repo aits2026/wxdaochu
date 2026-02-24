@@ -158,6 +158,82 @@
     }
   }
 
+  .session-account-status-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .session-account-tips-wrap {
+    position: relative;
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+  }
+
+  .session-account-tips-btn {
+    width: 24px;
+    height: 24px;
+    border-radius: 999px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--text-tertiary);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.15s ease;
+
+    &:hover {
+      color: var(--text-primary);
+      background: var(--bg-secondary);
+      border-color: var(--border-color);
+    }
+
+    &.active {
+      color: var(--primary);
+      background: rgba(var(--primary-rgb), 0.08);
+      border-color: rgba(var(--primary-rgb), 0.2);
+    }
+  }
+
+  .session-account-tips-popover {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    z-index: 100;
+    width: min(280px, calc(100vw - 40px));
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+    padding: 10px 12px;
+  }
+
+  .session-account-tips-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 6px;
+  }
+
+  .session-account-tips-list {
+    margin: 0;
+    padding-left: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.45;
+
+    li {
+      margin: 0;
+    }
+  }
+
   .search-bar {
     display: flex;
     align-items: center;

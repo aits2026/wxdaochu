@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useDeferredValue, useMemo, useRef, startTransition } from 'react'
-import { Search, Download, FolderOpen, RefreshCw, Check, FileJson, FileText, Table, Loader2, X, FileSpreadsheet, Database, FileCode, CheckCircle, XCircle, ExternalLink, MessageSquare, Users, User, Filter, Image, Video, CircleUserRound, Smile, Mic, Newspaper, ChevronDown, MoreHorizontal, ArrowLeft, Eye, Aperture } from 'lucide-react'
+import { Search, Download, FolderOpen, RefreshCw, Check, FileJson, FileText, Table, Loader2, X, FileSpreadsheet, Database, FileCode, CheckCircle, XCircle, ExternalLink, MessageSquare, Users, User, Filter, Image, Video, CircleUserRound, Smile, Mic, Newspaper, ChevronDown, MoreHorizontal, ArrowLeft, Eye, Aperture, CircleHelp } from 'lucide-react'
 import { List, RowComponentProps } from 'react-window'
 import DateRangePicker from '../components/DateRangePicker'
 import { useTitleBarStore } from '../stores/titleBarStore'
@@ -181,6 +181,7 @@ function ExportPage() {
   const [exportRecords, setExportRecords] = useState<{ exportTime: number; format: string; messageCount: number }[]>([])
   const [showExportSettings, setShowExportSettings] = useState(false)
   const [showMoreMenu, setShowMoreMenu] = useState(false)
+  const [showUsageTipsPopover, setShowUsageTipsPopover] = useState(false)
   const [options, setOptions] = useState<ExportOptions>({
     format: 'json',
     startDate: '',
@@ -762,15 +763,52 @@ function ExportPage() {
                       : (exportAccountInfo.wxid ? `wxid: ${exportAccountInfo.wxid}` : '未识别账号信息'))
                     : '请先配置并连接数据源'}
                 </div>
-                <div className={`session-account-status ${exportAccountInfo.connected ? 'connected' : 'disconnected'}`}>
-                  <span className="status-dot" />
-                  <span>{exportAccountInfo.connected ? '已连接数据库' : '未连接'}</span>
+                <div className="session-account-status-row">
+                  <div className={`session-account-status ${exportAccountInfo.connected ? 'connected' : 'disconnected'}`}>
+                    <span className="status-dot" />
+                    <span>{exportAccountInfo.connected ? '已连接数据库' : '未连接'}</span>
+                  </div>
+                  <div className="session-account-tips-wrap">
+                    <button
+                      type="button"
+                      className={`session-account-tips-btn ${showUsageTipsPopover ? 'active' : ''}`}
+                      title="使用提示"
+                      onClick={() => {
+                        setShowUsageTipsPopover(v => {
+                          const next = !v
+                          if (next) setShowMoreMenu(false)
+                          return next
+                        })
+                      }}
+                    >
+                      <CircleHelp size={14} />
+                    </button>
+                    {showUsageTipsPopover && (
+                      <>
+                        <div className="more-menu-overlay" onClick={() => setShowUsageTipsPopover(false)} />
+                        <div className="session-account-tips-popover">
+                          <div className="session-account-tips-title">使用提示</div>
+                          <ul className="session-account-tips-list">
+                            <li>联网功能仅用来支持在线更新！</li>
+                            <li>记得到「数据管理」界面解密数据库哦！</li>
+                            <li>除使用 AI 功能外，所有数据仅在本地处理，不会上传到任何服务器！</li>
+                          </ul>
+                        </div>
+                      </>
+                    )}
+                  </div>
                 </div>
               </div>
               <div className="session-more-wrap">
                 <button
                   className="session-more-btn"
-                  onClick={() => setShowMoreMenu(v => !v)}
+                  onClick={() => {
+                    setShowMoreMenu(v => {
+                      const next = !v
+                      if (next) setShowUsageTipsPopover(false)
+                      return next
+                    })
+                  }}
                   title="更多操作"
                 >
                   <MoreHorizontal size={16} />
