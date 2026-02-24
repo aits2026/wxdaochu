@@ -518,7 +518,7 @@ function WelcomePage({ standalone = false }: WelcomePageProps) {
                 }
               }}
             >
-              进入首页
+              进入导出数据
             </button>
           </div>
         </div>

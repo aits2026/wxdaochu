@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
-import { Home, MessageSquare, BarChart3, Users, FileText, Database, Settings, SquareChevronLeft, SquareChevronRight, Download, Aperture } from 'lucide-react'
+import { MessageSquare, BarChart3, Users, FileText, Database, Settings, SquareChevronLeft, SquareChevronRight, Download, Aperture } from 'lucide-react'
 import './Sidebar.scss'
 
 function Sidebar() {
@@ -38,16 +38,6 @@ function Sidebar() {
   return (
     <aside className={`sidebar ${collapsed ? 'collapsed' : ''}`}>
       <nav className="nav-menu">
-        {/* 首页 */}
-        <NavLink
-          to="/home"
-          className={`nav-item ${isActive('/home') ? 'active' : ''}`}
-          title={collapsed ? '首页' : undefined}
-        >
-          <span className="nav-icon"><Home size={20} /></span>
-          <span className="nav-label">首页</span>
-        </NavLink>
-
         {/* 聊天 - 打开独立窗口 */}
         <button
           className="nav-item"

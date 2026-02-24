@@ -484,6 +484,11 @@ function ExportPage() {
     return { group, private: privateCount, official }
   }, [sessions])
 
+  const isSessionTypeCountsPending = isLoading && sessions.length === 0
+  const formatSessionTypeCount = (count: number) => (
+    isSessionTypeCountsPending ? '计算中' : count.toLocaleString()
+  )
+
   const filteredSessions = useMemo(() => {
     let filtered = sessions
 
@@ -877,7 +882,7 @@ function ExportPage() {
                   <span>群聊</span>
                 </div>
                 <div className="type-filter-count">
-                  {sessionTypeCounts.group}
+                  {formatSessionTypeCount(sessionTypeCounts.group)}
                 </div>
               </button>
               <button
@@ -889,7 +894,7 @@ function ExportPage() {
                   <span>私聊</span>
                 </div>
                 <div className="type-filter-count">
-                  {sessionTypeCounts.private}
+                  {formatSessionTypeCount(sessionTypeCounts.private)}
                 </div>
               </button>
               <button
@@ -901,7 +906,7 @@ function ExportPage() {
                   <span>公众号</span>
                 </div>
                 <div className="type-filter-count">
-                  {sessionTypeCounts.official}
+                  {formatSessionTypeCount(sessionTypeCounts.official)}
                 </div>
               </button>
             </div>

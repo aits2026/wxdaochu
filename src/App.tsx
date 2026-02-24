@@ -1,11 +1,10 @@
 import { useEffect, useState } from 'react'
-import { Routes, Route, useNavigate, useLocation } from 'react-router-dom'
+import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom'
 import TitleBar from './components/TitleBar'
 import Sidebar from './components/Sidebar'
 import RouteGuard from './components/RouteGuard'
 import DecryptProgressOverlay from './components/DecryptProgressOverlay'
 import WelcomePage from './pages/WelcomePage'
-import HomePage from './pages/HomePage'
 import ChatPage from './pages/ChatPage'
 import AnalyticsPage from './pages/AnalyticsPage'
 import AnnualReportPage from './pages/AnnualReportPage'
@@ -486,7 +485,7 @@ function App() {
           <RouteGuard>
             <Routes>
               <Route path="/" element={<WelcomePage />} />
-              <Route path="/home" element={<HomePage />} />
+              <Route path="/home" element={<Navigate to="/export" replace />} />
               <Route path="/analytics" element={<AnalyticsPage />} />
               <Route path="/annual-report" element={<AnnualReportPage />} />
               <Route path="/data-management" element={<DataManagementPage />} />
