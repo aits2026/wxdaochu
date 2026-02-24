@@ -7,17 +7,16 @@ import { dialog } from '../services/ipc'
 import * as configService from '../services/config'
 import {
   Eye, EyeOff, Key, FolderSearch, FolderOpen, Search,
-  RotateCcw, Trash2, Save, Plug, X, Check, Sun, Moon, Monitor,
-  Palette, Database, ImageIcon, Download, HardDrive, Info, RefreshCw, Shield, Clock, CheckCircle, AlertCircle, FileText, Mic,
+  RotateCcw, Trash2, Save, Plug, X, Check,
+  Database, ImageIcon, Download, HardDrive, Info, RefreshCw, Shield, Clock, CheckCircle, AlertCircle, FileText, Mic,
   Zap, Layers, User, Sparkles, Github, Fingerprint, Lock, ShieldCheck, Minus, Plus, Smile
 } from 'lucide-react'
 import { useAuthStore } from '../stores/authStore'
 import './SettingsPage.scss'
 
-type SettingsTab = 'appearance' | 'database' | 'data' | 'security' | 'activation' | 'about'
+type SettingsTab = 'database' | 'data' | 'security' | 'activation' | 'about'
 
 const tabs: { id: SettingsTab; label: string; icon: React.ElementType }[] = [
-  { id: 'appearance', label: '外观', icon: Palette },
   { id: 'database', label: '数据解密', icon: Database },
   { id: 'security', label: '安全设置', icon: Lock },
   { id: 'data', label: '数据管理', icon: HardDrive },
@@ -29,7 +28,7 @@ const tabs: { id: SettingsTab; label: string; icon: React.ElementType }[] = [
 function SettingsPage() {
   const [searchParams] = useSearchParams()
   const { setDbConnected, setLoading } = useAppStore()
-  const { themeMode, setThemeMode, appIcon } = useThemeStore()
+  const { appIcon } = useThemeStore()
   const { status: activationStatus, checkStatus: checkActivationStatus } = useActivationStore()
 
   const { isAuthEnabled, enableAuth, disableAuth, setupPassword, authMethod } = useAuthStore()
@@ -51,7 +50,7 @@ function SettingsPage() {
     if (tab && tabs.some(t => t.id === tab)) {
       return tab as SettingsTab
     }
-    return 'appearance'
+    return 'database'
   })
 
   // 切换到激活 tab 时自动刷新状态
@@ -635,22 +634,6 @@ function SettingsPage() {
       setLoading(false)
     }
   }
-
-  const renderAppearanceTab = () => (
-    <div className="tab-content">
-      <div className="theme-mode-toggle">
-        <button className={`mode-btn ${themeMode === 'light' ? 'active' : ''}`} onClick={() => setThemeMode('light')}>
-          <Sun size={16} /> 浅色
-        </button>
-        <button className={`mode-btn ${themeMode === 'dark' ? 'active' : ''}`} onClick={() => setThemeMode('dark')}>
-          <Moon size={16} /> 深色
-        </button>
-        <button className={`mode-btn ${themeMode === 'system' ? 'active' : ''}`} onClick={() => setThemeMode('system')}>
-          <Monitor size={16} /> 跟随系统
-        </button>
-      </div>
-    </div>
-  )
 
   const renderDatabaseTab = () => (
     <div className="tab-content">
@@ -1613,7 +1596,6 @@ function SettingsPage() {
       </div>
 
       <div className="settings-body">
-        {activeTab === 'appearance' && renderAppearanceTab()}
         {activeTab === 'database' && renderDatabaseTab()}
         {activeTab === 'security' && renderSecurityTab()}
         {activeTab === 'data' && renderDataManagementTab()}

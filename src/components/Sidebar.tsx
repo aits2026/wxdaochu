@@ -1,12 +1,11 @@
-import { useState } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
-import { Database, Settings, SquareChevronLeft, SquareChevronRight, Download, Aperture } from 'lucide-react'
+import { Database, Settings, Download, Aperture, Sun, Moon, Monitor } from 'lucide-react'
+import { useThemeStore } from '../stores/themeStore'
 import './Sidebar.scss'
 
 function Sidebar() {
   const location = useLocation()
-  const [collapsed, setCollapsed] = useState(false)
-
+  const { themeMode, setThemeMode } = useThemeStore()
   const isActive = (path: string) => {
     return location.pathname === path
   }
@@ -20,13 +19,12 @@ function Sidebar() {
   }
 
   return (
-    <aside className={`sidebar ${collapsed ? 'collapsed' : ''}`}>
+    <aside className="sidebar">
       <nav className="nav-menu">
         {/* 朋友圈 - 打开独立窗口 */}
         <button
           className="nav-item"
           onClick={openMomentsWindow}
-          title={collapsed ? '朋友圈' : undefined}
         >
           <span className="nav-icon"><Aperture size={20} /></span>
           <span className="nav-label">朋友圈</span>
@@ -36,42 +34,47 @@ function Sidebar() {
         <NavLink
           to="/export"
           className={`nav-item ${isActive('/export') ? 'active' : ''}`}
-          title={collapsed ? '导出数据' : undefined}
         >
           <span className="nav-icon"><Download size={20} /></span>
-          <span className="nav-label">导出数据</span>
+          <span className="nav-label">导出</span>
         </NavLink>
 
         {/* 数据管理 */}
         <NavLink
           to="/data-management"
           className={`nav-item ${isActive('/data-management') ? 'active' : ''}`}
-          title={collapsed ? '数据管理' : undefined}
         >
           <span className="nav-icon"><Database size={20} /></span>
-          <span className="nav-label">数据管理</span>
+          <span className="nav-label">DB</span>
         </NavLink>
       </nav>
       
       <div className="sidebar-footer">
-        <NavLink 
-          to="/settings" 
+        <NavLink
+          to="/settings"
           className={`nav-item ${isActive('/settings') ? 'active' : ''}`}
-          title={collapsed ? '设置' : undefined}
         >
           <span className="nav-icon">
             <Settings size={20} />
           </span>
           <span className="nav-label">设置</span>
         </NavLink>
-        
-        <button 
-          className="collapse-btn"
-          onClick={() => setCollapsed(!collapsed)}
-          title={collapsed ? '展开菜单' : '收起菜单'}
+
+        <button
+          className="nav-item"
+          onClick={() => {
+            const next = themeMode === 'light' ? 'dark' : themeMode === 'dark' ? 'system' : 'light'
+            setThemeMode(next)
+          }}
         >
-          {collapsed ? <SquareChevronRight size={18} /> : <SquareChevronLeft size={18} />}
-          <span className="collapse-label">{collapsed ? '展开' : '收回'}</span>
+          <span className="nav-icon">
+            {themeMode === 'light' && <Sun size={20} />}
+            {themeMode === 'dark' && <Moon size={20} />}
+            {themeMode === 'system' && <Monitor size={20} />}
+          </span>
+          <span className="nav-label">
+            {themeMode === 'light' ? '浅色' : themeMode === 'dark' ? '深色' : '跟随'}
+          </span>
         </button>
       </div>
     </aside>
