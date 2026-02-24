@@ -2729,6 +2729,23 @@
     font-size: 12px;
     padding: 4px 0;
   }
+
+  &.group-members-side-panel {
+    width: 340px;
+    min-width: 340px;
+
+    .detail-content {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+
+    .group-member-list {
+      max-height: none;
+      flex: 1;
+      min-height: 0;
+    }
+  }
 }
 
 @keyframes slideInRight {
