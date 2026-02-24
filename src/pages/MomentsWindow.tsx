@@ -1062,8 +1062,8 @@ function MomentsWindow() {
     setPresetResolutionNotice(null)
     setSelectedUsernames(prev =>
       prev.includes(username)
-        ? prev.filter(u => u !== username)
-        : [...prev, username]
+        ? []
+        : [username]
     )
   }
 
@@ -1617,10 +1617,6 @@ document.querySelectorAll('.vi video').forEach(function(v) {
             </div>
           </div>
           <div className="sidebar-footer">
-            <button className="clear-btn" onClick={clearFilters}>
-              <RefreshCw size={14} />
-              重置所有筛选
-            </button>
             <button className="export-btn" onClick={() => setShowExportOptions(true)}>
               <FileDown size={14} />
               导出朋友圈
