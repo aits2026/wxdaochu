@@ -367,8 +367,20 @@ function ChatPage(_props: ChatPageProps) {
       const result = await window.electronAPI.chat.connect()
       if (result.success) {
         setConnected(true)
-        await loadSessions()
-        await loadMyAvatar()
+        const targetSessionId = autoSelectSession.current
+
+        // 从导出页携带 session 参数打开时，优先直达目标会话消息，列表与头像后台补齐
+        if (targetSessionId) {
+          autoSelectSession.current = null
+          setCurrentSession(targetSessionId)
+          setCurrentOffset(0)
+          void loadMessages(targetSessionId, 0)
+          void loadSessions()
+          void loadMyAvatar()
+        } else {
+          await loadSessions()
+          await loadMyAvatar()
+        }
       } else {
         setConnectionError(result.error || '连接失败')
       }

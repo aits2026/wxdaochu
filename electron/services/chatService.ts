@@ -443,12 +443,18 @@ class ChatService extends EventEmitter {
         return { success: false, error: '未找到 session.db，请先解密数据库' }
       }
 
+      const contactDbPath = path.join(dbDir, 'contact.db')
+      const contactDbReady = !fs.existsSync(contactDbPath) || !!this.contactDb
+      // 同账号目录且核心连接仍有效时直接复用，避免重复 close/reopen 与缓存清空
+      if (this.dbDir === dbDir && this.sessionDb && contactDbReady) {
+        return { success: true }
+      }
+
       this.close()
 
       this.sessionDb = new Database(sessionDbPath, { readonly: true })
       this.dbDir = dbDir
 
-      const contactDbPath = path.join(dbDir, 'contact.db')
       if (fs.existsSync(contactDbPath)) {
         this.contactDb = new Database(contactDbPath, { readonly: true })
       }
@@ -1200,14 +1206,8 @@ class ChatService extends EventEmitter {
       const myWxid = this.configService.get('myWxid')
       const cleanedMyWxid = myWxid ? this.cleanAccountDirName(myWxid) : ''
 
-      // 当 offset === 0 时（重新加载），只清除该会话的表缓存，保留数据库连接池和其他缓存
-      // 这样可以避免每次点击会话时都重新扫描和打开数据库，大幅提升性能
-      if (offset === 0) {
-        this.sessionTableCache.delete(sessionId)
-        // 不清除 knownMessageDbFiles，避免重复扫描
-        // 不关闭数据库连接，保持连接池以提高性能
-        // 不清除 myRowIdCache、hasName2IdCache、preparedStmtCache，这些缓存可以复用
-      }
+      // 不再在每次 offset=0 时清理会话表缓存，避免重复扫描消息数据库。
+      // 显式刷新/缓存失效路径（refreshMessageDbCache、connect 重连、close 等）会负责清理。
 
       // 使用缓存查找会话对应的数据库和表
       const dbTablePairs = this.findSessionTables(sessionId)
