@@ -152,6 +152,13 @@ function ExportPage() {
     detail: ''
   })
   const [exportResult, setExportResult] = useState<ExportResult | null>(null)
+  const [isSessionImageDecrypting, setIsSessionImageDecrypting] = useState(false)
+  const [showSessionImageDecryptConfirm, setShowSessionImageDecryptConfirm] = useState(false)
+  const [showSessionImageDecryptProgress, setShowSessionImageDecryptProgress] = useState(false)
+  const [sessionImageMessages, setSessionImageMessages] = useState<{ imageMd5?: string; imageDatName?: string; createTime?: number }[] | null>(null)
+  const [sessionImageDates, setSessionImageDates] = useState<string[]>([])
+  const [sessionImageSelectedDates, setSessionImageSelectedDates] = useState<Set<string>>(new Set())
+  const [sessionImageDecryptProgress, setSessionImageDecryptProgress] = useState({ current: 0, total: 0 })
 
   const [showFormatPicker, setShowFormatPicker] = useState(false)
   const [selectedSession, setSelectedSession] = useState<string | null>(null)
@@ -539,6 +546,47 @@ function ExportPage() {
     </span>
   )
 
+  const formatImageDecryptDateLabel = useCallback((dateStr: string) => {
+    const [y, m, d] = dateStr.split('-').map(Number)
+    return `${y}年${m}月${d}日`
+  }, [])
+
+  const toggleSessionImageDate = useCallback((date: string) => {
+    setSessionImageSelectedDates(prev => {
+      const next = new Set(prev)
+      if (next.has(date)) next.delete(date)
+      else next.add(date)
+      return next
+    })
+  }, [])
+
+  const selectAllSessionImageDates = useCallback(() => {
+    setSessionImageSelectedDates(new Set(sessionImageDates))
+  }, [sessionImageDates])
+
+  const clearAllSessionImageDates = useCallback(() => {
+    setSessionImageSelectedDates(new Set())
+  }, [])
+
+  const sessionImageCountByDate = useMemo(() => {
+    const map = new Map<string, number>()
+    if (!sessionImageMessages) return map
+    sessionImageMessages.forEach(img => {
+      if (img.createTime) {
+        const d = new Date(img.createTime * 1000).toISOString().slice(0, 10)
+        map.set(d, (map.get(d) ?? 0) + 1)
+      }
+    })
+    return map
+  }, [sessionImageMessages])
+
+  const selectedSessionImageCount = useMemo(() => {
+    if (!sessionImageMessages) return 0
+    return sessionImageMessages.filter(img =>
+      img.createTime && sessionImageSelectedDates.has(new Date(img.createTime * 1000).toISOString().slice(0, 10))
+    ).length
+  }, [sessionImageMessages, sessionImageSelectedDates])
+
   // 通讯录搜索过滤
   useEffect(() => {
     let filtered = contacts
@@ -570,6 +618,11 @@ function ExportPage() {
     setShowExportSettings(false)
     setShowGroupFriendsPopup(false)
     setSessionDetail(null)
+    setShowSessionImageDecryptConfirm(false)
+    setShowSessionImageDecryptProgress(false)
+    setSessionImageMessages(null)
+    setSessionImageDates([])
+    setSessionImageSelectedDates(new Set())
     setExportRecords([])
     setIsLoadingDetail(true)
     setIsLoadingGroupInfo(false)
@@ -658,6 +711,80 @@ function ExportPage() {
     if (exportFolder) {
       await window.electronAPI.shell.openPath(exportFolder)
     }
+  }
+
+  const openSessionImageDecrypt = async () => {
+    if (!selectedSession || isSessionImageDecrypting) return
+
+    try {
+      const result = await window.electronAPI.chat.getAllImageMessages(selectedSession)
+      if (!result.success || !result.images || result.images.length === 0) {
+        alert(result.error || '当前会话没有图片消息')
+        return
+      }
+
+      const dateSet = new Set<string>()
+      result.images.forEach(img => {
+        if (img.createTime) dateSet.add(new Date(img.createTime * 1000).toISOString().slice(0, 10))
+      })
+      const sortedDates = Array.from(dateSet).sort((a, b) => b.localeCompare(a))
+
+      setSessionImageMessages(result.images)
+      setSessionImageDates(sortedDates)
+      setSessionImageSelectedDates(new Set(sortedDates))
+      setShowSessionImageDecryptConfirm(true)
+    } catch (e) {
+      console.error('加载会话图片失败:', e)
+      alert('加载会话图片失败')
+    }
+  }
+
+  const confirmSessionImageDecrypt = async () => {
+    if (!selectedSession || !sessionImageMessages) return
+    if (sessionImageSelectedDates.size === 0) {
+      alert('请至少选择一个日期')
+      return
+    }
+
+    const images = sessionImageMessages.filter(img =>
+      img.createTime && sessionImageSelectedDates.has(new Date(img.createTime * 1000).toISOString().slice(0, 10))
+    )
+    if (images.length === 0) {
+      alert('所选日期下没有图片')
+      return
+    }
+
+    setShowSessionImageDecryptConfirm(false)
+    setSessionImageMessages(null)
+    setSessionImageDates([])
+    setSessionImageSelectedDates(new Set())
+
+    setIsSessionImageDecrypting(true)
+    setShowSessionImageDecryptProgress(true)
+    setSessionImageDecryptProgress({ current: 0, total: images.length })
+
+    let success = 0
+    let fail = 0
+    for (let i = 0; i < images.length; i++) {
+      try {
+        const r = await window.electronAPI.image.decrypt({
+          sessionId: selectedSession,
+          imageMd5: images[i].imageMd5,
+          imageDatName: images[i].imageDatName,
+          force: false
+        })
+        if (r?.success) success++
+        else fail++
+      } catch {
+        fail++
+      }
+      if (i % 5 === 0) await new Promise(r => setTimeout(r, 0))
+      setSessionImageDecryptProgress({ current: i + 1, total: images.length })
+    }
+
+    setIsSessionImageDecrypting(false)
+    setShowSessionImageDecryptProgress(false)
+    alert(`图片解密完成：成功 ${success} 张，失败 ${fail} 张`)
   }
 
   // 选择导出文件夹
@@ -1115,7 +1242,7 @@ function ExportPage() {
                             {(sessionDetail.imageCount > 0 || sessionDetail.emojiCount > 0 || sessionDetail.videoCount > 0 || sessionDetail.voiceCount > 0) && (
                               <div style={{ display: 'flex', gap: 8, padding: '8px 0', flexWrap: 'wrap' }}>
                                 {([
-                                  { icon: <Image size={13} />, label: '图片', count: sessionDetail.imageCount },
+                                  { icon: <Image size={13} />, label: '图片', count: sessionDetail.imageCount, action: 'decrypt' as const },
                                   { icon: <Smile size={13} />, label: '表情', count: sessionDetail.emojiCount },
                                   { icon: <Video size={13} />, label: '视频', count: sessionDetail.videoCount },
                                   { icon: <Mic size={13} />, label: '语音', count: sessionDetail.voiceCount },
@@ -1124,17 +1251,37 @@ function ExportPage() {
                                     flex: 1,
                                     display: 'flex',
                                     flexDirection: 'column',
-                                    alignItems: 'center',
+                                    alignItems: 'stretch',
                                     gap: 4,
                                     padding: '8px 4px',
                                     background: 'var(--bg-secondary)',
                                     borderRadius: 8,
                                   }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--text-secondary)', fontSize: 12 }}>
-                                      {item.icon}
-                                      <span>{item.label}</span>
+                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--text-secondary)', fontSize: 12 }}>
+                                        {item.icon}
+                                        <span>{item.label}</span>
+                                      </div>
+                                      {item.action === 'decrypt' && (
+                                        <button
+                                          type="button"
+                                          className="session-media-action-btn"
+                                          onClick={openSessionImageDecrypt}
+                                          disabled={isSessionImageDecrypting || !selectedSession}
+                                          title="批量解密该会话图片"
+                                        >
+                                          {isSessionImageDecrypting ? (
+                                            <>
+                                              <Loader2 size={12} className="spin" />
+                                              <span>解密中</span>
+                                            </>
+                                          ) : (
+                                            <span>解密</span>
+                                          )}
+                                        </button>
+                                      )}
                                     </div>
-                                    <span style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)' }}>{item.count.toLocaleString()}</span>
+                                    <span style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)', textAlign: 'center' }}>{item.count.toLocaleString()}</span>
                                   </div>
                                 ))}
                               </div>
@@ -1641,6 +1788,96 @@ function ExportPage() {
                 ))
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* 会话图片批量解密 - 日期选择弹窗 */}
+      {showSessionImageDecryptConfirm && (
+        <div className="export-overlay" onClick={() => setShowSessionImageDecryptConfirm(false)}>
+          <div className="image-decrypt-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="image-decrypt-modal-header">
+              <div>
+                <h3>批量解密图片</h3>
+                <p>选择需要解密的日期范围（仅展示有图片的日期）</p>
+              </div>
+              <button
+                type="button"
+                className="group-friends-close-btn"
+                onClick={() => setShowSessionImageDecryptConfirm(false)}
+                aria-label="关闭图片解密弹窗"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="image-decrypt-modal-subtitle">
+              {sessionDetail?.remark || sessionDetail?.nickName || (selectedSession ? sessionByUsername.get(selectedSession)?.displayName : undefined) || selectedSession}
+            </div>
+            <div className="image-decrypt-date-toolbar">
+              <button type="button" onClick={selectAllSessionImageDates}>全选</button>
+              <button type="button" onClick={clearAllSessionImageDates}>清空</button>
+            </div>
+            <div className="image-decrypt-date-grid">
+              {sessionImageDates.length === 0 ? (
+                <div className="group-friends-empty">暂无可选日期</div>
+              ) : (
+                sessionImageDates.map(dateStr => {
+                  const count = sessionImageCountByDate.get(dateStr) ?? 0
+                  const checked = sessionImageSelectedDates.has(dateStr)
+                  return (
+                    <button
+                      key={dateStr}
+                      type="button"
+                      className={`image-decrypt-date-btn ${checked ? 'selected' : ''}`}
+                      onClick={() => toggleSessionImageDate(dateStr)}
+                    >
+                      <span className="date-label">{formatImageDecryptDateLabel(dateStr)}</span>
+                      <span className="date-count">{count} 张</span>
+                    </button>
+                  )
+                })
+              )}
+            </div>
+            <div className="image-decrypt-summary">
+              已选择 {sessionImageSelectedDates.size} 天，共 {selectedSessionImageCount} 张图片
+            </div>
+            <div className="image-decrypt-modal-actions">
+              <button type="button" className="cancel-btn" onClick={() => setShowSessionImageDecryptConfirm(false)}>
+                取消
+              </button>
+              <button
+                type="button"
+                className="confirm-btn"
+                onClick={confirmSessionImageDecrypt}
+                disabled={isSessionImageDecrypting || selectedSessionImageCount === 0}
+              >
+                开始解密
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 会话图片批量解密 - 进度弹窗 */}
+      {showSessionImageDecryptProgress && (
+        <div className="export-overlay">
+          <div className="image-decrypt-progress-modal">
+            <div className="progress-spinner">
+              <Loader2 size={28} className="spin" />
+            </div>
+            <h3>正在批量解密图片</h3>
+            <p className="progress-text">
+              {sessionDetail?.remark || sessionDetail?.nickName || (selectedSession ? sessionByUsername.get(selectedSession)?.displayName : undefined) || selectedSession}
+            </p>
+            <div className="progress-bar">
+              <div
+                className="progress-fill"
+                style={{
+                  width: `${sessionImageDecryptProgress.total > 0 ? (sessionImageDecryptProgress.current / sessionImageDecryptProgress.total) * 100 : 0}%`
+                }}
+              />
+            </div>
+            <p className="progress-count">{sessionImageDecryptProgress.current} / {sessionImageDecryptProgress.total} 张图片</p>
           </div>
         </div>
       )}

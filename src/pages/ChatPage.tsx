@@ -1393,19 +1393,6 @@ function ChatPage(_props: ChatPageProps) {
                     <Mic size={18} />
                   )}
                 </button>
-                <button
-                  className="icon-btn batch-decrypt-btn"
-                  style={{ position: 'relative', zIndex: 10 }}
-                  onClick={handleBatchDecrypt}
-                  disabled={isBatchDecrypting || !currentSessionId}
-                  title={isBatchDecrypting ? `批量解密中 (${batchDecryptProgress.current}/${batchDecryptProgress.total})` : '批量解密图片'}
-                >
-                  {isBatchDecrypting ? (
-                    <Loader2 size={18} className="spin" />
-                  ) : (
-                    <ImageIcon size={18} />
-                  )}
-                </button>
                 {currentSession.username.includes('@chatroom') && (
                   <div className="group-members-popover-wrapper">
                     <button
