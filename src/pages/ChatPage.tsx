@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { createPortal } from 'react-dom'
-import { MessageSquare, Loader2, RefreshCw, X, ChevronDown, Info, Calendar, Database, Hash, Image as ImageIcon, Play, Video, Copy, ZoomIn, CheckSquare, Check, Edit, Link, Sparkles, FileText, FileArchive, Users, Mic, CheckCircle, XCircle, Crown } from 'lucide-react'
+import { MessageSquare, Loader2, RefreshCw, X, ChevronDown, Image as ImageIcon, Play, Video, Copy, ZoomIn, CheckSquare, Check, Edit, Link, Sparkles, FileText, FileArchive, Users, Mic, CheckCircle, XCircle, Crown } from 'lucide-react'
 import { useChatStore } from '../stores/chatStore'
 import { useUpdateStatusStore } from '../stores/updateStatusStore'
 import ChatBackground from '../components/ChatBackground'
@@ -15,16 +15,7 @@ interface ChatPageProps {
   // 保留接口以备将来扩展
 }
 
-interface SessionDetail {
-  wxid: string
-  displayName: string
-  remark?: string
-  nickName?: string
-  alias?: string
-  avatarUrl?: string
-  messageCount: number
-  firstMessageTime?: number
-  latestMessageTime?: number
+interface GroupSessionInfo {
   groupInfo?: {
     ownerUsername?: string
     ownerDisplayName?: string
@@ -33,7 +24,6 @@ interface SessionDetail {
     selfMessageCount?: number
     friendMembers?: Array<{ username: string; displayName: string }>
   }
-  messageTables: { dbName: string; tableName: string; count: number }[]
 }
 
 interface GroupMemberListItem {
@@ -212,10 +202,9 @@ function ChatPage(_props: ChatPageProps) {
   const isUpdating = useUpdateStatusStore(state => state.isUpdating)
   const [myAvatarUrl, setMyAvatarUrl] = useState<string | undefined>(undefined)
   const [showScrollToBottom, setShowScrollToBottom] = useState(false)
-  const [showDetailPanel, setShowDetailPanel] = useState(false)
   const [showGroupMembersPopover, setShowGroupMembersPopover] = useState(false)
-  const [sessionDetail, setSessionDetail] = useState<SessionDetail | null>(null)
-  const [isLoadingDetail, setIsLoadingDetail] = useState(false)
+  const [groupSessionInfo, setGroupSessionInfo] = useState<GroupSessionInfo | null>(null)
+  const [isLoadingGroupSessionInfo, setIsLoadingGroupSessionInfo] = useState(false)
   const [groupMembers, setGroupMembers] = useState<GroupMemberListItem[]>([])
   const [isLoadingGroupMembers, setIsLoadingGroupMembers] = useState(false)
   const [currentSessionMeta, setCurrentSessionMeta] = useState<Pick<ChatSession, 'username' | 'displayName' | 'avatarUrl' | 'accountType'> | null>(null)
@@ -250,6 +239,7 @@ function ChatPage(_props: ChatPageProps) {
   const datePickerRef = useRef<HTMLDivElement>(null) // 日期选择器容器引用
   const dateButtonRef = useRef<HTMLButtonElement>(null) // 日期按钮引用
   const groupMembersRequestIdRef = useRef(0)
+  const groupSessionInfoRequestIdRef = useRef(0)
   
   // 批量语音转文字相关状态
   const [isBatchTranscribing, setIsBatchTranscribing] = useState(false)
@@ -291,27 +281,29 @@ function ChatPage(_props: ChatPageProps) {
     }
   }, [])
 
-  // 加载会话详情
-  const loadSessionDetail = useCallback(async (sessionId: string) => {
-    setIsLoadingDetail(true)
+  // 加载群聊附加信息（群主/人数等）
+  const loadGroupSessionInfo = useCallback(async (sessionId: string) => {
+    const requestId = ++groupSessionInfoRequestIdRef.current
+    if (!sessionId.includes('@chatroom')) {
+      setGroupSessionInfo(null)
+      setIsLoadingGroupSessionInfo(false)
+      return
+    }
+    setIsLoadingGroupSessionInfo(true)
     try {
-      const result = await window.electronAPI.chat.getSessionDetail(sessionId)
-      if (result.success && result.detail) {
-        setSessionDetail(result.detail)
-        setCurrentSessionMeta(prev => {
-          if (!prev || prev.username !== sessionId) return prev
-          return {
-            ...prev,
-            displayName: result.detail?.displayName || prev.displayName,
-            avatarUrl: result.detail?.avatarUrl || prev.avatarUrl,
-            accountType: sessionId.includes('@chatroom') ? 'group' : prev.accountType
-          }
-        })
+      const result = await window.electronAPI.chat.getSessionGroupInfo(sessionId)
+      if (requestId !== groupSessionInfoRequestIdRef.current) return
+      if (result.success) {
+        setGroupSessionInfo({ groupInfo: result.groupInfo || {} })
       }
     } catch (e) {
-      console.error('加载会话详情失败:', e)
+      if (requestId !== groupSessionInfoRequestIdRef.current) return
+      console.error('加载群聊附加信息失败:', e)
+      setGroupSessionInfo(null)
     } finally {
-      setIsLoadingDetail(false)
+      if (requestId === groupSessionInfoRequestIdRef.current) {
+        setIsLoadingGroupSessionInfo(false)
+      }
     }
   }, [])
 
@@ -374,7 +366,9 @@ function ChatPage(_props: ChatPageProps) {
       avatarUrl: undefined,
       accountType: inferredType
     })
-    setSessionDetail(null)
+    groupSessionInfoRequestIdRef.current += 1
+    setGroupSessionInfo(null)
+    setIsLoadingGroupSessionInfo(false)
     setShowGroupMembersPopover(false)
     groupMembersRequestIdRef.current += 1
     setGroupMembers([])
@@ -383,9 +377,6 @@ function ChatPage(_props: ChatPageProps) {
     if (username === currentSessionId) {
       setCurrentOffset(0)
       void loadMessages(username, 0)
-      if (showDetailPanel) {
-        void loadSessionDetail(username)
-      }
       void loadCurrentSessionMeta(username)
       return
     }
@@ -393,34 +384,21 @@ function ChatPage(_props: ChatPageProps) {
     setCurrentSession(username)
     setCurrentOffset(0)
     void loadMessages(username, 0)
-    if (showDetailPanel) {
-      void loadSessionDetail(username)
-    }
     void loadCurrentSessionMeta(username)
-  }, [currentSessionId, loadCurrentSessionMeta, loadSessionDetail, setCurrentSession, showDetailPanel])
-
-  // 切换详情面板
-  const toggleDetailPanel = useCallback(() => {
-    if (!showDetailPanel && currentSessionId) {
-      setShowGroupMembersPopover(false)
-      loadSessionDetail(currentSessionId)
-    }
-    setShowDetailPanel(!showDetailPanel)
-  }, [showDetailPanel, currentSessionId, loadSessionDetail])
+  }, [currentSessionId, loadCurrentSessionMeta, setCurrentSession])
 
   const toggleGroupMembersPopover = useCallback(() => {
     if (!currentSessionId || !currentSessionId.includes('@chatroom')) return
 
     const nextOpen = !showGroupMembersPopover
     if (nextOpen) {
-      setShowDetailPanel(false)
       void loadGroupMembers(currentSessionId)
-      if (!sessionDetail?.groupInfo?.ownerUsername) {
-        void loadSessionDetail(currentSessionId)
+      if (!groupSessionInfo?.groupInfo?.ownerUsername && !isLoadingGroupSessionInfo) {
+        void loadGroupSessionInfo(currentSessionId)
       }
     }
     setShowGroupMembersPopover(nextOpen)
-  }, [currentSessionId, showGroupMembersPopover, loadGroupMembers, loadSessionDetail, sessionDetail?.groupInfo?.ownerUsername])
+  }, [currentSessionId, showGroupMembersPopover, loadGroupMembers, loadGroupSessionInfo, groupSessionInfo?.groupInfo?.ownerUsername, isLoadingGroupSessionInfo])
 
   // 连接数据库
   const connect = useCallback(async () => {
@@ -1150,7 +1128,7 @@ function ChatPage(_props: ChatPageProps) {
 
   const sortedGroupMembers = useMemo(() => {
     if (!groupMembers.length) return []
-    const ownerUsername = sessionDetail?.groupInfo?.ownerUsername
+    const ownerUsername = groupSessionInfo?.groupInfo?.ownerUsername
     if (!ownerUsername) return groupMembers
 
     return [...groupMembers].sort((a, b) => {
@@ -1159,9 +1137,9 @@ function ChatPage(_props: ChatPageProps) {
       if (aIsOwner !== bIsOwner) return bIsOwner - aIsOwner
       return (a.displayName || a.username).localeCompare((b.displayName || b.username), 'zh-Hans-CN')
     })
-  }, [groupMembers, sessionDetail?.groupInfo?.ownerUsername])
+  }, [groupMembers, groupSessionInfo?.groupInfo?.ownerUsername])
 
-  const displayedGroupMemberCount = sessionDetail?.groupInfo?.memberCount ?? (groupMembers.length || undefined)
+  const displayedGroupMemberCount = groupSessionInfo?.groupInfo?.memberCount ?? (groupMembers.length || undefined)
 
   // 判断是否为群聊
   const isGroupChat = (username: string) => username.includes('@chatroom')
@@ -1428,13 +1406,6 @@ function ChatPage(_props: ChatPageProps) {
                     <ImageIcon size={18} />
                   )}
                 </button>
-                <button
-                  className={`icon-btn detail-btn ${showDetailPanel ? 'active' : ''}`}
-                  onClick={toggleDetailPanel}
-                  title="会话详情"
-                >
-                  <Info size={18} />
-                </button>
                 {currentSession.username.includes('@chatroom') && (
                   <div className="group-members-popover-wrapper">
                     <button
@@ -1561,97 +1532,7 @@ function ChatPage(_props: ChatPageProps) {
                 </div>
               )}
 
-              {/* 会话详情面板 */}
-              {showDetailPanel && (
-                <div className="detail-panel">
-                  <div className="detail-header">
-                    <h4>会话详情</h4>
-                    <button className="close-btn" onClick={() => setShowDetailPanel(false)}>
-                      <X size={16} />
-                    </button>
-                  </div>
-                  {isLoadingDetail ? (
-                    <div className="detail-loading">
-                      <Loader2 size={20} className="spin" />
-                      <span>加载中...</span>
-                    </div>
-                  ) : sessionDetail ? (
-                    <div className="detail-content">
-                      <div className="detail-section">
-                        <div className="detail-item">
-                          <Hash size={14} />
-                          <span className="label">微信ID</span>
-                          <span className="value">{sessionDetail.wxid}</span>
-                        </div>
-                        {sessionDetail.remark && (
-                          <div className="detail-item">
-                            <span className="label">备注</span>
-                            <span className="value">{sessionDetail.remark}</span>
-                          </div>
-                        )}
-                        {sessionDetail.nickName && (
-                          <div className="detail-item">
-                            <span className="label">昵称</span>
-                            <span className="value">{sessionDetail.nickName}</span>
-                          </div>
-                        )}
-                        {sessionDetail.alias && (
-                          <div className="detail-item">
-                            <span className="label">微信号</span>
-                            <span className="value">{sessionDetail.alias}</span>
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="detail-section">
-                        <div className="section-title">
-                          <MessageSquare size={14} />
-                          <span>消息统计</span>
-                        </div>
-                        <div className="detail-item">
-                          <span className="label">消息总数</span>
-                          <span className="value highlight">{sessionDetail.messageCount.toLocaleString()}</span>
-                        </div>
-                        {sessionDetail.firstMessageTime && (
-                          <div className="detail-item">
-                            <Calendar size={14} />
-                            <span className="label">首条消息</span>
-                            <span className="value">{new Date(sessionDetail.firstMessageTime * 1000).toLocaleDateString('zh-CN')}</span>
-                          </div>
-                        )}
-                        {sessionDetail.latestMessageTime && (
-                          <div className="detail-item">
-                            <Calendar size={14} />
-                            <span className="label">最新消息</span>
-                            <span className="value">{new Date(sessionDetail.latestMessageTime * 1000).toLocaleDateString('zh-CN')}</span>
-                          </div>
-                        )}
-                      </div>
-
-                      {sessionDetail.messageTables.length > 0 && (
-                        <div className="detail-section">
-                          <div className="section-title">
-                            <Database size={14} />
-                            <span>数据库分布</span>
-                          </div>
-                          <div className="table-list">
-                            {sessionDetail.messageTables.map((t, i) => (
-                              <div key={i} className="table-item">
-                                <span className="db-name">{t.dbName}</span>
-                                <span className="table-count">{t.count.toLocaleString()} 条</span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                    </div>
-                  ) : (
-                    <div className="detail-empty">暂无详情</div>
-                  )}
-                </div>
-              )}
-
+              {/* 群成员面板 */}
               {showGroupMembersPopover && currentSession?.username.includes('@chatroom') && (
                 <div className="detail-panel group-members-side-panel">
                   <div className="detail-header">
@@ -1665,7 +1546,7 @@ function ChatPage(_props: ChatPageProps) {
                   </div>
 
                   <div className="detail-content">
-                    {isLoadingGroupMembers ? (
+                    {isLoadingGroupMembers || (isLoadingGroupSessionInfo && !groupSessionInfo) ? (
                       <div className="group-members-loading">
                         <Loader2 size={14} className="spin" />
                         <span>加载群成员中...</span>
@@ -1673,7 +1554,7 @@ function ChatPage(_props: ChatPageProps) {
                     ) : sortedGroupMembers.length > 0 ? (
                       <div className="group-member-list">
                         {sortedGroupMembers.map(member => {
-                          const isOwner = member.username === sessionDetail?.groupInfo?.ownerUsername
+                          const isOwner = member.username === groupSessionInfo?.groupInfo?.ownerUsername
                           const avatarLetter = [...(member.displayName || member.username || '?')][0] || '?'
 
                           return (

@@ -167,6 +167,7 @@ function ExportPage() {
     videoCount: number
     voiceCount: number
     emojiCount: number
+    messageTables: { dbName: string; tableName: string; count: number }[]
     groupInfo?: {
       ownerUsername?: string
       ownerDisplayName?: string
@@ -599,6 +600,7 @@ function ExportPage() {
           videoCount: detailResult.detail.videoCount,
           voiceCount: detailResult.detail.voiceCount,
           emojiCount: detailResult.detail.emojiCount,
+          messageTables: detailResult.detail.messageTables || [],
           groupInfo: isGroupChat ? {} : detailResult.detail.groupInfo,
         })
 
@@ -1137,6 +1139,28 @@ function ExportPage() {
                                 ))}
                               </div>
                             )}
+                            <div style={{ marginTop: 8 }}>
+                              <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginBottom: 6 }}>数据库分布</div>
+                              {sessionDetail.messageTables.length === 0 ? (
+                                <div style={{ fontSize: 13, color: 'var(--text-tertiary)', padding: '4px 0' }}>暂无数据库分布信息</div>
+                              ) : (
+                                sessionDetail.messageTables.map((t, i) => (
+                                  <div key={`${t.dbName}:${t.tableName}:${i}`} style={{
+                                    padding: '8px 10px',
+                                    marginBottom: 6,
+                                    background: 'var(--bg-secondary)',
+                                    borderRadius: 8,
+                                    fontSize: 12,
+                                    display: 'flex',
+                                    justifyContent: 'space-between',
+                                    gap: 8,
+                                  }}>
+                                    <span style={{ color: 'var(--text-secondary)' }}>{t.dbName}</span>
+                                    <span style={{ color: 'var(--primary)', fontWeight: 500 }}>{t.count.toLocaleString()} 条</span>
+                                  </div>
+                                ))
+                              )}
+                            </div>
                             {/* 导出记录 */}
                             <div style={{ marginTop: 8 }}>
                               <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginBottom: 6 }}>导出记录</div>
