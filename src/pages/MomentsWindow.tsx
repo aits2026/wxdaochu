@@ -569,10 +569,10 @@ function MomentsWindow() {
     selfWxidRef.current = selfWxid
   }, [selfWxid])
 
-  const applyResolvedUserMomentsPreset = useCallback((targetUsername: string, label: string) => {
+  const applyResolvedUserMomentsPreset = useCallback((targetUsername: string, label: string, options?: { contactSearchText?: string }) => {
     setSearchKeyword('')
     setJumpTargetDate(undefined)
-    setContactSearch('')
+    setContactSearch(options?.contactSearchText || '')
     setSelectedUsernames([targetUsername])
     setActiveUserPresetFilter({ username: targetUsername, label })
     setIsSidebarOpen(true)
@@ -762,9 +762,14 @@ function MomentsWindow() {
         setPendingMomentsPresetRequest(null)
         return
       }
+      const contactSearchText = (
+        (pendingMomentsPresetRequest.label || '').trim().replace(/的朋友圈$/, '').trim()
+        || (pendingMomentsPresetRequest.username || '').trim()
+      )
       applyResolvedUserMomentsPreset(
         targetUsername,
-        pendingMomentsPresetRequest.label?.trim() || `${targetUsername}的朋友圈`
+        pendingMomentsPresetRequest.label?.trim() || `${targetUsername}的朋友圈`,
+        { contactSearchText }
       )
       setPendingMomentsPresetRequest(null)
       return
@@ -782,7 +787,8 @@ function MomentsWindow() {
 
     applyResolvedUserMomentsPreset(
       resolvedUsername,
-      pendingMomentsPresetRequest.label?.trim() || '我的朋友圈'
+      pendingMomentsPresetRequest.label?.trim() || '我的朋友圈',
+      { contactSearchText: '' }
     )
     setPendingMomentsPresetRequest(null)
   }, [pendingMomentsPresetRequest, contacts.length, posts.length, selfProfile, resolveSelfMomentsUsername, resolveUserMomentsUsername, applyResolvedUserMomentsPreset])
