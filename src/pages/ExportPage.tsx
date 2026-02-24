@@ -234,6 +234,8 @@ function ExportPage() {
   const [showMoreMenu, setShowMoreMenu] = useState(false)
   const [showUsageTipsPopover, setShowUsageTipsPopover] = useState(false)
   const [showTaskCenterPopover, setShowTaskCenterPopover] = useState(false)
+  const [snsUserPostCounts, setSnsUserPostCounts] = useState<Record<string, number>>({})
+  const [snsUserPostCountsStatus, setSnsUserPostCountsStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
   const [options, setOptions] = useState<ExportOptions>({
     format: 'json',
     startDate: '',
@@ -325,6 +327,46 @@ function ExportPage() {
       loadExportAccountInfo()
     }
   }, [isDbConnected, userInfoLoaded, preloadedUserInfo, loadExportAccountInfo])
+
+  const loadSnsUserPostCounts = useCallback(() => {
+    let cancelled = false
+
+    if (!isDbConnected) {
+      setSnsUserPostCounts({})
+      setSnsUserPostCountsStatus('idle')
+      return () => {
+        cancelled = true
+      }
+    }
+
+    setSnsUserPostCountsStatus('loading')
+    window.electronAPI.sns.getUserPostCounts()
+      .then((result) => {
+        if (cancelled) return
+        if (result.success) {
+          setSnsUserPostCounts(result.counts || {})
+          setSnsUserPostCountsStatus('ready')
+          return
+        }
+        setSnsUserPostCounts({})
+        setSnsUserPostCountsStatus('error')
+      })
+      .catch((e) => {
+        if (cancelled) return
+        console.error('导出页加载朋友圈总条数失败:', e)
+        setSnsUserPostCounts({})
+        setSnsUserPostCountsStatus('error')
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [isDbConnected])
+
+  useEffect(() => {
+    const cleanup = loadSnsUserPostCounts()
+    return cleanup
+  }, [loadSnsUserPostCounts])
 
   // 加载默认导出配置
   const loadDefaultExportConfig = useCallback(async () => {
@@ -1793,34 +1835,41 @@ function ExportPage() {
                             {session?.accountType === 'friend' && (
                               <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-color, #e0e0e0)' }}>
                                 <span style={{ opacity: 0.6 }}>对方朋友圈</span>
-                                <button
-                                  type="button"
-                                  className="group-friend-count-btn"
-                                  onClick={async () => {
-                                    const targetUsername = (
-                                      sessionDetail.wxid
-                                      || session?.username
-                                      || selectedSession
-                                      || ''
-                                    ).trim()
-                                    if (!targetUsername) return
-                                    const targetName = (sessionDetail.remark || sessionDetail.nickName || session?.displayName || targetUsername).trim()
-                                    try {
-                                      await window.electronAPI.window.openMomentsWindow({
-                                        preset: {
-                                          type: 'user',
-                                          username: targetUsername,
-                                          label: `${targetName}的朋友圈`
-                                        }
-                                      })
-                                    } catch (e) {
-                                      console.error('打开对方朋友圈失败:', e)
-                                    }
-                                  }}
-                                >
-                                  <span>查看</span>
-                                  <Aperture size={13} />
-                                </button>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                  <span style={{ fontSize: 12, opacity: 0.7, minWidth: 28, textAlign: 'right' }}>
+                                    {snsUserPostCountsStatus === 'ready'
+                                      ? `${(snsUserPostCounts[(sessionDetail.wxid || session?.username || selectedSession || '').trim()] ?? 0).toLocaleString()}条`
+                                      : '--'}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    className="group-friend-count-btn"
+                                    onClick={async () => {
+                                      const targetUsername = (
+                                        sessionDetail.wxid
+                                        || session?.username
+                                        || selectedSession
+                                        || ''
+                                      ).trim()
+                                      if (!targetUsername) return
+                                      const targetName = (sessionDetail.remark || sessionDetail.nickName || session?.displayName || targetUsername).trim()
+                                      try {
+                                        await window.electronAPI.window.openMomentsWindow({
+                                          preset: {
+                                            type: 'user',
+                                            username: targetUsername,
+                                            label: `${targetName}的朋友圈`
+                                          }
+                                        })
+                                      } catch (e) {
+                                        console.error('打开对方朋友圈失败:', e)
+                                      }
+                                    }}
+                                  >
+                                    <span>查看</span>
+                                    <Aperture size={13} />
+                                  </button>
+                                </div>
                               </div>
                             )}
                             {session?.username.includes('@chatroom') && sessionDetail.groupInfo && (
