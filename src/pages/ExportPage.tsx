@@ -155,6 +155,11 @@ function ExportPage() {
   const [isSessionImageDecrypting, setIsSessionImageDecrypting] = useState(false)
   const [showSessionImageDecryptConfirm, setShowSessionImageDecryptConfirm] = useState(false)
   const [showSessionImageDecryptProgress, setShowSessionImageDecryptProgress] = useState(false)
+  const [sessionImageDecryptTaskExpanded, setSessionImageDecryptTaskExpanded] = useState(true)
+  const [sessionImageDecryptTaskStatus, setSessionImageDecryptTaskStatus] = useState<'running' | 'success' | 'error'>('running')
+  const [sessionImageDecryptTaskStats, setSessionImageDecryptTaskStats] = useState({ success: 0, fail: 0 })
+  const [sessionImageDecryptTaskSessionName, setSessionImageDecryptTaskSessionName] = useState('')
+  const [sessionImageDecryptTaskError, setSessionImageDecryptTaskError] = useState<string | null>(null)
   const [sessionImageMessages, setSessionImageMessages] = useState<{ imageMd5?: string; imageDatName?: string; createTime?: number }[] | null>(null)
   const [sessionImageDates, setSessionImageDates] = useState<string[]>([])
   const [sessionImageSelectedDates, setSessionImageSelectedDates] = useState<Set<string>>(new Set())
@@ -619,10 +624,17 @@ function ExportPage() {
     setShowGroupFriendsPopup(false)
     setSessionDetail(null)
     setShowSessionImageDecryptConfirm(false)
-    setShowSessionImageDecryptProgress(false)
     setSessionImageMessages(null)
     setSessionImageDates([])
     setSessionImageSelectedDates(new Set())
+    if (!isSessionImageDecrypting) {
+      setShowSessionImageDecryptProgress(false)
+      setSessionImageDecryptTaskExpanded(true)
+      setSessionImageDecryptTaskStatus('running')
+      setSessionImageDecryptTaskStats({ success: 0, fail: 0 })
+      setSessionImageDecryptTaskSessionName('')
+      setSessionImageDecryptTaskError(null)
+    }
     setExportRecords([])
     setIsLoadingDetail(true)
     setIsLoadingGroupInfo(false)
@@ -761,30 +773,45 @@ function ExportPage() {
 
     setIsSessionImageDecrypting(true)
     setShowSessionImageDecryptProgress(true)
+    setSessionImageDecryptTaskExpanded(true)
+    setSessionImageDecryptTaskStatus('running')
+    setSessionImageDecryptTaskStats({ success: 0, fail: 0 })
+    setSessionImageDecryptTaskError(null)
+    setSessionImageDecryptTaskSessionName(
+      sessionDetail?.remark || sessionDetail?.nickName || (selectedSession ? sessionByUsername.get(selectedSession)?.displayName : undefined) || selectedSession || ''
+    )
     setSessionImageDecryptProgress({ current: 0, total: images.length })
 
     let success = 0
     let fail = 0
-    for (let i = 0; i < images.length; i++) {
-      try {
-        const r = await window.electronAPI.image.decrypt({
-          sessionId: selectedSession,
-          imageMd5: images[i].imageMd5,
-          imageDatName: images[i].imageDatName,
-          force: false
-        })
-        if (r?.success) success++
-        else fail++
-      } catch {
-        fail++
+    try {
+      for (let i = 0; i < images.length; i++) {
+        try {
+          const r = await window.electronAPI.image.decrypt({
+            sessionId: selectedSession,
+            imageMd5: images[i].imageMd5,
+            imageDatName: images[i].imageDatName,
+            force: false
+          })
+          if (r?.success) success++
+          else fail++
+        } catch {
+          fail++
+        }
+        if (i % 5 === 0) await new Promise(r => setTimeout(r, 0))
+        setSessionImageDecryptProgress({ current: i + 1, total: images.length })
+        setSessionImageDecryptTaskStats({ success, fail })
       }
-      if (i % 5 === 0) await new Promise(r => setTimeout(r, 0))
-      setSessionImageDecryptProgress({ current: i + 1, total: images.length })
+      setSessionImageDecryptTaskStatus('success')
+    } catch (e) {
+      console.error('批量解密图片失败:', e)
+      setSessionImageDecryptTaskStatus('error')
+      setSessionImageDecryptTaskError(String(e))
     }
 
     setIsSessionImageDecrypting(false)
-    setShowSessionImageDecryptProgress(false)
-    alert(`图片解密完成：成功 ${success} 张，失败 ${fail} 张`)
+    setSessionImageDecryptTaskStats({ success, fail })
+    setSessionImageDecryptTaskExpanded(false)
   }
 
   // 选择导出文件夹
@@ -1858,27 +1885,85 @@ function ExportPage() {
         </div>
       )}
 
-      {/* 会话图片批量解密 - 进度弹窗 */}
+      {/* 会话图片批量解密 - 非阻塞任务卡片 */}
       {showSessionImageDecryptProgress && (
-        <div className="export-overlay">
-          <div className="image-decrypt-progress-modal">
-            <div className="progress-spinner">
-              <Loader2 size={28} className="spin" />
+        <div className={`floating-task-card ${sessionImageDecryptTaskExpanded ? 'expanded' : 'collapsed'} ${sessionImageDecryptTaskStatus}`}>
+          <div className="floating-task-header">
+            <div className="floating-task-title-wrap">
+              <div className="floating-task-title">图片解密任务</div>
+              <div className={`floating-task-status ${isSessionImageDecrypting ? 'running' : sessionImageDecryptTaskStatus}`}>
+                {isSessionImageDecrypting ? '进行中' : sessionImageDecryptTaskStatus === 'success' ? '已完成' : '失败'}
+              </div>
             </div>
-            <h3>正在批量解密图片</h3>
-            <p className="progress-text">
-              {sessionDetail?.remark || sessionDetail?.nickName || (selectedSession ? sessionByUsername.get(selectedSession)?.displayName : undefined) || selectedSession}
-            </p>
-            <div className="progress-bar">
-              <div
-                className="progress-fill"
-                style={{
-                  width: `${sessionImageDecryptProgress.total > 0 ? (sessionImageDecryptProgress.current / sessionImageDecryptProgress.total) * 100 : 0}%`
-                }}
-              />
+            <div className="floating-task-actions">
+              <button
+                type="button"
+                onClick={() => setSessionImageDecryptTaskExpanded(v => !v)}
+                title={sessionImageDecryptTaskExpanded ? '收起任务卡片' : '展开任务卡片'}
+              >
+                {sessionImageDecryptTaskExpanded ? '收起' : '展开'}
+              </button>
+              {!isSessionImageDecrypting && (
+                <button
+                  type="button"
+                  onClick={() => setShowSessionImageDecryptProgress(false)}
+                  title="关闭任务卡片"
+                >
+                  关闭
+                </button>
+              )}
             </div>
-            <p className="progress-count">{sessionImageDecryptProgress.current} / {sessionImageDecryptProgress.total} 张图片</p>
           </div>
+
+          <div className="floating-task-session">
+            {sessionImageDecryptTaskSessionName || sessionDetail?.remark || sessionDetail?.nickName || (selectedSession ? sessionByUsername.get(selectedSession)?.displayName : undefined) || selectedSession}
+          </div>
+
+          <div className="floating-task-progress-bar">
+            <div
+              className="floating-task-progress-fill"
+              style={{
+                width: `${sessionImageDecryptProgress.total > 0 ? (sessionImageDecryptProgress.current / sessionImageDecryptProgress.total) * 100 : 0}%`
+              }}
+            />
+          </div>
+
+          {sessionImageDecryptTaskExpanded ? (
+            <div className="floating-task-body">
+              <div className="floating-task-counts">
+                <span>{sessionImageDecryptProgress.current} / {sessionImageDecryptProgress.total} 张</span>
+                <span>成功 {sessionImageDecryptTaskStats.success}</span>
+                <span>失败 {sessionImageDecryptTaskStats.fail}</span>
+              </div>
+              {isSessionImageDecrypting && (
+                <div className="floating-task-running">
+                  <Loader2 size={12} className="spin" />
+                  <span>后台解密中，你可以继续操作页面</span>
+                </div>
+              )}
+              {!isSessionImageDecrypting && sessionImageDecryptTaskStatus === 'success' && (
+                <div className="floating-task-finish success">
+                  <CheckCircle size={12} />
+                  <span>解密完成</span>
+                </div>
+              )}
+              {!isSessionImageDecrypting && sessionImageDecryptTaskStatus === 'error' && (
+                <div className="floating-task-finish error">
+                  <XCircle size={12} />
+                  <span>{sessionImageDecryptTaskError || '解密任务失败'}</span>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="floating-task-mini">
+              <span>{sessionImageDecryptProgress.current} / {sessionImageDecryptProgress.total} 张</span>
+              {!isSessionImageDecrypting && (
+                <span className={`mini-result ${sessionImageDecryptTaskStatus}`}>
+                  {sessionImageDecryptTaskStatus === 'success' ? `成功 ${sessionImageDecryptTaskStats.success}` : '失败'}
+                </span>
+              )}
+            </div>
+          )}
         </div>
       )}
 
