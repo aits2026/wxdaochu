@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { createPortal } from 'react-dom'
-import { MessageSquare, Loader2, RefreshCw, X, ChevronDown, Calendar, Info, Image as ImageIcon, Play, Video, Copy, ZoomIn, CheckSquare, Check, Edit, Link, Sparkles, FileText, FileArchive, Users, Mic, CheckCircle, XCircle, Crown } from 'lucide-react'
+import { MessageSquare, Loader2, RefreshCw, X, ChevronDown, Calendar, Info, AlertCircle, Image as ImageIcon, Play, Video, Copy, ZoomIn, CheckSquare, Check, Edit, Link, Sparkles, FileText, FileArchive, Users, Mic, CheckCircle, XCircle, Crown } from 'lucide-react'
 import { useChatStore } from '../stores/chatStore'
 import { useUpdateStatusStore } from '../stores/updateStatusStore'
 import ChatBackground from '../components/ChatBackground'
