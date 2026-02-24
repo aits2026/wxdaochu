@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useDeferredValue, useMemo, useRef, startTransition } from 'react'
-import { Search, Download, FolderOpen, RefreshCw, Check, FileJson, FileText, Table, Loader2, X, FileSpreadsheet, Database, FileCode, CheckCircle, XCircle, ExternalLink, MessageSquare, Users, User, Filter, Image, Video, CircleUserRound, Smile, Mic, Newspaper, ChevronDown, MoreHorizontal, ArrowLeft, Eye, Aperture, CircleHelp } from 'lucide-react'
+import { Search, Download, FolderOpen, RefreshCw, Check, FileJson, FileText, Table, Loader2, X, FileSpreadsheet, Database, FileCode, CheckCircle, XCircle, ExternalLink, MessageSquare, Users, User, Filter, Image, Video, CircleUserRound, Smile, Mic, Newspaper, ChevronDown, MoreHorizontal, ArrowLeft, Eye, Aperture, CircleHelp, ListTodo } from 'lucide-react'
 import { List, RowComponentProps } from 'react-window'
 import DateRangePicker from '../components/DateRangePicker'
 import { useTitleBarStore } from '../stores/titleBarStore'
@@ -58,6 +58,7 @@ interface ExportResult {
 
 type SessionMessageCountMap = Record<string, number>
 type ImageDecryptTaskStatus = 'running' | 'success' | 'error'
+type TaskCenterTaskStatus = 'pending' | 'running' | 'success' | 'error'
 
 interface SessionImageDecryptOverview {
   total: number
@@ -222,6 +223,7 @@ function ExportPage() {
   const [showExportSettings, setShowExportSettings] = useState(false)
   const [showMoreMenu, setShowMoreMenu] = useState(false)
   const [showUsageTipsPopover, setShowUsageTipsPopover] = useState(false)
+  const [showTaskCenterPopover, setShowTaskCenterPopover] = useState(false)
   const [options, setOptions] = useState<ExportOptions>({
     format: 'json',
     startDate: '',
@@ -792,6 +794,26 @@ function ExportPage() {
   const sessionImageAssetsTotalCount = sessionImageAssetsOverview?.total ?? sessionImageAssets.length
   const sessionImageAssetsDecryptedCount = sessionImageAssetsOverview?.decryptedCount ?? decryptedImageAssets.length
   const sessionImageAssetsUndecryptedCount = sessionImageAssetsOverview?.undecryptedCount ?? Math.max(0, sessionImageAssetsTotalCount - sessionImageAssetsDecryptedCount)
+  const imageDecryptTaskExists = Boolean(sessionImageDecryptTaskSessionId && sessionImageDecryptProgress.total > 0)
+  const imageDecryptTaskRecord = imageDecryptTaskExists ? {
+    id: `image-decrypt:${sessionImageDecryptTaskSessionId}`,
+    typeLabel: '图片解密',
+    sessionId: sessionImageDecryptTaskSessionId!,
+    sessionName: sessionImageDecryptTaskSessionName || sessionByUsername.get(sessionImageDecryptTaskSessionId!)?.displayName || sessionImageDecryptTaskSessionId!,
+    status: (isSessionImageDecrypting ? 'running' : sessionImageDecryptTaskStatus) as TaskCenterTaskStatus,
+    progressCurrent: sessionImageDecryptProgress.current,
+    progressTotal: sessionImageDecryptProgress.total,
+    successCount: sessionImageDecryptTaskStats.success,
+    failCount: sessionImageDecryptTaskStats.fail,
+    error: sessionImageDecryptTaskError,
+  } : null
+  const taskCenterTasks = useMemo(() => (
+    imageDecryptTaskRecord ? [imageDecryptTaskRecord] : []
+  ), [imageDecryptTaskRecord])
+  const taskCenterPendingTasks = taskCenterTasks.filter(task => task.status === 'pending')
+  const taskCenterRunningTasks = taskCenterTasks.filter(task => task.status === 'running')
+  const taskCenterFinishedTasks = taskCenterTasks.filter(task => task.status === 'success' || task.status === 'error')
+  const taskCenterActiveCount = taskCenterPendingTasks.length + taskCenterRunningTasks.length
 
   useEffect(() => {
     if (!selectedSession || !sessionDetail || sessionDetail.imageCount <= 0) return
@@ -860,13 +882,7 @@ function ExportPage() {
     setSessionImageDates([])
     setSessionImageSelectedDates(new Set())
     if (!isSessionImageDecrypting) {
-      setShowSessionImageDecryptProgress(false)
       setSessionImageDecryptTaskExpanded(true)
-      setSessionImageDecryptTaskStatus('running')
-      setSessionImageDecryptTaskStats({ success: 0, fail: 0 })
-      setSessionImageDecryptTaskSessionId(null)
-      setSessionImageDecryptTaskSessionName('')
-      setSessionImageDecryptTaskError(null)
     }
     setExportRecords([])
     setIsLoadingDetail(true)
@@ -1006,6 +1022,7 @@ function ExportPage() {
 
     setIsSessionImageDecrypting(true)
     setShowSessionImageDecryptProgress(true)
+    setShowTaskCenterPopover(true)
     setSessionImageDecryptTaskExpanded(true)
     setSessionImageDecryptTaskStatus('running')
     setSessionImageDecryptTaskStats({ success: 0, fail: 0 })
@@ -1215,34 +1232,188 @@ function ExportPage() {
                     <span className="status-dot" />
                     <span>{exportAccountInfo.connected ? '已连接数据库' : '未连接'}</span>
                   </div>
-                  <div className="session-account-tips-wrap">
-                    <button
-                      type="button"
-                      className={`session-account-tips-btn ${showUsageTipsPopover ? 'active' : ''}`}
-                      title="使用提示"
-                      onClick={() => {
-                        setShowUsageTipsPopover(v => {
-                          const next = !v
-                          if (next) setShowMoreMenu(false)
-                          return next
-                        })
-                      }}
-                    >
-                      <CircleHelp size={14} />
-                    </button>
-                    {showUsageTipsPopover && (
-                      <>
-                        <div className="more-menu-overlay" onClick={() => setShowUsageTipsPopover(false)} />
-                        <div className="session-account-tips-popover">
-                          <div className="session-account-tips-title">使用提示</div>
-                          <ul className="session-account-tips-list">
-                            <li>联网功能仅用来支持在线更新！</li>
-                            <li>记得到「数据管理」界面解密数据库哦！</li>
-                            <li>除使用 AI 功能外，所有数据仅在本地处理，不会上传到任何服务器！</li>
-                          </ul>
-                        </div>
-                      </>
-                    )}
+                  <div className="session-account-status-actions">
+                    <div className="session-account-tips-wrap">
+                      <button
+                        type="button"
+                        className={`session-account-tips-btn ${showUsageTipsPopover ? 'active' : ''}`}
+                        title="使用提示"
+                        onClick={() => {
+                          setShowUsageTipsPopover(v => {
+                            const next = !v
+                            if (next) {
+                              setShowMoreMenu(false)
+                              setShowTaskCenterPopover(false)
+                            }
+                            return next
+                          })
+                        }}
+                      >
+                        <CircleHelp size={14} />
+                      </button>
+                      {showUsageTipsPopover && (
+                        <>
+                          <div className="more-menu-overlay" onClick={() => setShowUsageTipsPopover(false)} />
+                          <div className="session-account-tips-popover">
+                            <div className="session-account-tips-title">使用提示</div>
+                            <ul className="session-account-tips-list">
+                              <li>联网功能仅用来支持在线更新！</li>
+                              <li>记得到「数据管理」界面解密数据库哦！</li>
+                              <li>除使用 AI 功能外，所有数据仅在本地处理，不会上传到任何服务器！</li>
+                            </ul>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                    <div className="session-account-task-wrap">
+                      <button
+                        type="button"
+                        className={`session-account-task-btn ${showTaskCenterPopover ? 'active' : ''}`}
+                        title="任务中心"
+                        onClick={() => {
+                          setShowTaskCenterPopover(v => {
+                            const next = !v
+                            if (next) {
+                              setShowUsageTipsPopover(false)
+                              setShowMoreMenu(false)
+                            }
+                            return next
+                          })
+                        }}
+                      >
+                        <ListTodo size={14} />
+                        {taskCenterActiveCount > 0 && (
+                          <span className="task-badge">{taskCenterActiveCount}</span>
+                        )}
+                      </button>
+                      {showTaskCenterPopover && (
+                        <>
+                          <div className="more-menu-overlay" onClick={() => setShowTaskCenterPopover(false)} />
+                          <div className="session-task-center-popover">
+                            <div className="session-task-center-header">
+                              <div className="title">任务中心</div>
+                              <button type="button" onClick={() => setShowTaskCenterPopover(false)}>收起</button>
+                            </div>
+                            {taskCenterTasks.length === 0 ? (
+                              <div className="session-task-center-empty">暂无任务</div>
+                            ) : (
+                              <div className="session-task-center-sections">
+                                {taskCenterPendingTasks.length > 0 && (
+                                  <div className="task-section">
+                                    <div className="task-section-title">待开始（{taskCenterPendingTasks.length}）</div>
+                                    {taskCenterPendingTasks.map(task => (
+                                      <div key={task.id} className="task-card">
+                                        <div className="task-card-top">
+                                          <div className="task-main">
+                                            <span className="task-type">{task.typeLabel}</span>
+                                            <span className="task-name">{task.sessionName}</span>
+                                          </div>
+                                          <span className="task-state pending">待开始</span>
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+
+                                {taskCenterRunningTasks.length > 0 && (
+                                  <div className="task-section">
+                                    <div className="task-section-title">进行中（{taskCenterRunningTasks.length}）</div>
+                                    {taskCenterRunningTasks.map(task => (
+                                      <div key={task.id} className="task-card">
+                                        <div className="task-card-top">
+                                          <div className="task-main">
+                                            <span className="task-type">{task.typeLabel}</span>
+                                            <span className="task-name">{task.sessionName}</span>
+                                          </div>
+                                          <span className="task-state running">
+                                            <Loader2 size={11} className="spin" />
+                                            <span>进行中</span>
+                                          </span>
+                                        </div>
+                                        <div className="task-progress-meta">
+                                          <span>{task.progressCurrent} / {task.progressTotal} 张</span>
+                                          <span>成功 {task.successCount} · 失败 {task.failCount}</span>
+                                        </div>
+                                        <div className="task-progress-bar">
+                                          <div
+                                            className="task-progress-fill"
+                                            style={{ width: `${task.progressTotal > 0 ? (task.progressCurrent / task.progressTotal) * 100 : 0}%` }}
+                                          />
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+
+                                {taskCenterFinishedTasks.length > 0 && (
+                                  <div className="task-section">
+                                    <div className="task-section-title">已完成（{taskCenterFinishedTasks.length}）</div>
+                                    {taskCenterFinishedTasks.map(task => (
+                                      <div key={task.id} className="task-card">
+                                        <div className="task-card-top">
+                                          <div className="task-main">
+                                            <span className="task-type">{task.typeLabel}</span>
+                                            <span className="task-name">{task.sessionName}</span>
+                                          </div>
+                                          <span className={`task-state ${task.status}`}>
+                                            {task.status === 'success' ? (
+                                              <>
+                                                <CheckCircle size={11} />
+                                                <span>已完成</span>
+                                              </>
+                                            ) : (
+                                              <>
+                                                <XCircle size={11} />
+                                                <span>失败</span>
+                                              </>
+                                            )}
+                                          </span>
+                                        </div>
+                                        <div className="task-progress-meta">
+                                          <span>{task.progressCurrent} / {task.progressTotal} 张</span>
+                                          <span>成功 {task.successCount} · 失败 {task.failCount}</span>
+                                        </div>
+                                        {task.status === 'error' && task.error && (
+                                          <div className="task-error-text">{task.error}</div>
+                                        )}
+                                        <div className="task-card-actions">
+                                          {task.status === 'success' && task.sessionId && (
+                                            <button
+                                              type="button"
+                                              onClick={async () => {
+                                                await selectSession(task.sessionId)
+                                                setShowTaskCenterPopover(false)
+                                                setTimeout(() => { void openSessionImageAssetsModal() }, 0)
+                                              }}
+                                            >
+                                              查看图片
+                                            </button>
+                                          )}
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              setShowSessionImageDecryptProgress(false)
+                                              setSessionImageDecryptTaskSessionId(null)
+                                              setSessionImageDecryptTaskSessionName('')
+                                              setSessionImageDecryptTaskStatus('running')
+                                              setSessionImageDecryptTaskStats({ success: 0, fail: 0 })
+                                              setSessionImageDecryptTaskError(null)
+                                              setSessionImageDecryptProgress({ current: 0, total: 0 })
+                                            }}
+                                          >
+                                            关闭
+                                          </button>
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1252,7 +1423,10 @@ function ExportPage() {
                   onClick={() => {
                     setShowMoreMenu(v => {
                       const next = !v
-                      if (next) setShowUsageTipsPopover(false)
+                      if (next) {
+                        setShowUsageTipsPopover(false)
+                        setShowTaskCenterPopover(false)
+                      }
                       return next
                     })
                   }}

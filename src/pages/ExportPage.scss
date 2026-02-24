@@ -166,7 +166,21 @@
     min-width: 0;
   }
 
+  .session-account-status-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+
   .session-account-tips-wrap {
+    position: relative;
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+  }
+
+  .session-account-task-wrap {
     position: relative;
     display: flex;
     align-items: center;
@@ -199,6 +213,51 @@
     }
   }
 
+  .session-account-task-btn {
+    width: 24px;
+    height: 24px;
+    border-radius: 999px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--text-tertiary);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    position: relative;
+
+    &:hover {
+      color: var(--text-primary);
+      background: var(--bg-secondary);
+      border-color: var(--border-color);
+    }
+
+    &.active {
+      color: var(--primary);
+      background: rgba(var(--primary-rgb), 0.08);
+      border-color: rgba(var(--primary-rgb), 0.2);
+    }
+
+    .task-badge {
+      position: absolute;
+      top: -4px;
+      right: -5px;
+      min-width: 14px;
+      height: 14px;
+      border-radius: 999px;
+      padding: 0 4px;
+      background: var(--primary);
+      color: #fff;
+      font-size: 10px;
+      line-height: 14px;
+      font-weight: 600;
+      border: 1px solid var(--bg-primary);
+      box-sizing: border-box;
+      text-align: center;
+    }
+  }
+
   .session-account-tips-popover {
     position: absolute;
     top: calc(100% + 8px);
@@ -210,6 +269,215 @@
     border-radius: 10px;
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
     padding: 10px 12px;
+  }
+
+  .session-task-center-popover {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    z-index: 100;
+    width: min(360px, calc(100vw - 40px));
+    max-height: min(70vh, 620px);
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .session-task-center-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border-color);
+
+    .title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    button {
+      border: none;
+      background: none;
+      color: var(--text-secondary);
+      font-size: 12px;
+      cursor: pointer;
+      padding: 2px 4px;
+      border-radius: 6px;
+
+      &:hover {
+        background: var(--bg-hover);
+        color: var(--text-primary);
+      }
+    }
+  }
+
+  .session-task-center-empty {
+    padding: 18px 12px;
+    color: var(--text-tertiary);
+    font-size: 12px;
+  }
+
+  .session-task-center-sections {
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    overflow: auto;
+  }
+
+  .task-section {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .task-section-title {
+    font-size: 11px;
+    color: var(--text-tertiary);
+    padding: 0 4px;
+  }
+
+  .task-card {
+    border: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+    border-radius: 10px;
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .task-card-top {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .task-main {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .task-type {
+    font-size: 11px;
+    color: var(--text-tertiary);
+  }
+
+  .task-name {
+    font-size: 12px;
+    color: var(--text-primary);
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .task-state {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    line-height: 1.2;
+    border: 1px solid transparent;
+
+    &.pending {
+      color: var(--text-secondary);
+      background: var(--bg-primary);
+      border-color: var(--border-color);
+    }
+
+    &.running {
+      color: var(--primary);
+      background: rgba(var(--primary-rgb), 0.1);
+      border-color: rgba(var(--primary-rgb), 0.16);
+    }
+
+    &.success {
+      color: #389e0d;
+      background: rgba(82, 196, 26, 0.12);
+      border-color: rgba(82, 196, 26, 0.18);
+    }
+
+    &.error {
+      color: #cf1322;
+      background: rgba(255, 77, 79, 0.12);
+      border-color: rgba(255, 77, 79, 0.18);
+    }
+
+    .spin {
+      animation: exportSpin 1s linear infinite;
+    }
+  }
+
+  .task-progress-meta {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: 11px;
+    color: var(--text-secondary);
+
+    span {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+  }
+
+  .task-progress-bar {
+    height: 5px;
+    background: var(--bg-primary);
+    border-radius: 999px;
+    overflow: hidden;
+  }
+
+  .task-progress-fill {
+    height: 100%;
+    background: var(--primary);
+    transition: width 0.2s ease;
+  }
+
+  .task-error-text {
+    color: #cf1322;
+    font-size: 11px;
+    line-height: 1.35;
+    background: rgba(255, 77, 79, 0.08);
+    border: 1px solid rgba(255, 77, 79, 0.12);
+    padding: 6px 8px;
+    border-radius: 8px;
+  }
+
+  .task-card-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+
+    button {
+      border: 1px solid var(--border-color);
+      background: var(--bg-primary);
+      color: var(--text-secondary);
+      border-radius: 8px;
+      padding: 4px 8px;
+      font-size: 11px;
+      cursor: pointer;
+
+      &:hover {
+        background: var(--bg-hover);
+        color: var(--text-primary);
+      }
+    }
   }
 
   .session-account-tips-title {
