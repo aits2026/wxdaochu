@@ -349,6 +349,11 @@ export interface ElectronAPI {
       }>
       error?: string
     }>
+    getUserPostCounts: () => Promise<{
+      success: boolean
+      counts?: Record<string, number>
+      error?: string
+    }>
     proxyImage: (params: { url: string; key?: string | number }) => Promise<{
       success: boolean
       dataUrl?: string

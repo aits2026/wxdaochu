@@ -266,6 +266,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   sns: {
     getTimeline: (limit?: number, offset?: number, usernames?: string[], keyword?: string, startTime?: number, endTime?: number) =>
       ipcRenderer.invoke('sns:getTimeline', limit || 20, offset || 0, usernames, keyword, startTime, endTime),
+    getUserPostCounts: () =>
+      ipcRenderer.invoke('sns:getUserPostCounts'),
     proxyImage: (params: { url: string; key?: string | number }) =>
       ipcRenderer.invoke('sns:proxyImage', params),
     downloadImage: (params: { url: string; key?: string | number }) =>

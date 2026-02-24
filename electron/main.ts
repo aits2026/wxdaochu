@@ -1997,6 +1997,20 @@ function registerIpcHandlers() {
     }
   })
 
+  ipcMain.handle('sns:getUserPostCounts', async () => {
+    try {
+      const { snsService } = await import('./services/snsService')
+      const result = await snsService.getUserPostCounts()
+      if (!result.success) {
+        logService?.warn('SNS', '获取朋友圈联系人总条数失败', { error: result.error })
+      }
+      return result
+    } catch (e: any) {
+      logService?.error('SNS', '获取朋友圈联系人总条数异常', { error: e.message })
+      return { success: false, error: `加载失败: ${e.message}` }
+    }
+  })
+
   ipcMain.handle('sns:proxyImage', async (_, params: { url: string; key?: string | number }) => {
     const { snsService } = await import('./services/snsService')
     const result = await snsService.proxyImage(params.url, params.key)

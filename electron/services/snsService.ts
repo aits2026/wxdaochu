@@ -880,6 +880,33 @@ class SnsService {
         }
     }
 
+    async getUserPostCounts(): Promise<{ success: boolean; counts?: Record<string, number>; error?: string }> {
+        if (!this.openSnsDatabase()) {
+            return { success: false, error: 'SNS 数据库打开失败，请先在设置中解密数据库' }
+        }
+
+        try {
+            const rows = this.snsDb!.prepare(`
+                SELECT user_name, COUNT(*) as total
+                FROM SnsTimeLine
+                WHERE user_name IS NOT NULL AND TRIM(user_name) <> ''
+                GROUP BY user_name
+            `).all() as Array<{ user_name: string; total: number }>
+
+            const counts: Record<string, number> = {}
+            for (const row of rows) {
+                const username = (row.user_name || '').trim()
+                if (!username) continue
+                counts[username] = Number(row.total || 0)
+            }
+
+            return { success: true, counts }
+        } catch (error: any) {
+            console.error('[SnsService] 统计朋友圈用户总数失败:', error)
+            return { success: false, error: error.message }
+        }
+    }
+
     async proxyImage(url: string, key?: string | number): Promise<{ success: boolean; dataUrl?: string; videoPath?: string; localPath?: string; error?: string }> {
         if (!url) return { success: false, error: 'url 不能为空' }
 

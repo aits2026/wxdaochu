@@ -561,6 +561,8 @@ const usernamesLooselyEqual = (a?: string, b?: string) => {
   return normalizeMatchText(cleanSnsUsernameCandidate(aNorm)) === normalizeMatchText(cleanSnsUsernameCandidate(bNorm))
 }
 
+const contactNameCollator = new Intl.Collator('zh-CN', { numeric: true, sensitivity: 'base' })
+
 function MomentsWindow() {
   const [isLoading, setIsLoading] = useState(true)
   const [loadingNewer, setLoadingNewer] = useState(false)
@@ -573,6 +575,8 @@ function MomentsWindow() {
   const [contacts, setContacts] = useState<Contact[]>([])
   const [contactsLoaded, setContactsLoaded] = useState(false)
   const [contactSearch, setContactSearch] = useState('')
+  const [snsUserPostCounts, setSnsUserPostCounts] = useState<Record<string, number>>({})
+  const [snsUserPostCountsStatus, setSnsUserPostCountsStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
   const [selfWxid, setSelfWxid] = useState<string>('')
   const [selfProfile, setSelfProfile] = useState<SelfProfile | null>(null)
   const [pendingMomentsPresetRequest, setPendingMomentsPresetRequest] = useState<MomentsPresetPayload | null>(null)
@@ -796,6 +800,33 @@ function MomentsWindow() {
   useEffect(() => {
     loadContacts()
   }, [loadContacts])
+
+  useEffect(() => {
+    let cancelled = false
+    setSnsUserPostCountsStatus('loading')
+
+    window.electronAPI.sns.getUserPostCounts()
+      .then((result) => {
+        if (cancelled) return
+        if (result.success) {
+          setSnsUserPostCounts(result.counts || {})
+          setSnsUserPostCountsStatus('ready')
+          return
+        }
+        setSnsUserPostCounts({})
+        setSnsUserPostCountsStatus('error')
+      })
+      .catch((e) => {
+        if (cancelled) return
+        console.error('加载朋友圈联系人总条数失败:', e)
+        setSnsUserPostCounts({})
+        setSnsUserPostCountsStatus('error')
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     configService.getMyWxid()
@@ -1483,10 +1514,27 @@ document.querySelectorAll('.vi video').forEach(function(v) {
     }
   }, [exporting, selectedUsernames, exportOptions, exportDateRange])
 
-  const filteredContacts = contacts.filter(c =>
-    c.displayName.toLowerCase().includes(contactSearch.toLowerCase()) ||
-    c.username.toLowerCase().includes(contactSearch.toLowerCase())
-  )
+  const loadedPostCounts = posts.reduce<Record<string, number>>((acc, post) => {
+    const username = (post.username || '').trim()
+    if (!username) return acc
+    acc[username] = (acc[username] || 0) + 1
+    return acc
+  }, {})
+
+  const filteredContacts = contacts
+    .filter(c =>
+      c.displayName.toLowerCase().includes(contactSearch.toLowerCase()) ||
+      c.username.toLowerCase().includes(contactSearch.toLowerCase())
+    )
+    .sort((a, b) => {
+      const aTotal = snsUserPostCountsStatus === 'ready' ? (snsUserPostCounts[a.username] ?? 0) : 0
+      const bTotal = snsUserPostCountsStatus === 'ready' ? (snsUserPostCounts[b.username] ?? 0) : 0
+      if (bTotal !== aTotal) return bTotal - aTotal
+
+      const nameCmp = contactNameCollator.compare(a.displayName || a.username, b.displayName || b.username)
+      if (nameCmp !== 0) return nameCmp
+      return contactNameCollator.compare(a.username, b.username)
+    })
 
   const isUserPresetOnlyFilterActive = !!activeUserPresetFilter && selectedUsernames.length === 1 && selectedUsernames[0] === activeUserPresetFilter.username
 
@@ -1534,21 +1582,33 @@ document.querySelectorAll('.vi video').forEach(function(v) {
                   )}
                 </div>
                 <div className="contact-list custom-scrollbar">
-                  {filteredContacts.map(contact => (
-                    <div
-                      key={contact.username}
-                      className={`contact-item ${selectedUsernames.includes(contact.username) ? 'active' : ''}`}
-                      onClick={() => toggleUserSelection(contact.username)}
-                    >
-                      <div className="avatar-wrapper">
-                        {contact.avatarUrl ? <img src={contact.avatarUrl} alt="" /> : <div className="avatar-placeholder">{contact.displayName[0]}</div>}
-                        {selectedUsernames.includes(contact.username) && (
-                          <div className="active-badge"></div>
-                        )}
+                  {filteredContacts.map(contact => {
+                    const loadedCount = loadedPostCounts[contact.username] ?? 0
+                    const totalCountDisplay = snsUserPostCountsStatus === 'ready'
+                      ? String(snsUserPostCounts[contact.username] ?? 0)
+                      : '--'
+
+                    return (
+                      <div
+                        key={contact.username}
+                        className={`contact-item ${selectedUsernames.includes(contact.username) ? 'active' : ''}`}
+                        onClick={() => toggleUserSelection(contact.username)}
+                      >
+                        <div className="avatar-wrapper">
+                          {contact.avatarUrl ? <img src={contact.avatarUrl} alt="" /> : <div className="avatar-placeholder">{contact.displayName[0]}</div>}
+                          {selectedUsernames.includes(contact.username) && (
+                            <div className="active-badge"></div>
+                          )}
+                        </div>
+                        <span className="contact-name">{contact.displayName}</span>
+                        <span className="contact-counts" title={`已加载 ${loadedCount} / 总数 ${totalCountDisplay}`}>
+                          <span className="loaded-count">{loadedCount}</span>
+                          <span className="count-sep">/</span>
+                          <span className="total-count">{totalCountDisplay}</span>
+                        </span>
                       </div>
-                      <span className="contact-name">{contact.displayName}</span>
-                    </div>
-                  ))}
+                    )
+                  })}
                   {filteredContacts.length === 0 && (
                     <div className="empty-contacts">无可显示联系人</div>
                   )}

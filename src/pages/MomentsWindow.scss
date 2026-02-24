@@ -223,6 +223,16 @@
           font-weight: 600;
         }
 
+        .contact-counts {
+          background: rgba(7, 193, 96, 0.1);
+          color: var(--accent-color, #07c160);
+          border-color: rgba(7, 193, 96, 0.18);
+
+          .total-count {
+            color: inherit;
+          }
+        }
+
         &::after {
           content: '';
           position: absolute;
@@ -272,6 +282,37 @@
         text-overflow: ellipsis;
         color: var(--text-primary);
         flex: 1;
+      }
+
+      .contact-counts {
+        flex-shrink: 0;
+        margin-left: 4px;
+        margin-right: 18px; // reserve space for selected-state checkmark
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 2px 6px;
+        border-radius: 999px;
+        font-size: 11px;
+        line-height: 1;
+        font-variant-numeric: tabular-nums;
+        color: var(--text-secondary);
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+
+        .loaded-count {
+          opacity: 0.85;
+        }
+
+        .count-sep {
+          opacity: 0.55;
+          margin-top: -1px;
+        }
+
+        .total-count {
+          font-weight: 600;
+          color: var(--text-primary);
+        }
       }
     }
 
