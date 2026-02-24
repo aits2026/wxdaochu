@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { createPortal } from 'react-dom'
-import { MessageSquare, Loader2, RefreshCw, X, ChevronDown, Info, Calendar, Database, Hash, Image as ImageIcon, Play, Video, Copy, ZoomIn, CheckSquare, Check, Edit, Link, Sparkles, FileText, FileArchive, Users, Mic, CheckCircle, XCircle } from 'lucide-react'
+import { MessageSquare, Loader2, RefreshCw, X, ChevronDown, Info, Calendar, Database, Hash, Image as ImageIcon, Play, Video, Copy, ZoomIn, CheckSquare, Check, Edit, Link, Sparkles, FileText, FileArchive, Users, Mic, CheckCircle, XCircle, Crown } from 'lucide-react'
 import { useChatStore } from '../stores/chatStore'
 import { useUpdateStatusStore } from '../stores/updateStatusStore'
 import ChatBackground from '../components/ChatBackground'
@@ -25,7 +25,21 @@ interface SessionDetail {
   messageCount: number
   firstMessageTime?: number
   latestMessageTime?: number
+  groupInfo?: {
+    ownerUsername?: string
+    ownerDisplayName?: string
+    memberCount?: number
+    friendMemberCount?: number
+    selfMessageCount?: number
+    friendMembers?: Array<{ username: string; displayName: string }>
+  }
   messageTables: { dbName: string; tableName: string; count: number }[]
+}
+
+interface GroupMemberListItem {
+  username: string
+  displayName: string
+  avatarUrl?: string
 }
 
 // 头像组件 - 支持骨架屏加载和懒加载
@@ -201,6 +215,8 @@ function ChatPage(_props: ChatPageProps) {
   const [showDetailPanel, setShowDetailPanel] = useState(false)
   const [sessionDetail, setSessionDetail] = useState<SessionDetail | null>(null)
   const [isLoadingDetail, setIsLoadingDetail] = useState(false)
+  const [groupMembers, setGroupMembers] = useState<GroupMemberListItem[]>([])
+  const [isLoadingGroupMembers, setIsLoadingGroupMembers] = useState(false)
   const [currentSessionMeta, setCurrentSessionMeta] = useState<Pick<ChatSession, 'username' | 'displayName' | 'avatarUrl' | 'accountType'> | null>(null)
   const [hasImageKey, setHasImageKey] = useState<boolean | null>(null)
   const [contextMenu, setContextMenu] = useState<{
@@ -232,6 +248,7 @@ function ChatPage(_props: ChatPageProps) {
   const [dropdownPosition, setDropdownPosition] = useState<{ top: number; left: number } | null>(null)
   const datePickerRef = useRef<HTMLDivElement>(null) // 日期选择器容器引用
   const dateButtonRef = useRef<HTMLButtonElement>(null) // 日期按钮引用
+  const groupMembersRequestIdRef = useRef(0)
   
   // 批量语音转文字相关状态
   const [isBatchTranscribing, setIsBatchTranscribing] = useState(false)
@@ -297,6 +314,34 @@ function ChatPage(_props: ChatPageProps) {
     }
   }, [])
 
+  const loadGroupMembers = useCallback(async (chatroomId: string) => {
+    const requestId = ++groupMembersRequestIdRef.current
+    if (!chatroomId.includes('@chatroom')) {
+      setGroupMembers([])
+      setIsLoadingGroupMembers(false)
+      return
+    }
+
+    setIsLoadingGroupMembers(true)
+    try {
+      const result = await window.electronAPI.groupAnalytics.getGroupMembers(chatroomId)
+      if (requestId !== groupMembersRequestIdRef.current) return
+      if (result.success && result.data) {
+        setGroupMembers(result.data)
+      } else {
+        setGroupMembers([])
+      }
+    } catch (e) {
+      if (requestId !== groupMembersRequestIdRef.current) return
+      console.error('加载群成员列表失败:', e)
+      setGroupMembers([])
+    } finally {
+      if (requestId === groupMembersRequestIdRef.current) {
+        setIsLoadingGroupMembers(false)
+      }
+    }
+  }, [])
+
   const loadCurrentSessionMeta = useCallback(async (sessionId: string) => {
     const requestId = ++sessionMetaRequestIdRef.current
     try {
@@ -329,11 +374,17 @@ function ChatPage(_props: ChatPageProps) {
       accountType: inferredType
     })
     setSessionDetail(null)
+    groupMembersRequestIdRef.current += 1
+    setGroupMembers([])
+    setIsLoadingGroupMembers(false)
 
     if (username === currentSessionId) {
       setCurrentOffset(0)
       void loadMessages(username, 0)
-      if (showDetailPanel) void loadSessionDetail(username)
+      if (showDetailPanel) {
+        void loadSessionDetail(username)
+        if (username.includes('@chatroom')) void loadGroupMembers(username)
+      }
       void loadCurrentSessionMeta(username)
       return
     }
@@ -341,17 +392,27 @@ function ChatPage(_props: ChatPageProps) {
     setCurrentSession(username)
     setCurrentOffset(0)
     void loadMessages(username, 0)
-    if (showDetailPanel) void loadSessionDetail(username)
+    if (showDetailPanel) {
+      void loadSessionDetail(username)
+      if (username.includes('@chatroom')) void loadGroupMembers(username)
+    }
     void loadCurrentSessionMeta(username)
-  }, [currentSessionId, loadCurrentSessionMeta, loadSessionDetail, setCurrentSession, showDetailPanel])
+  }, [currentSessionId, loadCurrentSessionMeta, loadSessionDetail, loadGroupMembers, setCurrentSession, showDetailPanel])
 
   // 切换详情面板
   const toggleDetailPanel = useCallback(() => {
     if (!showDetailPanel && currentSessionId) {
       loadSessionDetail(currentSessionId)
+      if (currentSessionId.includes('@chatroom')) {
+        loadGroupMembers(currentSessionId)
+      } else {
+        groupMembersRequestIdRef.current += 1
+        setGroupMembers([])
+        setIsLoadingGroupMembers(false)
+      }
     }
     setShowDetailPanel(!showDetailPanel)
-  }, [showDetailPanel, currentSessionId, loadSessionDetail])
+  }, [showDetailPanel, currentSessionId, loadSessionDetail, loadGroupMembers])
 
   // 连接数据库
   const connect = useCallback(async () => {
@@ -1079,6 +1140,19 @@ function ChatPage(_props: ChatPageProps) {
     }
   }, [currentSessionId, currentSessionMeta])
 
+  const sortedGroupMembers = useMemo(() => {
+    if (!groupMembers.length) return []
+    const ownerUsername = sessionDetail?.groupInfo?.ownerUsername
+    if (!ownerUsername) return groupMembers
+
+    return [...groupMembers].sort((a, b) => {
+      const aIsOwner = a.username === ownerUsername ? 1 : 0
+      const bIsOwner = b.username === ownerUsername ? 1 : 0
+      if (aIsOwner !== bIsOwner) return bIsOwner - aIsOwner
+      return (a.displayName || a.username).localeCompare((b.displayName || b.username), 'zh-Hans-CN')
+    })
+  }, [groupMembers, sessionDetail?.groupInfo?.ownerUsername])
+
   // 判断是否为群聊
   const isGroupChat = (username: string) => username.includes('@chatroom')
 
@@ -1539,6 +1613,55 @@ function ChatPage(_props: ChatPageProps) {
                               </div>
                             ))}
                           </div>
+                        </div>
+                      )}
+
+                      {currentSession && currentSession.username.includes('@chatroom') && (
+                        <div className="detail-section">
+                          <div className="section-title">
+                            <Users size={14} />
+                            <span>群成员列表</span>
+                          </div>
+
+                          {isLoadingGroupMembers ? (
+                            <div className="group-members-loading">
+                              <Loader2 size={14} className="spin" />
+                              <span>加载群成员中...</span>
+                            </div>
+                          ) : sortedGroupMembers.length > 0 ? (
+                            <div className="group-member-list">
+                              {sortedGroupMembers.map(member => {
+                                const isOwner = member.username === sessionDetail?.groupInfo?.ownerUsername
+                                const avatarLetter = [...(member.displayName || member.username || '?')][0] || '?'
+
+                                return (
+                                  <div key={member.username} className={`group-member-item ${isOwner ? 'is-owner' : ''}`}>
+                                    <div className="group-member-avatar">
+                                      {member.avatarUrl ? (
+                                        <img src={member.avatarUrl} alt="" />
+                                      ) : (
+                                        <span>{avatarLetter}</span>
+                                      )}
+                                    </div>
+                                    <div className="group-member-meta">
+                                      <div className="group-member-name-row">
+                                        <span className="group-member-name">{member.displayName || member.username}</span>
+                                        {isOwner && (
+                                          <span className="group-owner-badge">
+                                            <Crown size={11} />
+                                            <span>群主</span>
+                                          </span>
+                                        )}
+                                      </div>
+                                      <div className="group-member-username">{member.username}</div>
+                                    </div>
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          ) : (
+                            <div className="detail-empty-inline">暂无群成员数据</div>
+                          )}
                         </div>
                       )}
                     </div>
