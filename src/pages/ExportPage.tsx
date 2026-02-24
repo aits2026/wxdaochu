@@ -57,6 +57,24 @@ interface ExportResult {
 }
 
 type SessionMessageCountMap = Record<string, number>
+type ImageDecryptTaskStatus = 'running' | 'success' | 'error'
+
+interface SessionImageDecryptOverview {
+  total: number
+  decryptedCount: number
+  undecryptedCount: number
+  status: 'idle' | 'checking' | 'complete' | 'partial' | 'error'
+  checkedAt?: number
+}
+
+interface SessionImageAssetItem {
+  imageMd5?: string
+  imageDatName?: string
+  createTime?: number
+  localPath?: string
+  localUrl?: string
+  decrypted: boolean
+}
 
 // 会话类型筛选
 type SessionTypeFilter = 'group' | 'private' | 'official'
@@ -156,10 +174,18 @@ function ExportPage() {
   const [showSessionImageDecryptConfirm, setShowSessionImageDecryptConfirm] = useState(false)
   const [showSessionImageDecryptProgress, setShowSessionImageDecryptProgress] = useState(false)
   const [sessionImageDecryptTaskExpanded, setSessionImageDecryptTaskExpanded] = useState(true)
-  const [sessionImageDecryptTaskStatus, setSessionImageDecryptTaskStatus] = useState<'running' | 'success' | 'error'>('running')
+  const [sessionImageDecryptTaskStatus, setSessionImageDecryptTaskStatus] = useState<ImageDecryptTaskStatus>('running')
   const [sessionImageDecryptTaskStats, setSessionImageDecryptTaskStats] = useState({ success: 0, fail: 0 })
+  const [sessionImageDecryptTaskSessionId, setSessionImageDecryptTaskSessionId] = useState<string | null>(null)
   const [sessionImageDecryptTaskSessionName, setSessionImageDecryptTaskSessionName] = useState('')
   const [sessionImageDecryptTaskError, setSessionImageDecryptTaskError] = useState<string | null>(null)
+  const [sessionImageOverviews, setSessionImageOverviews] = useState<Record<string, SessionImageDecryptOverview>>({})
+  const [showSessionImageAssetsModal, setShowSessionImageAssetsModal] = useState(false)
+  const [sessionImageAssetsLoading, setSessionImageAssetsLoading] = useState(false)
+  const [sessionImageAssetsError, setSessionImageAssetsError] = useState<string | null>(null)
+  const [sessionImageAssetsSessionId, setSessionImageAssetsSessionId] = useState<string | null>(null)
+  const [sessionImageAssetsSessionName, setSessionImageAssetsSessionName] = useState('')
+  const [sessionImageAssets, setSessionImageAssets] = useState<SessionImageAssetItem[]>([])
   const [sessionImageMessages, setSessionImageMessages] = useState<{ imageMd5?: string; imageDatName?: string; createTime?: number }[] | null>(null)
   const [sessionImageDates, setSessionImageDates] = useState<string[]>([])
   const [sessionImageSelectedDates, setSessionImageSelectedDates] = useState<Set<string>>(new Set())
@@ -227,6 +253,8 @@ function ExportPage() {
   const deferredSessionMessageCounts = useDeferredValue(sessionMessageCounts)
   const sessionCountRequestIdRef = useRef(0)
   const sessionDetailRequestIdRef = useRef(0)
+  const sessionImageOverviewRequestIdRef = useRef(0)
+  const sessionImageAssetsRequestIdRef = useRef(0)
   const sessionTypeFilterRef = useRef<SessionTypeFilter>('private')
 
   useEffect(() => {
@@ -551,6 +579,152 @@ function ExportPage() {
     </span>
   )
 
+  const toLocalFileUrl = (localPath?: string) => {
+    if (!localPath) return undefined
+    if (localPath.startsWith('file:')) return localPath
+    return `file://${localPath.replace(/\\/g, '/')}`
+  }
+
+  const getSessionDisplayName = useCallback((sessionId: string) => {
+    return (
+      sessionDetail?.remark ||
+      sessionDetail?.nickName ||
+      sessionByUsername.get(sessionId)?.displayName ||
+      sessionId
+    )
+  }, [sessionByUsername, sessionDetail?.nickName, sessionDetail?.remark])
+
+  const inspectSessionImageAssets = useCallback(async (sessionId: string) => {
+    const listResult = await window.electronAPI.chat.getAllImageMessages(sessionId)
+    if (!listResult.success || !listResult.images) {
+      throw new Error(listResult.error || '读取会话图片失败')
+    }
+
+    const assets: SessionImageAssetItem[] = []
+    let decryptedCount = 0
+    let undecryptedCount = 0
+
+    for (let i = 0; i < listResult.images.length; i++) {
+      const img = listResult.images[i]
+      let localPath: string | undefined
+
+      try {
+        const cacheResult = await window.electronAPI.image.resolveCache({
+          sessionId,
+          imageMd5: img.imageMd5,
+          imageDatName: img.imageDatName,
+        })
+        if (cacheResult.success && cacheResult.localPath) {
+          localPath = cacheResult.localPath
+        }
+      } catch {
+        // 忽略单张图片检测错误，按未解密处理
+      }
+
+      const decrypted = Boolean(localPath)
+      if (decrypted) decryptedCount++
+      else undecryptedCount++
+
+      assets.push({
+        ...img,
+        decrypted,
+        localPath,
+        localUrl: toLocalFileUrl(localPath)
+      })
+
+      if (i % 25 === 0) {
+        await new Promise(r => setTimeout(r, 0))
+      }
+    }
+
+    return {
+      total: listResult.images.length,
+      decryptedCount,
+      undecryptedCount,
+      assets
+    }
+  }, [])
+
+  const refreshSessionImageOverview = useCallback(async (sessionId: string) => {
+    const requestId = ++sessionImageOverviewRequestIdRef.current
+
+    setSessionImageOverviews(prev => ({
+      ...prev,
+      [sessionId]: {
+        total: prev[sessionId]?.total || 0,
+        decryptedCount: prev[sessionId]?.decryptedCount || 0,
+        undecryptedCount: prev[sessionId]?.undecryptedCount || 0,
+        status: 'checking',
+        checkedAt: prev[sessionId]?.checkedAt,
+      }
+    }))
+
+    try {
+      const result = await inspectSessionImageAssets(sessionId)
+      if (requestId !== sessionImageOverviewRequestIdRef.current) return
+
+      setSessionImageOverviews(prev => ({
+        ...prev,
+        [sessionId]: {
+          total: result.total,
+          decryptedCount: result.decryptedCount,
+          undecryptedCount: result.undecryptedCount,
+          status: result.total > 0 && result.undecryptedCount === 0 ? 'complete' : 'partial',
+          checkedAt: Date.now(),
+        }
+      }))
+    } catch {
+      if (requestId !== sessionImageOverviewRequestIdRef.current) return
+      setSessionImageOverviews(prev => ({
+        ...prev,
+        [sessionId]: {
+          total: prev[sessionId]?.total || 0,
+          decryptedCount: prev[sessionId]?.decryptedCount || 0,
+          undecryptedCount: prev[sessionId]?.undecryptedCount || 0,
+          status: 'error',
+          checkedAt: Date.now(),
+        }
+      }))
+    }
+  }, [inspectSessionImageAssets])
+
+  const openSessionImageAssetsModal = useCallback(async () => {
+    if (!selectedSession) return
+
+    const sessionId = selectedSession
+    const requestId = ++sessionImageAssetsRequestIdRef.current
+    setShowSessionImageAssetsModal(true)
+    setSessionImageAssetsLoading(true)
+    setSessionImageAssetsError(null)
+    setSessionImageAssetsSessionId(sessionId)
+    setSessionImageAssetsSessionName(getSessionDisplayName(sessionId))
+
+    try {
+      const result = await inspectSessionImageAssets(sessionId)
+      if (requestId !== sessionImageAssetsRequestIdRef.current) return
+
+      setSessionImageAssets(result.assets)
+      setSessionImageOverviews(prev => ({
+        ...prev,
+        [sessionId]: {
+          total: result.total,
+          decryptedCount: result.decryptedCount,
+          undecryptedCount: result.undecryptedCount,
+          status: result.total > 0 && result.undecryptedCount === 0 ? 'complete' : 'partial',
+          checkedAt: Date.now(),
+        }
+      }))
+    } catch (e) {
+      if (requestId !== sessionImageAssetsRequestIdRef.current) return
+      setSessionImageAssets([])
+      setSessionImageAssetsError(String(e))
+    } finally {
+      if (requestId === sessionImageAssetsRequestIdRef.current) {
+        setSessionImageAssetsLoading(false)
+      }
+    }
+  }, [getSessionDisplayName, inspectSessionImageAssets, selectedSession])
+
   const formatImageDecryptDateLabel = useCallback((dateStr: string) => {
     const [y, m, d] = dateStr.split('-').map(Number)
     return `${y}年${m}月${d}日`
@@ -592,6 +766,57 @@ function ExportPage() {
     ).length
   }, [sessionImageMessages, sessionImageSelectedDates])
 
+  const currentSessionImageOverview = selectedSession ? sessionImageOverviews[selectedSession] : undefined
+  const isCurrentSessionImageTaskRunning = Boolean(
+    isSessionImageDecrypting && selectedSession && sessionImageDecryptTaskSessionId === selectedSession
+  )
+  const currentSessionImageDecryptedCount = currentSessionImageOverview?.decryptedCount || 0
+  const currentSessionImageUndecryptedCount = currentSessionImageOverview?.undecryptedCount || 0
+  const currentSessionAllImagesDecrypted = Boolean(
+    sessionDetail &&
+    sessionDetail.imageCount > 0 &&
+    currentSessionImageOverview &&
+    currentSessionImageOverview.total === sessionDetail.imageCount &&
+    currentSessionImageOverview.undecryptedCount === 0 &&
+    currentSessionImageOverview.status === 'complete'
+  )
+  const hasCurrentSessionDecryptedImages = currentSessionImageDecryptedCount > 0
+  const decryptedImageAssets = useMemo(
+    () => sessionImageAssets.filter(item => item.decrypted && item.localUrl),
+    [sessionImageAssets]
+  )
+  const sessionImageAssetsOverview = useMemo(() => {
+    if (!sessionImageAssetsSessionId) return undefined
+    return sessionImageOverviews[sessionImageAssetsSessionId]
+  }, [sessionImageAssetsSessionId, sessionImageOverviews])
+  const sessionImageAssetsTotalCount = sessionImageAssetsOverview?.total ?? sessionImageAssets.length
+  const sessionImageAssetsDecryptedCount = sessionImageAssetsOverview?.decryptedCount ?? decryptedImageAssets.length
+  const sessionImageAssetsUndecryptedCount = sessionImageAssetsOverview?.undecryptedCount ?? Math.max(0, sessionImageAssetsTotalCount - sessionImageAssetsDecryptedCount)
+
+  useEffect(() => {
+    if (!selectedSession || !sessionDetail || sessionDetail.imageCount <= 0) return
+
+    if (isCurrentSessionImageTaskRunning) return
+
+    const overview = sessionImageOverviews[selectedSession]
+    if (overview?.status === 'checking') return
+    const isFreshEnough = overview &&
+      overview.total === sessionDetail.imageCount &&
+      (overview.status === 'complete' || overview.status === 'partial')
+
+    if (isFreshEnough) return
+
+    if (overview?.status === 'error' && overview.total === sessionDetail.imageCount) return
+
+    void refreshSessionImageOverview(selectedSession)
+  }, [
+    selectedSession,
+    sessionDetail?.imageCount,
+    isCurrentSessionImageTaskRunning,
+    refreshSessionImageOverview,
+    sessionImageOverviews
+  ])
+
   // 通讯录搜索过滤
   useEffect(() => {
     let filtered = contacts
@@ -619,9 +844,16 @@ function ExportPage() {
 
   const selectSession = async (username: string) => {
     const requestId = ++sessionDetailRequestIdRef.current
+    sessionImageAssetsRequestIdRef.current++
     setSelectedSession(username)
     setShowExportSettings(false)
     setShowGroupFriendsPopup(false)
+    setShowSessionImageAssetsModal(false)
+    setSessionImageAssets([])
+    setSessionImageAssetsError(null)
+    setSessionImageAssetsLoading(false)
+    setSessionImageAssetsSessionId(null)
+    setSessionImageAssetsSessionName('')
     setSessionDetail(null)
     setShowSessionImageDecryptConfirm(false)
     setSessionImageMessages(null)
@@ -632,6 +864,7 @@ function ExportPage() {
       setSessionImageDecryptTaskExpanded(true)
       setSessionImageDecryptTaskStatus('running')
       setSessionImageDecryptTaskStats({ success: 0, fail: 0 })
+      setSessionImageDecryptTaskSessionId(null)
       setSessionImageDecryptTaskSessionName('')
       setSessionImageDecryptTaskError(null)
     }
@@ -776,6 +1009,7 @@ function ExportPage() {
     setSessionImageDecryptTaskExpanded(true)
     setSessionImageDecryptTaskStatus('running')
     setSessionImageDecryptTaskStats({ success: 0, fail: 0 })
+    setSessionImageDecryptTaskSessionId(selectedSession)
     setSessionImageDecryptTaskError(null)
     setSessionImageDecryptTaskSessionName(
       sessionDetail?.remark || sessionDetail?.nickName || (selectedSession ? sessionByUsername.get(selectedSession)?.displayName : undefined) || selectedSession || ''
@@ -812,6 +1046,11 @@ function ExportPage() {
     setIsSessionImageDecrypting(false)
     setSessionImageDecryptTaskStats({ success, fail })
     setSessionImageDecryptTaskExpanded(false)
+
+    void refreshSessionImageOverview(selectedSession)
+    if (showSessionImageAssetsModal && sessionImageAssetsSessionId === selectedSession) {
+      void openSessionImageAssetsModal()
+    }
   }
 
   // 选择导出文件夹
@@ -1290,22 +1529,51 @@ function ExportPage() {
                                         <span>{item.label}</span>
                                       </div>
                                       {item.action === 'decrypt' && (
-                                        <button
-                                          type="button"
-                                          className="session-media-action-btn"
-                                          onClick={openSessionImageDecrypt}
-                                          disabled={isSessionImageDecrypting || !selectedSession}
-                                          title="批量解密该会话图片"
-                                        >
-                                          {isSessionImageDecrypting ? (
-                                            <>
-                                              <Loader2 size={12} className="spin" />
+                                        <div className="session-media-image-actions">
+                                          {isCurrentSessionImageTaskRunning ? (
+                                            <span className="session-media-status-pill running">
+                                              <Loader2 size={11} className="spin" />
                                               <span>解密中</span>
+                                            </span>
+                                          ) : currentSessionImageOverview?.status === 'checking' ? (
+                                            <span className="session-media-status-pill checking">
+                                              <Loader2 size={11} className="spin" />
+                                              <span>检查中</span>
+                                            </span>
+                                          ) : hasCurrentSessionDecryptedImages ? (
+                                            <>
+                                              <button
+                                                type="button"
+                                                className="session-media-action-btn"
+                                                onClick={openSessionImageAssetsModal}
+                                                disabled={!selectedSession}
+                                                title="查看已解密图片"
+                                              >
+                                                <span>查看图片</span>
+                                              </button>
+                                              {currentSessionAllImagesDecrypted ? (
+                                                <span className="session-media-status-pill success">
+                                                  <CheckCircle size={11} />
+                                                  <span>已解密</span>
+                                                </span>
+                                              ) : (
+                                                <span className="session-media-status-pill warning">
+                                                  <span>未解密 {currentSessionImageUndecryptedCount}</span>
+                                                </span>
+                                              )}
                                             </>
                                           ) : (
-                                            <span>解密</span>
+                                            <button
+                                              type="button"
+                                              className="session-media-action-btn"
+                                              onClick={openSessionImageDecrypt}
+                                              disabled={isSessionImageDecrypting || !selectedSession}
+                                              title="批量解密该会话图片"
+                                            >
+                                              <span>解密</span>
+                                            </button>
                                           )}
-                                        </button>
+                                        </div>
                                       )}
                                     </div>
                                     <span style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)', textAlign: 'center' }}>{item.count.toLocaleString()}</span>
@@ -1880,6 +2148,135 @@ function ExportPage() {
               >
                 开始解密
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 会话图片资产查看弹窗（已解密预览 + 继续解密） */}
+      {showSessionImageAssetsModal && (
+        <div
+          className="export-overlay"
+          onClick={() => setShowSessionImageAssetsModal(false)}
+        >
+          <div className="session-image-assets-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="session-image-assets-header">
+              <div>
+                <h3>会话图片</h3>
+                <p>查看已解密图片，并继续处理未解密图片</p>
+              </div>
+              <button
+                type="button"
+                className="group-friends-close-btn"
+                onClick={() => setShowSessionImageAssetsModal(false)}
+                aria-label="关闭会话图片弹窗"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="session-image-assets-subtitle">
+              {sessionImageAssetsSessionName || sessionImageAssetsSessionId || selectedSession}
+            </div>
+
+            <div className="session-image-assets-toolbar">
+              <div className="session-image-assets-stats">
+                <div className="session-image-assets-stat">
+                  <span className="label">总数</span>
+                  <strong>{sessionImageAssetsTotalCount.toLocaleString()}</strong>
+                </div>
+                <div className="session-image-assets-stat success">
+                  <span className="label">已解密</span>
+                  <strong>{sessionImageAssetsDecryptedCount.toLocaleString()}</strong>
+                </div>
+                <div className="session-image-assets-stat warning">
+                  <span className="label">未解密</span>
+                  <strong>{sessionImageAssetsUndecryptedCount.toLocaleString()}</strong>
+                </div>
+              </div>
+              <div className="session-image-assets-actions">
+                {sessionImageAssetsLoading ? (
+                  <span className="session-media-status-pill checking">
+                    <Loader2 size={11} className="spin" />
+                    <span>扫描中</span>
+                  </span>
+                ) : sessionImageAssetsSessionId && isSessionImageDecrypting && sessionImageDecryptTaskSessionId === sessionImageAssetsSessionId ? (
+                  <span className="session-media-status-pill running">
+                    <Loader2 size={11} className="spin" />
+                    <span>解密中</span>
+                  </span>
+                ) : (sessionImageAssetsUndecryptedCount > 0) ? (
+                  <button
+                    type="button"
+                    className="session-media-action-btn"
+                    onClick={async () => {
+                      setShowSessionImageAssetsModal(false)
+                      await openSessionImageDecrypt()
+                    }}
+                    disabled={isSessionImageDecrypting}
+                  >
+                    <span>继续解密</span>
+                  </button>
+                ) : (
+                  <span className="session-media-status-pill success">
+                    <CheckCircle size={11} />
+                    <span>已全部解密</span>
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div className="session-image-assets-content">
+              {sessionImageAssetsLoading ? (
+                <div className="session-image-assets-loading">
+                  <Loader2 size={14} className="spin" />
+                  <span>正在扫描已解密图片...</span>
+                </div>
+              ) : sessionImageAssetsError ? (
+                <div className="session-image-assets-empty">
+                  <span>加载失败：{sessionImageAssetsError}</span>
+                </div>
+              ) : decryptedImageAssets.length === 0 ? (
+                <div className="session-image-assets-empty">
+                  <span>暂无已解密图片</span>
+                  <small>你可以先点击上方“继续解密”处理当前会话图片。</small>
+                </div>
+              ) : (
+                <div className="session-image-assets-grid">
+                  {decryptedImageAssets
+                    .slice()
+                    .sort((a, b) => (b.createTime || 0) - (a.createTime || 0))
+                    .map((item, index) => (
+                      <button
+                        key={`${item.imageMd5 || 'img'}:${item.imageDatName || index}:${item.createTime || 0}`}
+                        type="button"
+                        className="session-image-assets-item"
+                        onClick={() => item.localPath && window.electronAPI.shell.openPath(item.localPath)}
+                        title="打开图片文件"
+                      >
+                        {item.localUrl ? (
+                          <img
+                            src={item.localUrl}
+                            alt=""
+                            loading="lazy"
+                          />
+                        ) : (
+                          <div className="session-image-assets-placeholder">
+                            <Image size={18} />
+                          </div>
+                        )}
+                        <div className="session-image-assets-item-footer">
+                          <span>
+                            {item.createTime
+                              ? new Date(item.createTime * 1000).toLocaleDateString('zh-CN')
+                              : '未知时间'}
+                          </span>
+                          <ExternalLink size={12} />
+                        </div>
+                      </button>
+                    ))}
+                </div>
+              )}
             </div>
           </div>
         </div>
