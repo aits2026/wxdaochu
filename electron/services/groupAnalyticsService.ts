@@ -16,6 +16,7 @@ export interface GroupMember {
   username: string
   displayName: string
   avatarUrl?: string
+  isFriend?: boolean
 }
 
 export interface GroupMessageRank {
@@ -376,20 +377,36 @@ class GroupAnalyticsService {
       const missingAvatars: string[] = []
 
       try {
+        const contactCols = contactDb.prepare("PRAGMA table_info(contact)").all() as any[]
+        const contactColNames = new Set(contactCols.map((c: any) => c.name))
+        const hasLocalType = contactColNames.has('local_type')
+        const localTypeSelect = hasLocalType ? ', c.local_type as local_type' : ', NULL as local_type'
+
         const memberRows = contactDb.prepare(`
-          SELECT n.username, c.nick_name, c.remark, c.small_head_url 
+          SELECT n.username, c.username as contact_username, c.nick_name, c.remark, c.small_head_url ${localTypeSelect}
           FROM chatroom_member m
           JOIN name2id n ON m.member_id = n.rowid
           LEFT JOIN contact c ON n.username = c.username
           WHERE m.room_id = (SELECT rowid FROM name2id WHERE username = ?)
-        `).all(chatroomId) as { username: string; nick_name?: string; remark?: string; small_head_url?: string }[]
+        `).all(chatroomId) as Array<{
+          username: string
+          contact_username?: string | null
+          nick_name?: string | null
+          remark?: string | null
+          small_head_url?: string | null
+          local_type?: number | null
+        }>
 
         for (const row of memberRows) {
           const avatarUrl = row.small_head_url
+          const isFriend = hasLocalType
+            ? Number(row.local_type || 0) === 1
+            : Boolean(row.contact_username)
           members.push({
             username: row.username,
             displayName: row.remark || row.nick_name || row.username,
-            avatarUrl
+            avatarUrl: avatarUrl || undefined,
+            isFriend
           })
           
           // 如果没有头像 URL，记录下来
@@ -469,21 +486,31 @@ class GroupAnalyticsService {
 
           try {
             // 群聊消息的 real_sender_id 对应发送者
-            const hasName2Id = db.prepare(
-              "SELECT name FROM sqlite_master WHERE type='table' AND name = 'Name2Id'"
-            ).get()
+            const name2IdTableRow = db.prepare(
+              "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('Name2Id','name2id') LIMIT 1"
+            ).get() as { name?: string } | undefined
+            const name2IdTable = name2IdTableRow?.name
+            let name2IdUserCol = 'user_name'
+            if (name2IdTable) {
+              try {
+                const cols = db.prepare(`PRAGMA table_info("${name2IdTable}")`).all() as any[]
+                const colNames = new Set(cols.map((c: any) => c.name))
+                if (!colNames.has('user_name') && colNames.has('username')) {
+                  name2IdUserCol = 'username'
+                }
+              } catch { /* ignore */ }
+            }
 
             let senderCounts: { sender: string; count: number }[]
 
-            if (hasName2Id) {
-              const whereClause = timeCondition ? timeCondition.replace('WHERE', 'AND') : ''
+            if (name2IdTable) {
               senderCounts = db.prepare(`
                 SELECT n.user_name as sender, COUNT(*) as count
                 FROM "${tableName}" m
-                JOIN Name2Id n ON m.real_sender_id = n.rowid
+                JOIN "${name2IdTable}" n ON m.real_sender_id = n.rowid
                 ${timeCondition ? `WHERE m.create_time >= ${startTime} AND m.create_time <= ${endTime}` : ''}
                 GROUP BY m.real_sender_id
-              `).all() as { sender: string; count: number }[]
+              `.replace('n.user_name as sender', `n.${name2IdUserCol} as sender`)).all() as { sender: string; count: number }[]
             } else {
               // 备用方案：使用 sender 字段
               const baseCondition = "sender IS NOT NULL AND sender != ''"

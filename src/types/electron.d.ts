@@ -411,6 +411,7 @@ export interface ElectronAPI {
         username: string
         displayName: string
         avatarUrl?: string
+        isFriend?: boolean
       }>
       error?: string
     }>
@@ -421,6 +422,7 @@ export interface ElectronAPI {
           username: string
           displayName: string
           avatarUrl?: string
+          isFriend?: boolean
         }
         messageCount: number
       }>

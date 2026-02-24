@@ -30,6 +30,7 @@ interface GroupMemberListItem {
   username: string
   displayName: string
   avatarUrl?: string
+  isFriend?: boolean
 }
 
 // 头像组件 - 支持骨架屏加载和懒加载
@@ -207,6 +208,8 @@ function ChatPage(_props: ChatPageProps) {
   const [isLoadingGroupSessionInfo, setIsLoadingGroupSessionInfo] = useState(false)
   const [groupMembers, setGroupMembers] = useState<GroupMemberListItem[]>([])
   const [isLoadingGroupMembers, setIsLoadingGroupMembers] = useState(false)
+  const [groupMemberMessageCounts, setGroupMemberMessageCounts] = useState<Record<string, number>>({})
+  const [isLoadingGroupMemberMessageCounts, setIsLoadingGroupMemberMessageCounts] = useState(false)
   const [currentSessionMeta, setCurrentSessionMeta] = useState<Pick<ChatSession, 'username' | 'displayName' | 'avatarUrl' | 'accountType'> | null>(null)
   const [hasImageKey, setHasImageKey] = useState<boolean | null>(null)
   const [contextMenu, setContextMenu] = useState<{
@@ -240,6 +243,7 @@ function ChatPage(_props: ChatPageProps) {
   const dateButtonRef = useRef<HTMLButtonElement>(null) // 日期按钮引用
   const groupMembersRequestIdRef = useRef(0)
   const groupSessionInfoRequestIdRef = useRef(0)
+  const groupMemberCountsRequestIdRef = useRef(0)
   
   // 批量语音转文字相关状态
   const [isBatchTranscribing, setIsBatchTranscribing] = useState(false)
@@ -335,6 +339,40 @@ function ChatPage(_props: ChatPageProps) {
     }
   }, [])
 
+  const loadGroupMemberMessageCounts = useCallback(async (chatroomId: string) => {
+    const requestId = ++groupMemberCountsRequestIdRef.current
+    if (!chatroomId.includes('@chatroom')) {
+      setGroupMemberMessageCounts({})
+      setIsLoadingGroupMemberMessageCounts(false)
+      return
+    }
+
+    setIsLoadingGroupMemberMessageCounts(true)
+    try {
+      const result = await window.electronAPI.groupAnalytics.getGroupMessageRanking(chatroomId, 100000)
+      if (requestId !== groupMemberCountsRequestIdRef.current) return
+
+      if (result.success && result.data) {
+        const counts: Record<string, number> = {}
+        for (const item of result.data) {
+          if (!item?.member?.username) continue
+          counts[item.member.username] = Number(item.messageCount || 0)
+        }
+        setGroupMemberMessageCounts(counts)
+      } else {
+        setGroupMemberMessageCounts({})
+      }
+    } catch (e) {
+      if (requestId !== groupMemberCountsRequestIdRef.current) return
+      console.error('加载群成员发言统计失败:', e)
+      setGroupMemberMessageCounts({})
+    } finally {
+      if (requestId === groupMemberCountsRequestIdRef.current) {
+        setIsLoadingGroupMemberMessageCounts(false)
+      }
+    }
+  }, [])
+
   const loadCurrentSessionMeta = useCallback(async (sessionId: string) => {
     const requestId = ++sessionMetaRequestIdRef.current
     try {
@@ -373,6 +411,9 @@ function ChatPage(_props: ChatPageProps) {
     groupMembersRequestIdRef.current += 1
     setGroupMembers([])
     setIsLoadingGroupMembers(false)
+    groupMemberCountsRequestIdRef.current += 1
+    setGroupMemberMessageCounts({})
+    setIsLoadingGroupMemberMessageCounts(false)
 
     if (username === currentSessionId) {
       setCurrentOffset(0)
@@ -393,12 +434,13 @@ function ChatPage(_props: ChatPageProps) {
     const nextOpen = !showGroupMembersPopover
     if (nextOpen) {
       void loadGroupMembers(currentSessionId)
+      void loadGroupMemberMessageCounts(currentSessionId)
       if (!groupSessionInfo?.groupInfo?.ownerUsername && !isLoadingGroupSessionInfo) {
         void loadGroupSessionInfo(currentSessionId)
       }
     }
     setShowGroupMembersPopover(nextOpen)
-  }, [currentSessionId, showGroupMembersPopover, loadGroupMembers, loadGroupSessionInfo, groupSessionInfo?.groupInfo?.ownerUsername, isLoadingGroupSessionInfo])
+  }, [currentSessionId, showGroupMembersPopover, loadGroupMembers, loadGroupMemberMessageCounts, loadGroupSessionInfo, groupSessionInfo?.groupInfo?.ownerUsername, isLoadingGroupSessionInfo])
 
   // 连接数据库
   const connect = useCallback(async () => {
@@ -1543,6 +1585,8 @@ function ChatPage(_props: ChatPageProps) {
                         {sortedGroupMembers.map(member => {
                           const isOwner = member.username === groupSessionInfo?.groupInfo?.ownerUsername
                           const avatarLetter = [...(member.displayName || member.username || '?')][0] || '?'
+                          const hasMessageCount = Object.prototype.hasOwnProperty.call(groupMemberMessageCounts, member.username)
+                          const memberMessageCount = groupMemberMessageCounts[member.username] || 0
 
                           return (
                             <div key={member.username} className={`group-member-item ${isOwner ? 'is-owner' : ''}`}>
@@ -1556,6 +1600,11 @@ function ChatPage(_props: ChatPageProps) {
                               <div className="group-member-meta">
                                 <div className="group-member-name-row">
                                   <span className="group-member-name">{member.displayName || member.username}</span>
+                                  {member.isFriend && (
+                                    <span className="group-friend-badge">
+                                      <span>好友</span>
+                                    </span>
+                                  )}
                                   {isOwner && (
                                     <span className="group-owner-badge">
                                       <Crown size={11} />
@@ -1564,6 +1613,18 @@ function ChatPage(_props: ChatPageProps) {
                                   )}
                                 </div>
                                 <div className="group-member-username">{member.username}</div>
+                                <div className="group-member-message-count">
+                                  {hasMessageCount ? (
+                                    <span>发言 {memberMessageCount.toLocaleString()} 条</span>
+                                  ) : isLoadingGroupMemberMessageCounts ? (
+                                    <span className="loading-inline">
+                                      <Loader2 size={11} className="spin" />
+                                      <span>统计中...</span>
+                                    </span>
+                                  ) : (
+                                    <span>发言 0 条</span>
+                                  )}
+                                </div>
                               </div>
                             </div>
                           )

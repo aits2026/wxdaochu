@@ -2706,6 +2706,38 @@
     text-overflow: ellipsis;
   }
 
+  .group-member-message-count {
+    font-size: 11px;
+    color: var(--text-secondary);
+    line-height: 1.3;
+
+    .loading-inline {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      color: var(--text-tertiary);
+    }
+
+    .spin {
+      animation: spin 1s linear infinite;
+    }
+  }
+
+  .group-friend-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    flex-shrink: 0;
+    font-size: 10px;
+    line-height: 1;
+    padding: 3px 6px;
+    border-radius: 999px;
+    color: #0f766e;
+    background: #ccfbf1;
+    border: 1px solid rgba(20, 184, 166, 0.24);
+    font-weight: 600;
+  }
+
   .group-owner-badge {
     display: inline-flex;
     align-items: center;
