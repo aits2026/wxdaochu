@@ -386,7 +386,6 @@ function ChatPage(_props: ChatPageProps) {
       void loadMessages(username, 0)
       if (showDetailPanel) {
         void loadSessionDetail(username)
-        if (username.includes('@chatroom')) void loadGroupMembers(username)
       }
       void loadCurrentSessionMeta(username)
       return
@@ -397,26 +396,18 @@ function ChatPage(_props: ChatPageProps) {
     void loadMessages(username, 0)
     if (showDetailPanel) {
       void loadSessionDetail(username)
-      if (username.includes('@chatroom')) void loadGroupMembers(username)
     }
     void loadCurrentSessionMeta(username)
-  }, [currentSessionId, loadCurrentSessionMeta, loadSessionDetail, loadGroupMembers, setCurrentSession, showDetailPanel])
+  }, [currentSessionId, loadCurrentSessionMeta, loadSessionDetail, setCurrentSession, showDetailPanel])
 
   // 切换详情面板
   const toggleDetailPanel = useCallback(() => {
     if (!showDetailPanel && currentSessionId) {
       setShowGroupMembersPopover(false)
       loadSessionDetail(currentSessionId)
-      if (currentSessionId.includes('@chatroom')) {
-        loadGroupMembers(currentSessionId)
-      } else {
-        groupMembersRequestIdRef.current += 1
-        setGroupMembers([])
-        setIsLoadingGroupMembers(false)
-      }
     }
     setShowDetailPanel(!showDetailPanel)
-  }, [showDetailPanel, currentSessionId, loadSessionDetail, loadGroupMembers])
+  }, [showDetailPanel, currentSessionId, loadSessionDetail])
 
   const toggleGroupMembersPopover = useCallback(() => {
     if (!currentSessionId || !currentSessionId.includes('@chatroom')) return
@@ -1731,54 +1722,6 @@ function ChatPage(_props: ChatPageProps) {
                         </div>
                       )}
 
-                      {currentSession && currentSession.username.includes('@chatroom') && (
-                        <div className="detail-section">
-                          <div className="section-title">
-                            <Users size={14} />
-                            <span>群成员列表</span>
-                          </div>
-
-                          {isLoadingGroupMembers ? (
-                            <div className="group-members-loading">
-                              <Loader2 size={14} className="spin" />
-                              <span>加载群成员中...</span>
-                            </div>
-                          ) : sortedGroupMembers.length > 0 ? (
-                            <div className="group-member-list">
-                              {sortedGroupMembers.map(member => {
-                                const isOwner = member.username === sessionDetail?.groupInfo?.ownerUsername
-                                const avatarLetter = [...(member.displayName || member.username || '?')][0] || '?'
-
-                                return (
-                                  <div key={member.username} className={`group-member-item ${isOwner ? 'is-owner' : ''}`}>
-                                    <div className="group-member-avatar">
-                                      {member.avatarUrl ? (
-                                        <img src={member.avatarUrl} alt="" />
-                                      ) : (
-                                        <span>{avatarLetter}</span>
-                                      )}
-                                    </div>
-                                    <div className="group-member-meta">
-                                      <div className="group-member-name-row">
-                                        <span className="group-member-name">{member.displayName || member.username}</span>
-                                        {isOwner && (
-                                          <span className="group-owner-badge">
-                                            <Crown size={11} />
-                                            <span>群主</span>
-                                          </span>
-                                        )}
-                                      </div>
-                                      <div className="group-member-username">{member.username}</div>
-                                    </div>
-                                  </div>
-                                )
-                              })}
-                            </div>
-                          ) : (
-                            <div className="detail-empty-inline">暂无群成员数据</div>
-                          )}
-                        </div>
-                      )}
                     </div>
                   ) : (
                     <div className="detail-empty">暂无详情</div>
