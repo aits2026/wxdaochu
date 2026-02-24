@@ -274,7 +274,7 @@
   .session-task-center-popover {
     position: absolute;
     top: calc(100% + 8px);
-    right: 0;
+    left: 0;
     z-index: 100;
     width: min(360px, calc(100vw - 40px));
     max-height: min(70vh, 620px);
