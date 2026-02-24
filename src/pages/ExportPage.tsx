@@ -220,6 +220,7 @@ function ExportPage() {
   const [groupFriendMessageCounts, setGroupFriendMessageCounts] = useState<Record<string, number>>({})
   const [groupFriendMessageCountsStatus, setGroupFriendMessageCountsStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
   const [groupFriendMessageCountsSessionId, setGroupFriendMessageCountsSessionId] = useState<string | null>(null)
+  const [groupFriendsSortOrder, setGroupFriendsSortOrder] = useState<'desc' | 'asc'>('desc')
   const [isLoadingDetail, setIsLoadingDetail] = useState(false)
   const [isLoadingGroupInfo, setIsLoadingGroupInfo] = useState(false)
   const [exportRecords, setExportRecords] = useState<{ exportTime: number; format: string; messageCount: number }[]>([])
@@ -818,6 +819,38 @@ function ExportPage() {
   const taskCenterRunningTasks = taskCenterTasks.filter(task => task.status === 'running')
   const taskCenterFinishedTasks = taskCenterTasks.filter(task => task.status === 'success' || task.status === 'error')
   const taskCenterActiveCount = taskCenterPendingTasks.length + taskCenterRunningTasks.length
+  const groupFriendMembersForPopup = useMemo(() => {
+    const friendMembers = sessionDetail?.groupInfo?.friendMembers || []
+    if (friendMembers.length <= 1) return friendMembers
+
+    const countsReadyForCurrentSession =
+      groupFriendMessageCountsSessionId === selectedSession &&
+      groupFriendMessageCountsStatus === 'ready'
+
+    if (!countsReadyForCurrentSession) return friendMembers
+
+    return friendMembers
+      .map((friend, originalIndex) => ({
+        friend,
+        originalIndex,
+        count: Number(groupFriendMessageCounts[friend.username] || 0)
+      }))
+      .sort((a, b) => {
+        const diff = groupFriendsSortOrder === 'desc'
+          ? b.count - a.count
+          : a.count - b.count
+        if (diff !== 0) return diff
+        return a.originalIndex - b.originalIndex
+      })
+      .map(item => item.friend)
+  }, [
+    sessionDetail?.groupInfo?.friendMembers,
+    groupFriendMessageCounts,
+    groupFriendMessageCountsSessionId,
+    groupFriendMessageCountsStatus,
+    groupFriendsSortOrder,
+    selectedSession
+  ])
 
   useEffect(() => {
     if (!selectedSession || !sessionDetail || sessionDetail.imageCount <= 0) return
@@ -924,6 +957,7 @@ function ExportPage() {
     setGroupFriendMessageCounts({})
     setGroupFriendMessageCountsStatus('idle')
     setGroupFriendMessageCountsSessionId(null)
+    setGroupFriendsSortOrder('desc')
     setShowSessionImageAssetsModal(false)
     setSessionImageAssets([])
     setSessionImageAssetsError(null)
@@ -1702,6 +1736,7 @@ function ExportPage() {
                                           setGroupFriendMessageCounts({})
                                           setGroupFriendMessageCountsStatus('idle')
                                           setGroupFriendMessageCountsSessionId(null)
+                                          setGroupFriendsSortOrder('desc')
                                           setShowGroupFriendsPopup(true)
                                         }}
                                       >
@@ -2296,13 +2331,33 @@ function ExportPage() {
               </button>
             </div>
             <div className="group-friends-modal-subtitle">
-              {sessionDetail.remark || sessionDetail.nickName || (selectedSession ? sessionByUsername.get(selectedSession)?.displayName : undefined) || selectedSession}
+              <div className="group-friends-modal-subtitle-text">
+                {sessionDetail.remark || sessionDetail.nickName || (selectedSession ? sessionByUsername.get(selectedSession)?.displayName : undefined) || selectedSession}
+              </div>
+              {(sessionDetail.groupInfo.friendMembers || []).length > 0 && (
+                <div className="group-friends-sort-switch" role="group" aria-label="发言条数排序">
+                  <button
+                    type="button"
+                    className={`group-friends-sort-btn ${groupFriendsSortOrder === 'desc' ? 'active' : ''}`}
+                    onClick={() => setGroupFriendsSortOrder('desc')}
+                  >
+                    降序
+                  </button>
+                  <button
+                    type="button"
+                    className={`group-friends-sort-btn ${groupFriendsSortOrder === 'asc' ? 'active' : ''}`}
+                    onClick={() => setGroupFriendsSortOrder('asc')}
+                  >
+                    升序
+                  </button>
+                </div>
+              )}
             </div>
             <div className="group-friends-list">
-              {(sessionDetail.groupInfo.friendMembers || []).length === 0 ? (
+              {groupFriendMembersForPopup.length === 0 ? (
                 <div className="group-friends-empty">暂无可展示好友</div>
               ) : (
-                (sessionDetail.groupInfo.friendMembers || []).map((friend, index) => (
+                groupFriendMembersForPopup.map((friend, index) => (
                   <div key={friend.username} className="group-friends-item">
                     <div className="group-friends-index">{index + 1}</div>
                     <div className="group-friends-meta">

@@ -2199,14 +2199,57 @@
   }
 
   .group-friends-modal-subtitle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
     padding: 10px 20px;
     font-size: 13px;
     color: var(--text-secondary);
     border-bottom: 1px solid var(--border-color);
     background: var(--bg-secondary);
+  }
+
+  .group-friends-modal-subtitle-text {
+    flex: 1;
+    min-width: 0;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  .group-friends-sort-switch {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    border: 1px solid var(--border-color);
+    border-radius: 999px;
+    background: var(--bg-primary);
+    padding: 2px;
+    gap: 2px;
+  }
+
+  .group-friends-sort-btn {
+    border: none;
+    background: transparent;
+    color: var(--text-tertiary);
+    border-radius: 999px;
+    padding: 3px 8px;
+    font-size: 12px;
+    line-height: 1.2;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease;
+
+    &:hover {
+      color: var(--text-primary);
+      background: var(--bg-hover);
+    }
+
+    &.active {
+      background: rgba(var(--primary-rgb), 0.12);
+      color: var(--primary);
+      font-weight: 500;
+    }
   }
 
   .group-friends-list {
