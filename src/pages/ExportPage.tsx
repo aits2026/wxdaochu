@@ -150,7 +150,16 @@ function ExportPage() {
     videoCount: number
     voiceCount: number
     emojiCount: number
+    groupInfo?: {
+      ownerUsername?: string
+      ownerDisplayName?: string
+      memberCount?: number
+      friendMemberCount?: number
+      friendMembers?: Array<{ username: string; displayName: string }>
+      selfMessageCount?: number
+    }
   } | null>(null)
+  const [showGroupFriendsPopup, setShowGroupFriendsPopup] = useState(false)
   const [isLoadingDetail, setIsLoadingDetail] = useState(false)
   const [exportRecords, setExportRecords] = useState<{ exportTime: number; format: string; messageCount: number }[]>([])
   const [showExportSettings, setShowExportSettings] = useState(false)
@@ -474,6 +483,7 @@ function ExportPage() {
   const selectSession = async (username: string) => {
     setSelectedSession(username)
     setShowExportSettings(false)
+    setShowGroupFriendsPopup(false)
     setSessionDetail(null)
     setExportRecords([])
     setIsLoadingDetail(true)
@@ -495,6 +505,7 @@ function ExportPage() {
           videoCount: detailResult.detail.videoCount,
           voiceCount: detailResult.detail.voiceCount,
           emojiCount: detailResult.detail.emojiCount,
+          groupInfo: detailResult.detail.groupInfo,
         })
       }
       setExportRecords(records)
@@ -854,6 +865,45 @@ function ExportPage() {
                               <span style={{ opacity: 0.6 }}>消息总数</span>
                               <span style={{ fontWeight: 500 }}>{sessionDetail.messageCount.toLocaleString()} 条</span>
                             </div>
+                            {session?.username.includes('@chatroom') && sessionDetail.groupInfo && (
+                              <>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-color, #e0e0e0)' }}>
+                                  <span style={{ opacity: 0.6 }}>群主</span>
+                                  <span title={sessionDetail.groupInfo.ownerUsername || ''}>
+                                    {sessionDetail.groupInfo.ownerDisplayName || sessionDetail.groupInfo.ownerUsername || '未知'}
+                                  </span>
+                                </div>
+                                {sessionDetail.groupInfo.memberCount !== undefined && (
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-color, #e0e0e0)' }}>
+                                    <span style={{ opacity: 0.6 }}>群总人数</span>
+                                    <span>{sessionDetail.groupInfo.memberCount.toLocaleString()} 人</span>
+                                  </div>
+                                )}
+                                {sessionDetail.groupInfo.friendMemberCount !== undefined && (
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-color, #e0e0e0)' }}>
+                                    <span style={{ opacity: 0.6 }}>群内好友数</span>
+                                    {(sessionDetail.groupInfo.friendMembers?.length || 0) > 0 ? (
+                                      <button
+                                        type="button"
+                                        className="group-friend-count-btn"
+                                        onClick={() => setShowGroupFriendsPopup(true)}
+                                      >
+                                        <span>{sessionDetail.groupInfo.friendMemberCount.toLocaleString()} 人</span>
+                                        <Eye size={13} />
+                                      </button>
+                                    ) : (
+                                      <span>{sessionDetail.groupInfo.friendMemberCount.toLocaleString()} 人</span>
+                                    )}
+                                  </div>
+                                )}
+                                {sessionDetail.groupInfo.selfMessageCount !== undefined && (
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-color, #e0e0e0)' }}>
+                                    <span style={{ opacity: 0.6 }}>我发的消息</span>
+                                    <span>{sessionDetail.groupInfo.selfMessageCount.toLocaleString()} 条</span>
+                                  </div>
+                                )}
+                              </>
+                            )}
                             {sessionDetail.firstMessageTime && (
                               <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-color, #e0e0e0)' }}>
                                 <span style={{ opacity: 0.6 }}>最早消息</span>
@@ -1333,6 +1383,48 @@ function ExportPage() {
             </div>
           </div>
         </>
+      )}
+
+      {/* 群内好友明细弹窗 */}
+      {showGroupFriendsPopup && sessionDetail?.groupInfo && (
+        <div className="export-overlay" onClick={() => setShowGroupFriendsPopup(false)}>
+          <div className="group-friends-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="group-friends-modal-header">
+              <div>
+                <h3>群内好友</h3>
+                <p>
+                  {(sessionDetail.groupInfo.friendMembers?.length || sessionDetail.groupInfo.friendMemberCount || 0).toLocaleString()} 人
+                </p>
+              </div>
+              <button
+                type="button"
+                className="group-friends-close-btn"
+                onClick={() => setShowGroupFriendsPopup(false)}
+                aria-label="关闭群内好友列表"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="group-friends-modal-subtitle">
+              {sessionDetail.remark || sessionDetail.nickName || (selectedSession ? sessionByUsername.get(selectedSession)?.displayName : undefined) || selectedSession}
+            </div>
+            <div className="group-friends-list">
+              {(sessionDetail.groupInfo.friendMembers || []).length === 0 ? (
+                <div className="group-friends-empty">暂无可展示好友</div>
+              ) : (
+                (sessionDetail.groupInfo.friendMembers || []).map((friend, index) => (
+                  <div key={friend.username} className="group-friends-item">
+                    <div className="group-friends-index">{index + 1}</div>
+                    <div className="group-friends-meta">
+                      <div className="group-friends-name">{friend.displayName}</div>
+                      <div className="group-friends-username">{friend.username}</div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
       )}
 
       {/* 导出进度弹窗 */}

@@ -260,6 +260,14 @@ export interface ElectronAPI {
         videoCount: number
         voiceCount: number
         emojiCount: number
+        groupInfo?: {
+          ownerUsername?: string
+          ownerDisplayName?: string
+          memberCount?: number
+          friendMemberCount?: number
+          friendMembers?: Array<{ username: string; displayName: string }>
+          selfMessageCount?: number
+        }
         messageTables: { dbName: string; tableName: string; count: number }[]
       }
       error?: string

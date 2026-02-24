@@ -3941,6 +3941,14 @@ class ChatService extends EventEmitter {
       videoCount: number
       voiceCount: number
       emojiCount: number
+      groupInfo?: {
+        ownerUsername?: string
+        ownerDisplayName?: string
+        memberCount?: number
+        friendMemberCount?: number
+        friendMembers?: Array<{ username: string; displayName: string }>
+        selfMessageCount?: number
+      }
       messageTables: { dbName: string; tableName: string; count: number }[]
     }
     error?: string
@@ -4062,6 +4070,19 @@ class ChatService extends EventEmitter {
         } catch { }
       }
 
+      let groupInfo: {
+        ownerUsername?: string
+        ownerDisplayName?: string
+        memberCount?: number
+        friendMemberCount?: number
+        friendMembers?: Array<{ username: string; displayName: string }>
+        selfMessageCount?: number
+      } | undefined
+
+      if (sessionId.includes('@chatroom')) {
+        groupInfo = await this.getGroupSessionDetailExtras(sessionId, dbTablePairs)
+      }
+
       return {
         success: true,
         detail: {
@@ -4078,12 +4099,259 @@ class ChatService extends EventEmitter {
           videoCount,
           voiceCount,
           emojiCount,
+          groupInfo,
           messageTables
         }
       }
     } catch (e) {
       console.error('ChatService: 获取会话详情失败:', e)
       return { success: false, error: String(e) }
+    }
+  }
+
+  private async getGroupSessionDetailExtras(
+    chatroomId: string,
+    dbTablePairs: { db: Database.Database; tableName: string; dbPath: string }[]
+  ): Promise<{
+    ownerUsername?: string
+    ownerDisplayName?: string
+    memberCount?: number
+    friendMemberCount?: number
+    friendMembers?: Array<{ username: string; displayName: string }>
+    selfMessageCount?: number
+  }> {
+    const result: {
+      ownerUsername?: string
+      ownerDisplayName?: string
+      memberCount?: number
+      friendMemberCount?: number
+      friendMembers?: Array<{ username: string; displayName: string }>
+      selfMessageCount?: number
+    } = {}
+
+    const myWxidRaw = this.configService.get('myWxid') || ''
+    const myWxidClean = myWxidRaw ? this.cleanAccountDirName(myWxidRaw) : ''
+    const myIds = new Set([myWxidRaw, myWxidClean].filter(Boolean))
+
+    // 1) 群成员总数 / 好友总数 / 群主（尽量从 contact.db 获取）
+    if (this.contactDb) {
+      try {
+        const tableRows = this.contactDb.prepare(
+          "SELECT name FROM sqlite_master WHERE type='table'"
+        ).all() as { name: string }[]
+        const tableNames = tableRows.map(t => t.name)
+
+        const hasChatroomMember = tableNames.includes('chatroom_member')
+        const name2IdTable = tableNames.includes('name2id') ? 'name2id' : (tableNames.includes('Name2Id') ? 'Name2Id' : null)
+
+        if (hasChatroomMember && name2IdTable) {
+          const contactCols = this.contactDb.prepare("PRAGMA table_info(contact)").all() as any[]
+          const contactColNames = new Set(contactCols.map((c: any) => c.name))
+          const hasLocalType = contactColNames.has('local_type')
+
+          const roomIdRow = this.contactDb.prepare(
+            `SELECT rowid FROM ${name2IdTable} WHERE username = ?`
+          ).get(chatroomId) as any
+
+          if (roomIdRow?.rowid != null) {
+            const roomId = roomIdRow.rowid
+
+            const memberCountRow = this.contactDb.prepare(
+              `SELECT COUNT(*) as count FROM chatroom_member WHERE room_id = ?`
+            ).get(roomId) as any
+            if (memberCountRow?.count != null) {
+              result.memberCount = Number(memberCountRow.count) || 0
+            }
+
+            let friendCount = 0
+            try {
+              let friendRows: Array<{
+                username: string
+                remark?: string | null
+                nick_name?: string | null
+                alias?: string | null
+              }> = []
+              if (hasLocalType) {
+                friendRows = this.contactDb.prepare(`
+                  SELECT n.username as username
+                    , c.remark as remark
+                    , c.nick_name as nick_name
+                    , c.alias as alias
+                  FROM chatroom_member m
+                  JOIN ${name2IdTable} n ON m.member_id = n.rowid
+                  LEFT JOIN contact c ON n.username = c.username
+                  WHERE m.room_id = ?
+                    AND c.local_type = 1
+                `).all(roomId) as typeof friendRows
+              } else {
+                friendRows = this.contactDb.prepare(`
+                  SELECT n.username as username
+                    , c.remark as remark
+                    , c.nick_name as nick_name
+                    , c.alias as alias
+                  FROM chatroom_member m
+                  JOIN ${name2IdTable} n ON m.member_id = n.rowid
+                  LEFT JOIN contact c ON n.username = c.username
+                  WHERE m.room_id = ?
+                    AND c.username IS NOT NULL
+                `).all(roomId) as typeof friendRows
+              }
+
+              const friendMembersMap = new Map<string, { username: string; displayName: string }>()
+              for (const row of friendRows) {
+                const username = typeof row.username === 'string' ? row.username : ''
+                if (!username || myIds.has(username) || friendMembersMap.has(username)) continue
+                const displayName = String(row.remark || row.nick_name || row.alias || username)
+                friendMembersMap.set(username, { username, displayName })
+              }
+
+              const friendMembers = Array.from(friendMembersMap.values()).sort((a, b) =>
+                a.displayName.localeCompare(b.displayName, 'zh-Hans-CN')
+              )
+              friendCount = friendMembers.length
+              result.friendMembers = friendMembers
+            } catch { }
+            result.friendMemberCount = friendCount
+          }
+        }
+
+        const ownerUsername = this.extractChatroomOwnerUsername(chatroomId)
+        if (ownerUsername) {
+          result.ownerUsername = ownerUsername
+          result.ownerDisplayName = await this.resolveGroupMemberDisplayName(chatroomId, ownerUsername)
+        }
+      } catch { }
+    }
+
+    // 2) 自己在该群发送消息条数
+    let selfMessageCount = 0
+    for (const { db, tableName } of dbTablePairs) {
+      try {
+        const columns = db.prepare(`PRAGMA table_info('${tableName}')`).all() as any[]
+        const colNames = new Set(columns.map((c: any) => c.name))
+
+        let counted = false
+        if (colNames.has('real_sender_id')) {
+          const name2IdTableRow = db.prepare(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('Name2Id','name2id') LIMIT 1"
+          ).get() as any
+          const name2IdTable = name2IdTableRow?.name as string | undefined
+
+          if (name2IdTable && myIds.size > 0) {
+            for (const myId of myIds) {
+              const row = db.prepare(`SELECT rowid FROM ${name2IdTable} WHERE user_name = ?`).get(myId) as any
+              if (row?.rowid != null) {
+                const countRow = db.prepare(
+                  `SELECT COUNT(*) as count FROM "${tableName}" WHERE real_sender_id = ?`
+                ).get(row.rowid) as any
+                selfMessageCount += Number(countRow?.count || 0)
+                counted = true
+                break
+              }
+            }
+          }
+        }
+
+        if (!counted && colNames.has('is_send')) {
+          const countRow = db.prepare(
+            `SELECT COUNT(*) as count FROM "${tableName}" WHERE is_send = 1`
+          ).get() as any
+          selfMessageCount += Number(countRow?.count || 0)
+        }
+      } catch { }
+    }
+    result.selfMessageCount = selfMessageCount
+
+    return result
+  }
+
+  private extractChatroomOwnerUsername(chatroomId: string): string | undefined {
+    if (!this.contactDb) return undefined
+
+    try {
+      const tables = this.contactDb.prepare(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '%chatroom%'"
+      ).all() as any[]
+
+      for (const t of tables) {
+        try {
+          const rows = this.contactDb.prepare(
+            `SELECT * FROM ${t.name} WHERE chatroom_name = ? OR username = ?`
+          ).all(chatroomId, chatroomId) as any[]
+
+          for (const row of rows) {
+            const rawRoomData = row.room_data ?? row.ext_buffer ?? row.member_list ?? ''
+            const roomData = typeof rawRoomData === 'string'
+              ? rawRoomData
+              : this.decodeMaybeCompressed(rawRoomData)
+            if (!roomData) continue
+
+            const patterns = [
+              /<roomowner>(.*?)<\/roomowner>/i,
+              /<ownerusername>(.*?)<\/ownerusername>/i,
+              /<chatroomowner>(.*?)<\/chatroomowner>/i,
+              /"roomowner"\s*:\s*"([^"]+)"/i,
+              /"owner(?:username)?"\s*:\s*"([^"]+)"/i,
+            ]
+            for (const pattern of patterns) {
+              const match = pattern.exec(roomData)
+              if (match?.[1]) {
+                const owner = String(match[1]).trim()
+                if (owner) return owner
+              }
+            }
+          }
+        } catch { }
+      }
+    } catch { }
+
+    return undefined
+  }
+
+  private async resolveGroupMemberDisplayName(chatroomId: string, username: string): Promise<string> {
+    try {
+      const myWxid = this.configService.get('myWxid')
+      const cleanedMyWxid = myWxid ? this.cleanAccountDirName(myWxid) : ''
+      if (username === myWxid || username === cleanedMyWxid) {
+        const myInfo = await this.getMyUserInfo()
+        if (myInfo.success && myInfo.userInfo?.nickName) return myInfo.userInfo.nickName
+        return '我'
+      }
+
+      if (this.contactDb && chatroomId.endsWith('@chatroom')) {
+        try {
+          const tables = this.contactDb.prepare(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '%chatroom%'"
+          ).all() as any[]
+          for (const t of tables) {
+            try {
+              const rows = this.contactDb.prepare(
+                `SELECT * FROM ${t.name} WHERE chatroom_name = ? OR username = ?`
+              ).all(chatroomId, chatroomId) as any[]
+              for (const row of rows) {
+                const rawRoomData = row.room_data ?? row.ext_buffer ?? ''
+                const roomData = typeof rawRoomData === 'string'
+                  ? rawRoomData
+                  : this.decodeMaybeCompressed(rawRoomData)
+                if (!roomData) continue
+
+                const escapedUser = username.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+                const regex = new RegExp(`<member>[\\s\\S]*?<username>${escapedUser}<\\/username>[\\s\\S]*?<displayName>(.*?)<\\/displayName>[\\s\\S]*?<\\/member>`, 'i')
+                const match = regex.exec(roomData)
+                if (match?.[1]) {
+                  const groupNick = String(match[1]).trim()
+                  if (groupNick) return groupNick
+                }
+              }
+            } catch { }
+          }
+        } catch { }
+      }
+
+      const contact = await this.getContact(username)
+      return contact?.remark || contact?.nickName || contact?.alias || username
+    } catch {
+      return username
     }
   }
 
