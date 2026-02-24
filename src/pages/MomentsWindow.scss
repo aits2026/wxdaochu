@@ -20,13 +20,6 @@
   border-right: 1px solid var(--border-color);
   display: flex;
   flex-direction: column;
-  transition: width 0.3s ease, transform 0.3s ease;
-
-  &.closed {
-    width: 0;
-    overflow: hidden;
-    border-right: none;
-  }
 
   h3 {
     margin: 0;
@@ -1267,15 +1260,6 @@
       background: var(--hover-bg); // Use theme variable
     }
 
-    &.active {
-      background: var(--active-bg, rgba(0, 0, 0, 0.1));
-      color: var(--accent-color);
-    }
-  }
-
-  .icon-btn {
-    width: 30px;
-    height: 30px;
   }
 }
 

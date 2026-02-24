@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Loader2, RefreshCw, Search, Calendar, User, X, Filter, AlertTriangle, Play, Download, Heart, Copy, Link, Music, FileDown } from 'lucide-react'
+import { Loader2, RefreshCw, Search, Calendar, User, X, AlertTriangle, Play, Download, Heart, Copy, Link, Music, FileDown } from 'lucide-react'
 import { ImagePreview } from '../components/ImagePreview'
 import { LivePhotoIcon } from '../components/LivePhotoIcon'
 import { parseWechatEmoji } from '../utils/wechatEmoji'
@@ -576,7 +576,6 @@ function MomentsWindow() {
   const [contacts, setContacts] = useState<Contact[]>([])
   const [contactsLoaded, setContactsLoaded] = useState(false)
   const [contactSearch, setContactSearch] = useState('')
-  const [isSidebarOpen, setIsSidebarOpen] = useState(true)
   const [showJumpDialog, setShowJumpDialog] = useState(false)
   const [selfWxid, setSelfWxid] = useState<string>('')
   const [selfProfile, setSelfProfile] = useState<SelfProfile | null>(null)
@@ -616,7 +615,6 @@ function MomentsWindow() {
     setSelectedUsernames([targetUsername])
     setActiveUserPresetFilter({ username: targetUsername, label })
     setPresetResolutionNotice(null)
-    setIsSidebarOpen(true)
   }, [])
 
   const applyUserPresetSearchFallback = useCallback((payload: { username?: string; label?: string }) => {
@@ -630,8 +628,6 @@ function MomentsWindow() {
     setSelectedUsernames([])
     setActiveUserPresetFilter(null)
     setContactSearch(contactSearchText)
-    setIsSidebarOpen(true)
-
     const displayText = contactSearchText || '该联系人'
     setPresetResolutionNotice(`未精确匹配到“${displayText}”，已在左侧通讯录填入搜索词，请手动选择联系人。`)
   }, [])
@@ -645,7 +641,6 @@ function MomentsWindow() {
       )
       if (contactSearchText) {
         setContactSearch(contactSearchText)
-        setIsSidebarOpen(true)
       }
     }
     setPendingMomentsPresetRequest(payload)
@@ -1527,13 +1522,6 @@ document.querySelectorAll('.vi video').forEach(function(v) {
         title="朋友圈"
         rightContent={
           <div className="title-actions">
-            <button
-              className={`icon-btn ${isSidebarOpen ? 'active' : ''}`}
-              onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-              title={isSidebarOpen ? "收起筛选" : "打开筛选"}
-            >
-              <Filter size={16} />
-            </button>
             <button onClick={() => loadPosts({ reset: true })} disabled={isLoading} className="refresh-btn" title="刷新">
               <RefreshCw size={16} className={isLoading ? 'spinning' : ''} />
             </button>
@@ -1543,7 +1531,7 @@ document.querySelectorAll('.vi video').forEach(function(v) {
 
       <div className="moments-container">
         {/* 侧边栏 (左侧) */}
-        <aside className={`sns-sidebar ${isSidebarOpen ? 'open' : 'closed'}`}>
+        <aside className="sns-sidebar">
           <div className="filter-content custom-scrollbar">
             {/* 1. 搜索 */}
             <div className="filter-card">
