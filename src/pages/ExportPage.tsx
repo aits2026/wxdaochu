@@ -921,18 +921,6 @@ function ExportPage() {
 
             <div className="session-type-filter">
               <button
-                className={`type-filter-btn ${sessionTypeFilter === 'group' ? 'active' : ''}`}
-                onClick={() => setSessionTypeFilter('group')}
-              >
-                <div className="type-filter-label">
-                  <Users size={13} />
-                  <span>群聊</span>
-                </div>
-                <div className="type-filter-count">
-                  {formatSessionTypeCount(sessionTypeCounts.group)}
-                </div>
-              </button>
-              <button
                 className={`type-filter-btn ${sessionTypeFilter === 'private' ? 'active' : ''}`}
                 onClick={() => setSessionTypeFilter('private')}
               >
@@ -942,6 +930,18 @@ function ExportPage() {
                 </div>
                 <div className="type-filter-count">
                   {formatSessionTypeCount(sessionTypeCounts.private)}
+                </div>
+              </button>
+              <button
+                className={`type-filter-btn ${sessionTypeFilter === 'group' ? 'active' : ''}`}
+                onClick={() => setSessionTypeFilter('group')}
+              >
+                <div className="type-filter-label">
+                  <Users size={13} />
+                  <span>群聊</span>
+                </div>
+                <div className="type-filter-count">
+                  {formatSessionTypeCount(sessionTypeCounts.group)}
                 </div>
               </button>
               <button
