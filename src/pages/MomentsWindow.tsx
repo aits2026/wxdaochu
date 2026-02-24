@@ -1526,6 +1526,10 @@ document.querySelectorAll('.vi video').forEach(function(v) {
       c.displayName.toLowerCase().includes(contactSearch.toLowerCase()) ||
       c.username.toLowerCase().includes(contactSearch.toLowerCase())
     )
+    .filter(c => {
+      if (snsUserPostCountsStatus !== 'ready') return true
+      return (snsUserPostCounts[c.username] ?? 0) > 0
+    })
     .sort((a, b) => {
       const aTotal = snsUserPostCountsStatus === 'ready' ? (snsUserPostCounts[a.username] ?? 0) : 0
       const bTotal = snsUserPostCountsStatus === 'ready' ? (snsUserPostCounts[b.username] ?? 0) : 0
