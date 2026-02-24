@@ -85,7 +85,10 @@ let logService: LogService | null = null
 let chatWindow: BrowserWindow | null = null
 // 朋友圈窗口实例
 let momentsWindow: BrowserWindow | null = null
-let pendingMomentsPreset: { preset: 'self'; username?: string; label?: string } | null = null
+type MomentsPresetPayload =
+  | { preset: 'self'; username?: string; label?: string }
+  | { preset: 'user'; username: string; label?: string }
+let pendingMomentsPreset: MomentsPresetPayload | null = null
 // 群聊分析窗口实例
 let groupAnalyticsWindow: BrowserWindow | null = null
 // 年度报告窗口实例
@@ -356,7 +359,7 @@ function createGroupAnalyticsWindow() {
 /**
  * 创建独立的朋友圈窗口
  */
-function sendMomentsPresetToWindow(payload: { preset: 'self'; username?: string; label?: string }): boolean {
+function sendMomentsPresetToWindow(payload: MomentsPresetPayload): boolean {
   if (!momentsWindow || momentsWindow.isDestroyed()) return false
   if (momentsWindow.webContents.isLoadingMainFrame()) return false
   momentsWindow.webContents.send('moments:applyPreset', payload)
@@ -370,7 +373,7 @@ function flushPendingMomentsPreset(options: { consumeOnSend?: boolean } = {}): v
   }
 }
 
-function applyMomentsPreset(payload?: { preset: 'self'; username?: string; label?: string }): void {
+function applyMomentsPreset(payload?: MomentsPresetPayload): void {
   if (!payload) return
   pendingMomentsPreset = payload
   flushPendingMomentsPreset()
@@ -2163,7 +2166,7 @@ function registerIpcHandlers() {
   })
 
   // 打开朋友圈窗口
-  ipcMain.handle('window:openMomentsWindow', async (_, options?: { preset?: 'self' }) => {
+  ipcMain.handle('window:openMomentsWindow', async (_, options?: { preset?: 'self' | { type: 'user'; username?: string; label?: string } }) => {
     if (options?.preset === 'self') {
       const myWxid = configService?.get('myWxid')
       applyMomentsPreset({
@@ -2171,6 +2174,15 @@ function registerIpcHandlers() {
         username: typeof myWxid === 'string' ? myWxid : undefined,
         label: '我的朋友圈'
       })
+    } else if (options?.preset && typeof options.preset === 'object' && options.preset.type === 'user') {
+      const username = (options.preset.username || '').trim()
+      if (username) {
+        applyMomentsPreset({
+          preset: 'user',
+          username,
+          label: options.preset.label?.trim() || undefined
+        })
+      }
     }
     createMomentsWindow()
     return true

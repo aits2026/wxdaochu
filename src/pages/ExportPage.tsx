@@ -1790,6 +1790,34 @@ function ExportPage() {
                                 )}
                               </div>
                             )}
+                            {session?.accountType === 'friend' && (
+                              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-color, #e0e0e0)' }}>
+                                <span style={{ opacity: 0.6 }}>对方朋友圈</span>
+                                <button
+                                  type="button"
+                                  className="group-friend-count-btn"
+                                  onClick={async () => {
+                                    const targetUsername = (selectedSession || sessionDetail.wxid || '').trim()
+                                    if (!targetUsername) return
+                                    const targetName = (sessionDetail.remark || sessionDetail.nickName || session?.displayName || targetUsername).trim()
+                                    try {
+                                      await window.electronAPI.window.openMomentsWindow({
+                                        preset: {
+                                          type: 'user',
+                                          username: targetUsername,
+                                          label: `${targetName}的朋友圈`
+                                        }
+                                      })
+                                    } catch (e) {
+                                      console.error('打开对方朋友圈失败:', e)
+                                    }
+                                  }}
+                                >
+                                  <span>查看</span>
+                                  <Aperture size={13} />
+                                </button>
+                              </div>
+                            )}
                             {session?.username.includes('@chatroom') && sessionDetail.groupInfo && (
                               <>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-color, #e0e0e0)' }}>

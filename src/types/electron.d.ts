@@ -9,7 +9,7 @@ export interface ElectronAPI {
     splashReady: () => void
     onSplashFadeOut?: (callback: () => void) => () => void
     openChatWindow: (username?: string) => Promise<boolean>
-    openMomentsWindow: (options?: { preset?: 'self' }) => Promise<boolean>
+    openMomentsWindow: (options?: { preset?: 'self' | { type: 'user'; username: string; label?: string } }) => Promise<boolean>
     openGroupAnalyticsWindow: () => Promise<boolean>
     openAnnualReportWindow: (year: number) => Promise<boolean>
     openAgreementWindow: () => Promise<boolean>
@@ -25,8 +25,8 @@ export interface ElectronAPI {
     resizeToFitVideo: (videoWidth: number, videoHeight: number) => Promise<void>
     openAISummaryWindow: (sessionId: string, sessionName: string) => Promise<boolean>
     openChatHistoryWindow: (sessionId: string, messageId: number) => Promise<boolean>
-    onMomentsPreset: (callback: (payload: { preset: 'self'; username?: string; label?: string }) => void) => () => void
-    consumeMomentsPreset: () => Promise<{ preset: 'self'; username?: string; label?: string } | null>
+    onMomentsPreset: (callback: (payload: { preset: 'self'; username?: string; label?: string } | { preset: 'user'; username: string; label?: string }) => void) => () => void
+    consumeMomentsPreset: () => Promise<({ preset: 'self'; username?: string; label?: string } | { preset: 'user'; username: string; label?: string }) | null>
   }
   config: {
     get: (key: string) => Promise<unknown>

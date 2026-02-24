@@ -55,6 +55,10 @@ interface SelfProfile {
   alias?: string
 }
 
+type MomentsPresetPayload =
+  | { preset: 'self'; username?: string; label?: string }
+  | { preset: 'user'; username?: string; label?: string }
+
 const isVideoUrl = (url: string) => {
   if (!url) return false
   return url.includes('snsvideodownload') || url.includes('video') || url.includes('.mp4')
@@ -537,8 +541,8 @@ function MomentsWindow() {
   const [showJumpDialog, setShowJumpDialog] = useState(false)
   const [selfWxid, setSelfWxid] = useState<string>('')
   const [selfProfile, setSelfProfile] = useState<SelfProfile | null>(null)
-  const [pendingSelfPresetRequest, setPendingSelfPresetRequest] = useState<{ username?: string } | null>(null)
-  const [selfPresetFilterUsername, setSelfPresetFilterUsername] = useState<string | null>(null)
+  const [pendingMomentsPresetRequest, setPendingMomentsPresetRequest] = useState<MomentsPresetPayload | null>(null)
+  const [activeUserPresetFilter, setActiveUserPresetFilter] = useState<{ username: string; label: string } | null>(null)
 
   // 其他状态
   const [previewImage, setPreviewImage] = useState<{ src: string, isVideo?: boolean, liveVideoPath?: string } | null>(null)
@@ -565,17 +569,17 @@ function MomentsWindow() {
     selfWxidRef.current = selfWxid
   }, [selfWxid])
 
-  const applyResolvedSelfMomentsPreset = useCallback((targetUsername: string) => {
+  const applyResolvedUserMomentsPreset = useCallback((targetUsername: string, label: string) => {
     setSearchKeyword('')
     setJumpTargetDate(undefined)
     setContactSearch('')
     setSelectedUsernames([targetUsername])
-    setSelfPresetFilterUsername(targetUsername)
+    setActiveUserPresetFilter({ username: targetUsername, label })
     setIsSidebarOpen(true)
   }, [])
 
-  const requestSelfMomentsPreset = useCallback((usernameFromPayload?: string) => {
-    setPendingSelfPresetRequest({ username: usernameFromPayload })
+  const requestMomentsPreset = useCallback((payload: MomentsPresetPayload) => {
+    setPendingMomentsPresetRequest(payload)
   }, [])
 
   const resolveSelfMomentsUsername = useCallback((usernameFromPayload?: string): string | null => {
@@ -681,11 +685,14 @@ function MomentsWindow() {
   useEffect(() => {
     const off = window.electronAPI.window.onMomentsPreset((payload) => {
       if (payload.preset === 'self') {
-        requestSelfMomentsPreset(payload.username)
+        requestMomentsPreset(payload)
+      }
+      if (payload.preset === 'user') {
+        requestMomentsPreset(payload)
       }
     })
     return off
-  }, [requestSelfMomentsPreset])
+  }, [requestMomentsPreset])
 
   useEffect(() => {
     let mounted = true
@@ -693,7 +700,10 @@ function MomentsWindow() {
       .then((payload) => {
         if (!mounted || !payload) return
         if (payload.preset === 'self') {
-          requestSelfMomentsPreset(payload.username)
+          requestMomentsPreset(payload)
+        }
+        if (payload.preset === 'user') {
+          requestMomentsPreset(payload)
         }
       })
       .catch((e) => console.error('读取朋友圈预设失败:', e))
@@ -701,24 +711,42 @@ function MomentsWindow() {
     return () => {
       mounted = false
     }
-  }, [requestSelfMomentsPreset])
+  }, [requestMomentsPreset])
 
   useEffect(() => {
-    if (!pendingSelfPresetRequest) return
+    if (!pendingMomentsPresetRequest) return
+
+    if (pendingMomentsPresetRequest.preset === 'user') {
+      const targetUsername = (pendingMomentsPresetRequest.username || '').trim()
+      if (!targetUsername) {
+        console.warn('[MomentsWindow] 无法应用“指定联系人朋友圈”筛选：username 为空')
+        setPendingMomentsPresetRequest(null)
+        return
+      }
+      applyResolvedUserMomentsPreset(
+        targetUsername,
+        pendingMomentsPresetRequest.label?.trim() || `${targetUsername}的朋友圈`
+      )
+      setPendingMomentsPresetRequest(null)
+      return
+    }
 
     const hasResolutionContext = contacts.length > 0 || posts.length > 0 || !!selfProfile || !!selfWxidRef.current
     if (!hasResolutionContext) return
 
-    const resolvedUsername = resolveSelfMomentsUsername(pendingSelfPresetRequest.username)
+    const resolvedUsername = resolveSelfMomentsUsername(pendingMomentsPresetRequest.username)
     if (!resolvedUsername) {
       console.warn('[MomentsWindow] 无法应用“我的朋友圈”筛选：未解析到对应用户名')
-      setPendingSelfPresetRequest(null)
+      setPendingMomentsPresetRequest(null)
       return
     }
 
-    applyResolvedSelfMomentsPreset(resolvedUsername)
-    setPendingSelfPresetRequest(null)
-  }, [pendingSelfPresetRequest, contacts.length, posts.length, selfProfile, resolveSelfMomentsUsername, applyResolvedSelfMomentsPreset])
+    applyResolvedUserMomentsPreset(
+      resolvedUsername,
+      pendingMomentsPresetRequest.label?.trim() || '我的朋友圈'
+    )
+    setPendingMomentsPresetRequest(null)
+  }, [pendingMomentsPresetRequest, contacts.length, posts.length, selfProfile, resolveSelfMomentsUsername, applyResolvedUserMomentsPreset])
 
   // 加载数据
   const loadPosts = useCallback(async (options: { reset?: boolean, direction?: 'older' | 'newer' } = {}) => {
@@ -1317,7 +1345,7 @@ document.querySelectorAll('.vi video').forEach(function(v) {
     c.username.toLowerCase().includes(contactSearch.toLowerCase())
   )
 
-  const isSelfOnlyFilterActive = !!selfPresetFilterUsername && selectedUsernames.length === 1 && selectedUsernames[0] === selfPresetFilterUsername && !searchKeyword && !jumpTargetDate
+  const isUserPresetOnlyFilterActive = !!activeUserPresetFilter && selectedUsernames.length === 1 && selectedUsernames[0] === activeUserPresetFilter.username && !searchKeyword && !jumpTargetDate
 
   return (
     <div className="moments-window">
@@ -1450,15 +1478,18 @@ document.querySelectorAll('.vi video').forEach(function(v) {
               <AlertTriangle size={16} />
               <span>由于技术限制，当前无法解密显示部分图片与视频等加密资源文件</span>
             </div>
-            {isSelfOnlyFilterActive && (
+            {isUserPresetOnlyFilterActive && activeUserPresetFilter && (
               <div className="moments-filter-preset-banner">
                 <div className="preset-label">
                   <User size={14} />
-                  <span>已应用筛选：我的朋友圈</span>
+                  <span>已应用筛选：{activeUserPresetFilter.label}</span>
                 </div>
                 <button
                   className="preset-clear-btn"
-                  onClick={() => setSelectedUsernames([])}
+                  onClick={() => {
+                    setSelectedUsernames([])
+                    setActiveUserPresetFilter(null)
+                  }}
                 >
                   清除
                 </button>

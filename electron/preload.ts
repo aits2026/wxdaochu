@@ -67,7 +67,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     maximize: () => ipcRenderer.send('window:maximize'),
     close: () => ipcRenderer.send('window:close'),
     openChatWindow: (username?: string) => ipcRenderer.invoke('window:openChatWindow', username),
-    openMomentsWindow: (options?: { preset?: 'self' }) => ipcRenderer.invoke('window:openMomentsWindow', options),
+    openMomentsWindow: (options?: { preset?: 'self' | { type: 'user'; username: string; label?: string } }) => ipcRenderer.invoke('window:openMomentsWindow', options),
     openGroupAnalyticsWindow: () => ipcRenderer.invoke('window:openGroupAnalyticsWindow'),
     openAnnualReportWindow: (year: number) => ipcRenderer.invoke('window:openAnnualReportWindow', year),
     openAgreementWindow: () => ipcRenderer.invoke('window:openAgreementWindow'),
@@ -90,8 +90,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.on('splash:fadeOut', () => callback())
       return () => ipcRenderer.removeAllListeners('splash:fadeOut')
     },
-    onMomentsPreset: (callback: (payload: { preset: 'self'; username?: string; label?: string }) => void) => {
-      const listener = (_: any, payload: { preset: 'self'; username?: string; label?: string }) => callback(payload)
+    onMomentsPreset: (callback: (payload: { preset: 'self'; username?: string; label?: string } | { preset: 'user'; username: string; label?: string }) => void) => {
+      const listener = (_: any, payload: { preset: 'self'; username?: string; label?: string } | { preset: 'user'; username: string; label?: string }) => callback(payload)
       ipcRenderer.on('moments:applyPreset', listener)
       return () => ipcRenderer.removeListener('moments:applyPreset', listener)
     },
