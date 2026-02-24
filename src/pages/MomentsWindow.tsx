@@ -564,7 +564,7 @@ const usernamesLooselyEqual = (a?: string, b?: string) => {
 const contactNameCollator = new Intl.Collator('zh-CN', { numeric: true, sensitivity: 'base' })
 
 function MomentsWindow() {
-  const [isLoading, setIsLoading] = useState(true)
+  const [isLoading, setIsLoading] = useState(false)
   const [loadingNewer, setLoadingNewer] = useState(false)
   const [posts, setPosts] = useState<SnsPost[]>([])
   const [deletedPostIds, setDeletedPostIds] = useState<Set<string>>(new Set())
@@ -603,6 +603,7 @@ function MomentsWindow() {
   const sentinelRef = useRef<HTMLDivElement>(null)
   const isInitialLoad = useRef(true)
   const selfWxidRef = useRef('')
+  const initialContactSelectionHandledRef = useRef(false)
 
   useEffect(() => {
     selfWxidRef.current = selfWxid
@@ -801,7 +802,7 @@ function MomentsWindow() {
     loadContacts()
   }, [loadContacts])
 
-  useEffect(() => {
+  const loadSnsUserPostCounts = useCallback(() => {
     let cancelled = false
     setSnsUserPostCountsStatus('loading')
 
@@ -827,6 +828,11 @@ function MomentsWindow() {
       cancelled = true
     }
   }, [])
+
+  useEffect(() => {
+    const cleanup = loadSnsUserPostCounts()
+    return cleanup
+  }, [loadSnsUserPostCounts])
 
   useEffect(() => {
     configService.getMyWxid()
@@ -938,9 +944,64 @@ function MomentsWindow() {
     setPendingMomentsPresetRequest(null)
   }, [pendingMomentsPresetRequest, contactsLoaded, contacts.length, posts.length, isLoading, selfProfile, resolveSelfMomentsUsername, resolveUserMomentsUsername, applyResolvedUserMomentsPreset, applyUserPresetSearchFallback])
 
+  useEffect(() => {
+    if (initialContactSelectionHandledRef.current) return
+
+    // 如果 preset 已经生效，视为已完成初始选中
+    if (selectedUsernames.length > 0) {
+      initialContactSelectionHandledRef.current = true
+      return
+    }
+
+    // preset 尚未处理完时，不要抢占默认选中
+    if (pendingMomentsPresetRequest) return
+
+    // preset 回退为手动选择时，不自动帮用户选中
+    if (presetResolutionNotice) {
+      initialContactSelectionHandledRef.current = true
+      return
+    }
+
+    if (!contactsLoaded) return
+    if (snsUserPostCountsStatus === 'idle' || snsUserPostCountsStatus === 'loading') return
+
+    // 统计失败时先不自动选中，等待用户手动刷新/选择
+    if (snsUserPostCountsStatus === 'error') return
+
+    const topContact = contacts
+      .filter(c => (snsUserPostCounts[c.username] ?? 0) > 0)
+      .sort((a, b) => {
+        const aTotal = snsUserPostCounts[a.username] ?? 0
+        const bTotal = snsUserPostCounts[b.username] ?? 0
+        if (bTotal !== aTotal) return bTotal - aTotal
+
+        const nameCmp = contactNameCollator.compare(a.displayName || a.username, b.displayName || b.username)
+        if (nameCmp !== 0) return nameCmp
+        return contactNameCollator.compare(a.username, b.username)
+      })[0]
+
+    if (topContact) {
+      setSelectedUsernames([topContact.username])
+    }
+
+    initialContactSelectionHandledRef.current = true
+  }, [contacts, contactsLoaded, snsUserPostCounts, snsUserPostCountsStatus, pendingMomentsPresetRequest, presetResolutionNotice, selectedUsernames.length])
+
   // 加载数据
   const loadPosts = useCallback(async (options: { reset?: boolean, direction?: 'older' | 'newer' } = {}) => {
     const { reset = false, direction = 'older' } = options
+    if (selectedUsernames.length === 0) {
+      if (reset || direction !== 'older') {
+        setError(null)
+        setPosts([])
+        setHasMore(false)
+        setHasNewer(false)
+      }
+      setIsLoading(false)
+      setLoadingNewer(false)
+      return
+    }
+
     if (loadingRef.current) return
 
     loadingRef.current = true
@@ -1029,6 +1090,14 @@ function MomentsWindow() {
 
   // 监听筛选条件变化，自动重置加载
   useEffect(() => {
+    if (selectedUsernames.length === 0) {
+      setPosts([])
+      setError(null)
+      setHasMore(false)
+      setHasNewer(false)
+      setIsLoading(false)
+      return
+    }
     loadPosts({ reset: true })
   }, [selectedUsernames]) // Removed loadPosts dependency to avoid loop
 
@@ -1540,6 +1609,13 @@ document.querySelectorAll('.vi video').forEach(function(v) {
       return contactNameCollator.compare(a.username, b.username)
     })
 
+  const isContactListBootstrapLoading = !contactsLoaded || snsUserPostCountsStatus === 'idle' || snsUserPostCountsStatus === 'loading'
+  const hasAnyContactsWithMoments = snsUserPostCountsStatus === 'ready'
+    ? contacts.some(c => (snsUserPostCounts[c.username] ?? 0) > 0)
+    : false
+  const shouldWaitForContactListBeforeLoadingPosts = isContactListBootstrapLoading && selectedUsernames.length === 0
+  const isContactCountBootstrapErrorWithoutSelection = snsUserPostCountsStatus === 'error' && selectedUsernames.length === 0
+
   const isUserPresetOnlyFilterActive = !!activeUserPresetFilter && selectedUsernames.length === 1 && selectedUsernames[0] === activeUserPresetFilter.username
 
   return (
@@ -1548,7 +1624,19 @@ document.querySelectorAll('.vi video').forEach(function(v) {
         title="朋友圈"
         rightContent={
           <div className="title-actions">
-            <button onClick={() => loadPosts({ reset: true })} disabled={isLoading} className="refresh-btn" title="刷新">
+            <button
+              onClick={() => {
+                if (selectedUsernames.length > 0) {
+                  loadPosts({ reset: true })
+                  return
+                }
+                void loadContacts()
+                loadSnsUserPostCounts()
+              }}
+              disabled={isLoading || isContactListBootstrapLoading}
+              className="refresh-btn"
+              title="刷新"
+            >
               <RefreshCw size={16} className={isLoading ? 'spinning' : ''} />
             </button>
           </div>
@@ -1586,7 +1674,9 @@ document.querySelectorAll('.vi video').forEach(function(v) {
                   )}
                 </div>
                 <div className="contact-list custom-scrollbar">
-                  {filteredContacts.map(contact => {
+                  {isContactListBootstrapLoading ? (
+                    <div className="empty-contacts">正在加载有朋友圈的联系人...</div>
+                  ) : filteredContacts.map(contact => {
                     const loadedCount = loadedPostCounts[contact.username] ?? 0
                     const totalCountDisplay = snsUserPostCountsStatus === 'ready'
                       ? String(snsUserPostCounts[contact.username] ?? 0)
@@ -1613,7 +1703,7 @@ document.querySelectorAll('.vi video').forEach(function(v) {
                       </div>
                     )
                   })}
-                  {filteredContacts.length === 0 && (
+                  {!isContactListBootstrapLoading && filteredContacts.length === 0 && (
                     <div className="empty-contacts">无可显示联系人</div>
                   )}
                 </div>
@@ -1670,7 +1760,28 @@ document.querySelectorAll('.vi video').forEach(function(v) {
             )}
 
             <div className="moments-content custom-scrollbar">
-              {isLoading ? (
+              {shouldWaitForContactListBeforeLoadingPosts ? (
+                <div className="moments-placeholder">
+                  <Search size={64} opacity={0.3} />
+                  <p>正在加载联系人列表...</p>
+                  <p style={{ fontSize: 12, opacity: 0.7 }}>加载完成后将自动显示朋友圈最多的联系人</p>
+                </div>
+              ) : isContactCountBootstrapErrorWithoutSelection ? (
+                <div className="moments-error">
+                  <p>联系人朋友圈总量统计加载失败</p>
+                  <button onClick={() => { void loadContacts(); loadSnsUserPostCounts() }}>重试</button>
+                </div>
+              ) : (snsUserPostCountsStatus === 'ready' && !hasAnyContactsWithMoments && selectedUsernames.length === 0) ? (
+                <div className="moments-placeholder">
+                  <Search size={64} opacity={0.3} />
+                  <p>暂无有朋友圈的联系人</p>
+                </div>
+              ) : (selectedUsernames.length === 0 && posts.length === 0) ? (
+                <div className="moments-placeholder">
+                  <Search size={64} opacity={0.3} />
+                  <p>请选择联系人</p>
+                </div>
+              ) : isLoading ? (
                 <div className="moments-loading">
                   <Loader2 className="spin" size={32} />
                   <p>加载中...</p>
