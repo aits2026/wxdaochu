@@ -582,6 +582,42 @@ function MomentsWindow() {
     setPendingMomentsPresetRequest(payload)
   }, [])
 
+  const resolveUserMomentsUsername = useCallback((payload: { username?: string; label?: string }): string | null => {
+    const normalized = (value?: string) => (value || '').trim().toLowerCase()
+
+    const exactUsernameCandidates = Array.from(new Set(
+      [payload.username]
+        .map(v => v?.trim())
+        .filter((v): v is string => !!v)
+    ))
+
+    for (const candidate of exactUsernameCandidates) {
+      if (contacts.some(c => c.username === candidate)) return candidate
+      if (posts.some(p => p.username === candidate)) return candidate
+    }
+
+    const rawLabel = (payload.label || '').trim()
+    const labelBase = rawLabel.replace(/的朋友圈$/, '').trim()
+    const nameCandidates = Array.from(new Set(
+      [labelBase]
+        .map(v => normalized(v))
+        .filter(Boolean)
+    ))
+
+    for (const name of nameCandidates) {
+      const contactMatches = contacts.filter(c => normalized(c.displayName) === name || normalized(c.username) === name)
+      if (contactMatches.length === 1) return contactMatches[0].username
+
+      const postMatches = Array.from(new Set(posts
+        .filter(p => normalized(p.nickname) === name)
+        .map(p => p.username)
+        .filter(Boolean)))
+      if (postMatches.length === 1) return postMatches[0]
+    }
+
+    return exactUsernameCandidates[0] || null
+  }, [contacts, posts])
+
   const resolveSelfMomentsUsername = useCallback((usernameFromPayload?: string): string | null => {
     const normalized = (value?: string) => (value || '').trim().toLowerCase()
 
@@ -717,9 +753,12 @@ function MomentsWindow() {
     if (!pendingMomentsPresetRequest) return
 
     if (pendingMomentsPresetRequest.preset === 'user') {
-      const targetUsername = (pendingMomentsPresetRequest.username || '').trim()
+      const hasResolutionContext = contacts.length > 0 || posts.length > 0
+      if (!hasResolutionContext && !(pendingMomentsPresetRequest.username || '').trim()) return
+
+      const targetUsername = resolveUserMomentsUsername(pendingMomentsPresetRequest)
       if (!targetUsername) {
-        console.warn('[MomentsWindow] 无法应用“指定联系人朋友圈”筛选：username 为空')
+        console.warn('[MomentsWindow] 无法应用“指定联系人朋友圈”筛选：未解析到对应用户名')
         setPendingMomentsPresetRequest(null)
         return
       }
@@ -746,7 +785,7 @@ function MomentsWindow() {
       pendingMomentsPresetRequest.label?.trim() || '我的朋友圈'
     )
     setPendingMomentsPresetRequest(null)
-  }, [pendingMomentsPresetRequest, contacts.length, posts.length, selfProfile, resolveSelfMomentsUsername, applyResolvedUserMomentsPreset])
+  }, [pendingMomentsPresetRequest, contacts.length, posts.length, selfProfile, resolveSelfMomentsUsername, resolveUserMomentsUsername, applyResolvedUserMomentsPreset])
 
   // 加载数据
   const loadPosts = useCallback(async (options: { reset?: boolean, direction?: 'older' | 'newer' } = {}) => {
@@ -897,7 +936,7 @@ function MomentsWindow() {
     setSearchKeyword('')
     setSelectedUsernames([])
     setJumpTargetDate(undefined)
-    setSelfPresetFilterUsername(null)
+    setActiveUserPresetFilter(null)
   }
 
   // 导出朋友圈为 HTML
