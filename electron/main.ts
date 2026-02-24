@@ -1938,6 +1938,14 @@ function registerIpcHandlers() {
     return result
   })
 
+  ipcMain.handle('chat:getCommonGroupsWithFriendStats', async (_, friendUsername: string) => {
+    const result = await chatService.getCommonGroupsWithFriendStats(friendUsername)
+    if (!result.success) {
+      logService?.warn('Chat', '获取共同群聊发言统计失败', { friendUsername, error: result.error })
+    }
+    return result
+  })
+
   ipcMain.handle('chat:getVoiceData', async (_, sessionId: string, msgId: string, createTime?: number) => {
     const result = await chatService.getVoiceData(sessionId, msgId, createTime)
     if (!result.success) {

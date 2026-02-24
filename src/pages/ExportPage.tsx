@@ -206,6 +206,8 @@ function ExportPage() {
     videoCount: number
     voiceCount: number
     emojiCount: number
+    commonGroupCount?: number
+    commonGroups?: Array<{ username: string; displayName: string }>
     messageTables: { dbName: string; tableName: string; count: number }[]
     groupInfo?: {
       ownerUsername?: string
@@ -217,10 +219,14 @@ function ExportPage() {
     }
   } | null>(null)
   const [showGroupFriendsPopup, setShowGroupFriendsPopup] = useState(false)
+  const [showCommonGroupsPopup, setShowCommonGroupsPopup] = useState(false)
   const [groupFriendMessageCounts, setGroupFriendMessageCounts] = useState<Record<string, number>>({})
   const [groupFriendMessageCountsStatus, setGroupFriendMessageCountsStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
   const [groupFriendMessageCountsSessionId, setGroupFriendMessageCountsSessionId] = useState<string | null>(null)
   const [groupFriendsSortOrder, setGroupFriendsSortOrder] = useState<'desc' | 'asc'>('desc')
+  const [commonGroupMessageCounts, setCommonGroupMessageCounts] = useState<Record<string, { selfMessageCount: number; peerMessageCount: number }>>({})
+  const [commonGroupMessageCountsStatus, setCommonGroupMessageCountsStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
+  const [commonGroupMessageCountsSessionId, setCommonGroupMessageCountsSessionId] = useState<string | null>(null)
   const [isLoadingDetail, setIsLoadingDetail] = useState(false)
   const [isLoadingGroupInfo, setIsLoadingGroupInfo] = useState(false)
   const [exportRecords, setExportRecords] = useState<{ exportTime: number; format: string; messageCount: number }[]>([])
@@ -260,6 +266,7 @@ function ExportPage() {
   const sessionCountRequestIdRef = useRef(0)
   const sessionDetailRequestIdRef = useRef(0)
   const groupFriendMessageCountsRequestIdRef = useRef(0)
+  const commonGroupMessageCountsRequestIdRef = useRef(0)
   const sessionImageOverviewRequestIdRef = useRef(0)
   const sessionImageAssetsRequestIdRef = useRef(0)
   const sessionTypeFilterRef = useRef<SessionTypeFilter>('private')
@@ -947,17 +954,71 @@ function ExportPage() {
     groupFriendMessageCountsStatus
   ])
 
+  useEffect(() => {
+    const commonGroups = sessionDetail?.commonGroups || []
+    const isPrivateSession = !!selectedSession && !selectedSession.includes('@chatroom')
+    if (!showCommonGroupsPopup || !selectedSession || !isPrivateSession) return
+    if (commonGroups.length === 0) return
+
+    const alreadyHandledCurrentSession = commonGroupMessageCountsSessionId === selectedSession &&
+      (commonGroupMessageCountsStatus === 'loading' || commonGroupMessageCountsStatus === 'ready' || commonGroupMessageCountsStatus === 'error')
+    if (alreadyHandledCurrentSession) return
+
+    const requestId = ++commonGroupMessageCountsRequestIdRef.current
+    setCommonGroupMessageCounts({})
+    setCommonGroupMessageCountsSessionId(selectedSession)
+    setCommonGroupMessageCountsStatus('loading')
+
+    void (async () => {
+      try {
+        const result = await window.electronAPI.chat.getCommonGroupsWithFriendStats(selectedSession)
+        if (requestId !== commonGroupMessageCountsRequestIdRef.current) return
+
+        if (result.success && result.data) {
+          const counts: Record<string, { selfMessageCount: number; peerMessageCount: number }> = {}
+          for (const item of result.data) {
+            if (!item?.username) continue
+            counts[item.username] = {
+              selfMessageCount: Number(item.selfMessageCount || 0),
+              peerMessageCount: Number(item.peerMessageCount || 0)
+            }
+          }
+          setCommonGroupMessageCounts(counts)
+          setCommonGroupMessageCountsStatus('ready')
+        } else {
+          setCommonGroupMessageCounts({})
+          setCommonGroupMessageCountsStatus('error')
+        }
+      } catch {
+        if (requestId !== commonGroupMessageCountsRequestIdRef.current) return
+        setCommonGroupMessageCounts({})
+        setCommonGroupMessageCountsStatus('error')
+      }
+    })()
+  }, [
+    showCommonGroupsPopup,
+    selectedSession,
+    sessionDetail?.commonGroups,
+    commonGroupMessageCountsSessionId,
+    commonGroupMessageCountsStatus
+  ])
+
   const selectSession = async (username: string) => {
     const requestId = ++sessionDetailRequestIdRef.current
     groupFriendMessageCountsRequestIdRef.current++
+    commonGroupMessageCountsRequestIdRef.current++
     sessionImageAssetsRequestIdRef.current++
     setSelectedSession(username)
     setShowExportSettings(false)
     setShowGroupFriendsPopup(false)
+    setShowCommonGroupsPopup(false)
     setGroupFriendMessageCounts({})
     setGroupFriendMessageCountsStatus('idle')
     setGroupFriendMessageCountsSessionId(null)
     setGroupFriendsSortOrder('desc')
+    setCommonGroupMessageCounts({})
+    setCommonGroupMessageCountsStatus('idle')
+    setCommonGroupMessageCountsSessionId(null)
     setShowSessionImageAssetsModal(false)
     setSessionImageAssets([])
     setSessionImageAssetsError(null)
@@ -1002,6 +1063,8 @@ function ExportPage() {
           videoCount: detailResult.detail.videoCount,
           voiceCount: detailResult.detail.voiceCount,
           emojiCount: detailResult.detail.emojiCount,
+          commonGroupCount: detailResult.detail.commonGroupCount,
+          commonGroups: detailResult.detail.commonGroups,
           messageTables: detailResult.detail.messageTables || [],
           groupInfo: isGroupChat ? {} : detailResult.detail.groupInfo,
         })
@@ -1705,6 +1768,28 @@ function ExportPage() {
                               <span style={{ opacity: 0.6 }}>消息总数</span>
                               <span style={{ fontWeight: 500 }}>{sessionDetail.messageCount.toLocaleString()} 条</span>
                             </div>
+                            {session?.accountType === 'friend' && (
+                              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-color, #e0e0e0)' }}>
+                                <span style={{ opacity: 0.6 }}>共同群聊</span>
+                                {sessionDetail.commonGroupCount !== undefined ? (
+                                  <button
+                                    type="button"
+                                    className="group-friend-count-btn"
+                                    onClick={() => {
+                                      setCommonGroupMessageCounts({})
+                                      setCommonGroupMessageCountsStatus('idle')
+                                      setCommonGroupMessageCountsSessionId(null)
+                                      setShowCommonGroupsPopup(true)
+                                    }}
+                                  >
+                                    <span>{sessionDetail.commonGroupCount.toLocaleString()}个</span>
+                                    <Eye size={13} />
+                                  </button>
+                                ) : (
+                                  <span>--</span>
+                                )}
+                              </div>
+                            )}
                             {session?.username.includes('@chatroom') && sessionDetail.groupInfo && (
                               <>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-color, #e0e0e0)' }}>
@@ -2308,6 +2393,69 @@ function ExportPage() {
             </div>
           </div>
         </>
+      )}
+
+      {/* 共同群聊弹窗（私聊会话） */}
+      {showCommonGroupsPopup && sessionDetail && (
+        <div className="export-overlay" onClick={() => setShowCommonGroupsPopup(false)}>
+          <div className="common-groups-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="group-friends-modal-header">
+              <div>
+                <h3>共同群聊</h3>
+                <p>
+                  {(sessionDetail.commonGroupCount ?? sessionDetail.commonGroups?.length ?? 0).toLocaleString()} 个
+                </p>
+              </div>
+              <button
+                type="button"
+                className="group-friends-close-btn"
+                onClick={() => setShowCommonGroupsPopup(false)}
+                aria-label="关闭共同群聊列表"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="group-friends-modal-subtitle">
+              <div className="group-friends-modal-subtitle-text">
+                {sessionDetail.remark || sessionDetail.nickName || (selectedSession ? sessionByUsername.get(selectedSession)?.displayName : undefined) || selectedSession}
+              </div>
+            </div>
+            <div className="common-groups-list">
+              {(sessionDetail.commonGroups || []).length === 0 ? (
+                <div className="group-friends-empty">暂无共同群聊</div>
+              ) : (
+                (sessionDetail.commonGroups || []).map((group, index) => {
+                  const counts = commonGroupMessageCounts[group.username]
+                  const isReady = commonGroupMessageCountsSessionId === selectedSession && commonGroupMessageCountsStatus === 'ready'
+                  const isLoading = commonGroupMessageCountsSessionId === selectedSession && commonGroupMessageCountsStatus === 'loading'
+                  const isError = commonGroupMessageCountsSessionId === selectedSession && commonGroupMessageCountsStatus === 'error'
+
+                  return (
+                    <div key={group.username} className="common-groups-item">
+                      <div className="group-friends-index">{index + 1}</div>
+                      <div className="group-friends-meta">
+                        <div className="group-friends-name">{group.displayName}</div>
+                        <div className="group-friends-username">{group.username}</div>
+                      </div>
+                      <div className={`common-groups-message-stats ${isLoading ? 'is-loading' : ''} ${isError ? 'is-error' : ''}`}>
+                        {isReady ? (
+                          <>
+                            <div><span className="label">我</span><span className="value">{(counts?.selfMessageCount || 0).toLocaleString()}条</span></div>
+                            <div><span className="label">TA</span><span className="value">{(counts?.peerMessageCount || 0).toLocaleString()}条</span></div>
+                          </>
+                        ) : isLoading ? (
+                          <div className="single-line">统计中...</div>
+                        ) : (
+                          <div className="single-line">--</div>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })
+              )}
+            </div>
+          </div>
+        </div>
       )}
 
       {/* 群内好友明细弹窗 */}

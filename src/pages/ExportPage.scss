@@ -1560,6 +1560,17 @@
     overflow: hidden;
   }
 
+  .common-groups-modal {
+    width: min(620px, calc(100vw - 32px));
+    max-height: min(76vh, 700px);
+    background: var(--card-bg);
+    border-radius: 16px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
   .image-decrypt-modal {
     width: min(520px, calc(100vw - 32px));
     max-height: min(78vh, 720px);
@@ -2260,7 +2271,27 @@
     gap: 4px;
   }
 
+  .common-groups-list {
+    overflow: auto;
+    padding: 8px 12px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
   .group-friends-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    border-radius: 10px;
+
+    &:hover {
+      background: var(--bg-secondary);
+    }
+  }
+
+  .common-groups-item {
     display: flex;
     align-items: center;
     gap: 10px;
@@ -2306,6 +2337,47 @@
     &.is-error {
       font-weight: 400;
       color: var(--text-tertiary);
+    }
+  }
+
+  .common-groups-message-stats {
+    flex-shrink: 0;
+    min-width: 120px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 2px;
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+
+    > div {
+      display: inline-flex;
+      align-items: baseline;
+      gap: 6px;
+      white-space: nowrap;
+    }
+
+    .label {
+      color: var(--text-tertiary);
+      font-size: 11px;
+    }
+
+    .value {
+      color: var(--text-secondary);
+      font-weight: 500;
+    }
+
+    .single-line {
+      color: var(--text-tertiary);
+      font-weight: 400;
+    }
+
+    &.is-loading,
+    &.is-error {
+      .value {
+        font-weight: 400;
+      }
     }
   }
 

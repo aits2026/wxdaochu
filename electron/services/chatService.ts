@@ -3944,6 +3944,8 @@ class ChatService extends EventEmitter {
       videoCount: number
       voiceCount: number
       emojiCount: number
+      commonGroupCount?: number
+      commonGroups?: Array<{ username: string; displayName: string }>
       groupInfo?: {
         ownerUsername?: string
         ownerDisplayName?: string
@@ -4081,10 +4083,16 @@ class ChatService extends EventEmitter {
         friendMembers?: Array<{ username: string; displayName: string }>
         selfMessageCount?: number
       } | undefined
+      let commonGroupCount: number | undefined
+      let commonGroups: Array<{ username: string; displayName: string }> | undefined
 
       const includeGroupInfo = options?.includeGroupInfo !== false
       if (includeGroupInfo && sessionId.includes('@chatroom')) {
         groupInfo = await this.getGroupSessionDetailExtras(sessionId, dbTablePairs)
+      }
+      if (!sessionId.includes('@chatroom')) {
+        commonGroups = this.getCommonGroupsWithFriend(sessionId)
+        commonGroupCount = commonGroups.length
       }
 
       return {
@@ -4103,6 +4111,8 @@ class ChatService extends EventEmitter {
           videoCount,
           voiceCount,
           emojiCount,
+          commonGroupCount,
+          commonGroups,
           groupInfo,
           messageTables
         }
@@ -4140,6 +4150,186 @@ class ChatService extends EventEmitter {
       console.error('ChatService: 获取群聊扩展详情失败:', e)
       return { success: false, error: String(e) }
     }
+  }
+
+  async getCommonGroupsWithFriendStats(friendUsername: string): Promise<{
+    success: boolean
+    data?: Array<{
+      username: string
+      displayName: string
+      selfMessageCount: number
+      peerMessageCount: number
+    }>
+    error?: string
+  }> {
+    try {
+      if (!this.dbDir) {
+        return { success: false, error: '数据库未连接' }
+      }
+      if (!friendUsername || friendUsername.includes('@chatroom')) {
+        return { success: true, data: [] }
+      }
+
+      const groups = this.getCommonGroupsWithFriend(friendUsername)
+      if (groups.length === 0) {
+        return { success: true, data: [] }
+      }
+
+      const myWxidRaw = this.configService.get('myWxid') || ''
+      const myWxidClean = myWxidRaw ? this.cleanAccountDirName(myWxidRaw) : ''
+      const myIds = new Set([myWxidRaw, myWxidClean].filter(Boolean))
+
+      const peerClean = this.cleanAccountDirName(friendUsername)
+      const peerIds = new Set([friendUsername, peerClean].filter(Boolean))
+
+      const data = groups.map(group => {
+        const counts = this.countChatroomMessageCountsForUsers(group.username, myIds, peerIds)
+        return {
+          username: group.username,
+          displayName: group.displayName,
+          selfMessageCount: counts.selfMessageCount,
+          peerMessageCount: counts.peerMessageCount
+        }
+      })
+
+      return { success: true, data }
+    } catch (e) {
+      console.error('ChatService: 获取共同群聊发言统计失败:', e)
+      return { success: false, error: String(e) }
+    }
+  }
+
+  private getCommonGroupsWithFriend(friendUsername: string): Array<{ username: string; displayName: string }> {
+    if (!this.contactDb || !friendUsername || friendUsername.includes('@chatroom')) return []
+
+    try {
+      const tableRows = this.contactDb.prepare(
+        "SELECT name FROM sqlite_master WHERE type='table'"
+      ).all() as { name: string }[]
+      const tableNames = new Set(tableRows.map(t => t.name))
+      if (!tableNames.has('chatroom_member')) return []
+
+      const name2IdTable = tableNames.has('name2id') ? 'name2id' : (tableNames.has('Name2Id') ? 'Name2Id' : null)
+      if (!name2IdTable) return []
+
+      const myWxidRaw = this.configService.get('myWxid') || ''
+      const myWxidClean = myWxidRaw ? this.cleanAccountDirName(myWxidRaw) : ''
+      const friendClean = this.cleanAccountDirName(friendUsername)
+
+      const resolveContactName2IdRowId = (candidates: string[]): number | null => {
+        for (const candidate of candidates) {
+          if (!candidate) continue
+          try {
+            const row = this.contactDb!.prepare(
+              `SELECT rowid FROM ${name2IdTable} WHERE username = ? LIMIT 1`
+            ).get(candidate) as any
+            if (row?.rowid != null) return Number(row.rowid)
+          } catch { }
+        }
+        return null
+      }
+
+      const myMemberId = resolveContactName2IdRowId([myWxidRaw, myWxidClean])
+      const peerMemberId = resolveContactName2IdRowId([friendUsername, friendClean])
+      if (myMemberId == null || peerMemberId == null) return []
+
+      const rows = this.contactDb.prepare(`
+        SELECT DISTINCT room.username as username
+          , c.remark as remark
+          , c.nick_name as nick_name
+          , c.alias as alias
+        FROM chatroom_member m1
+        JOIN chatroom_member m2 ON m1.room_id = m2.room_id
+        JOIN ${name2IdTable} room ON room.rowid = m1.room_id
+        LEFT JOIN contact c ON c.username = room.username
+        WHERE m1.member_id = ?
+          AND m2.member_id = ?
+          AND room.username LIKE '%@chatroom'
+      `).all(myMemberId, peerMemberId) as Array<{
+        username?: string
+        remark?: string | null
+        nick_name?: string | null
+        alias?: string | null
+      }>
+
+      const groups = rows
+        .map(row => {
+          const username = String(row.username || '')
+          if (!username) return null
+          const displayName = String(row.remark || row.nick_name || row.alias || username)
+          return { username, displayName }
+        })
+        .filter((item): item is { username: string; displayName: string } => !!item)
+        .sort((a, b) => a.displayName.localeCompare(b.displayName, 'zh-Hans-CN'))
+
+      return groups
+    } catch {
+      return []
+    }
+  }
+
+  private countChatroomMessageCountsForUsers(
+    chatroomId: string,
+    selfIds: Set<string>,
+    peerIds: Set<string>
+  ): { selfMessageCount: number; peerMessageCount: number } {
+    let selfMessageCount = 0
+    let peerMessageCount = 0
+
+    const dbTablePairs = this.findSessionTables(chatroomId)
+    for (const { db, tableName } of dbTablePairs) {
+      try {
+        const columns = db.prepare(`PRAGMA table_info('${tableName}')`).all() as any[]
+        const colNames = new Set(columns.map((c: any) => c.name))
+
+        let selfCountedByRealSender = false
+        if (colNames.has('real_sender_id')) {
+          const name2IdTableRow = db.prepare(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('Name2Id','name2id') LIMIT 1"
+          ).get() as any
+          const name2IdTable = name2IdTableRow?.name as string | undefined
+
+          if (name2IdTable) {
+            const resolveMessageDbName2IdRowId = (candidates: Set<string>): number | null => {
+              for (const candidate of candidates) {
+                if (!candidate) continue
+                try {
+                  const row = db.prepare(`SELECT rowid FROM ${name2IdTable} WHERE user_name = ? LIMIT 1`).get(candidate) as any
+                  if (row?.rowid != null) return Number(row.rowid)
+                } catch { }
+              }
+              return null
+            }
+
+            const selfRowId = resolveMessageDbName2IdRowId(selfIds)
+            if (selfRowId != null) {
+              const countRow = db.prepare(
+                `SELECT COUNT(*) as count FROM "${tableName}" WHERE real_sender_id = ?`
+              ).get(selfRowId) as any
+              selfMessageCount += Number(countRow?.count || 0)
+              selfCountedByRealSender = true
+            }
+
+            const peerRowId = resolveMessageDbName2IdRowId(peerIds)
+            if (peerRowId != null) {
+              const countRow = db.prepare(
+                `SELECT COUNT(*) as count FROM "${tableName}" WHERE real_sender_id = ?`
+              ).get(peerRowId) as any
+              peerMessageCount += Number(countRow?.count || 0)
+            }
+          }
+        }
+
+        if (!selfCountedByRealSender && colNames.has('is_send')) {
+          const countRow = db.prepare(
+            `SELECT COUNT(*) as count FROM "${tableName}" WHERE is_send = 1`
+          ).get() as any
+          selfMessageCount += Number(countRow?.count || 0)
+        }
+      } catch { }
+    }
+
+    return { selfMessageCount, peerMessageCount }
   }
 
   private async getGroupSessionDetailExtras(

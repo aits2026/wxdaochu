@@ -260,6 +260,8 @@ export interface ElectronAPI {
         videoCount: number
         voiceCount: number
         emojiCount: number
+        commonGroupCount?: number
+        commonGroups?: Array<{ username: string; displayName: string }>
         groupInfo?: {
           ownerUsername?: string
           ownerDisplayName?: string
@@ -282,6 +284,16 @@ export interface ElectronAPI {
         friendMembers?: Array<{ username: string; displayName: string }>
         selfMessageCount?: number
       }
+      error?: string
+    }>
+    getCommonGroupsWithFriendStats: (friendUsername: string) => Promise<{
+      success: boolean
+      data?: Array<{
+        username: string
+        displayName: string
+        selfMessageCount: number
+        peerMessageCount: number
+      }>
       error?: string
     }>
     getVoiceData: (sessionId: string, msgId: string, createTime?: number) => Promise<{
