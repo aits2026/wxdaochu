@@ -244,7 +244,7 @@ export interface ElectronAPI {
       counts?: { [username: string]: number }
       error?: string
     }>
-    getSessionDetail: (sessionId: string) => Promise<{
+    getSessionDetail: (sessionId: string, options?: { includeGroupInfo?: boolean }) => Promise<{
       success: boolean
       detail?: {
         wxid: string
@@ -269,6 +269,18 @@ export interface ElectronAPI {
           selfMessageCount?: number
         }
         messageTables: { dbName: string; tableName: string; count: number }[]
+      }
+      error?: string
+    }>
+    getSessionGroupInfo: (sessionId: string) => Promise<{
+      success: boolean
+      groupInfo?: {
+        ownerUsername?: string
+        ownerDisplayName?: string
+        memberCount?: number
+        friendMemberCount?: number
+        friendMembers?: Array<{ username: string; displayName: string }>
+        selfMessageCount?: number
       }
       error?: string
     }>

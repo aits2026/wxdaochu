@@ -178,6 +178,7 @@ function ExportPage() {
   } | null>(null)
   const [showGroupFriendsPopup, setShowGroupFriendsPopup] = useState(false)
   const [isLoadingDetail, setIsLoadingDetail] = useState(false)
+  const [isLoadingGroupInfo, setIsLoadingGroupInfo] = useState(false)
   const [exportRecords, setExportRecords] = useState<{ exportTime: number; format: string; messageCount: number }[]>([])
   const [showExportSettings, setShowExportSettings] = useState(false)
   const [showMoreMenu, setShowMoreMenu] = useState(false)
@@ -212,6 +213,7 @@ function ExportPage() {
   const deferredSearchKeyword = useDeferredValue(searchKeyword)
   const deferredSessionMessageCounts = useDeferredValue(sessionMessageCounts)
   const sessionCountRequestIdRef = useRef(0)
+  const sessionDetailRequestIdRef = useRef(0)
   const sessionTypeFilterRef = useRef<SessionTypeFilter>('private')
 
   useEffect(() => {
@@ -529,6 +531,13 @@ function ExportPage() {
     return map
   }, [sessions])
 
+  const renderFieldLoading = () => (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, opacity: 0.65, fontSize: 12 }}>
+      <Loader2 size={12} style={{ animation: 'exportSpin 1s linear infinite' }} />
+      <span>加载中...</span>
+    </span>
+  )
+
   // 通讯录搜索过滤
   useEffect(() => {
     let filtered = contacts
@@ -555,18 +564,29 @@ function ExportPage() {
   }, [contactSearchKeyword, contacts, contactOptions.contactTypes])
 
   const selectSession = async (username: string) => {
+    const requestId = ++sessionDetailRequestIdRef.current
     setSelectedSession(username)
     setShowExportSettings(false)
     setShowGroupFriendsPopup(false)
     setSessionDetail(null)
     setExportRecords([])
     setIsLoadingDetail(true)
+    setIsLoadingGroupInfo(false)
+
+    void (async () => {
+      try {
+        const records = await window.electronAPI.export.getExportRecords(username)
+        if (requestId !== sessionDetailRequestIdRef.current) return
+        setExportRecords(records)
+      } catch { }
+    })()
+
     try {
-      const [detailResult, records] = await Promise.all([
-        window.electronAPI.chat.getSessionDetail(username),
-        window.electronAPI.export.getExportRecords(username),
-      ])
+      const detailResult = await window.electronAPI.chat.getSessionDetail(username, { includeGroupInfo: false })
+      if (requestId !== sessionDetailRequestIdRef.current) return
+
       if (detailResult.success && detailResult.detail) {
+        const isGroupChat = username.includes('@chatroom')
         setSessionDetail({
           wxid: detailResult.detail.wxid,
           remark: detailResult.detail.remark,
@@ -579,12 +599,39 @@ function ExportPage() {
           videoCount: detailResult.detail.videoCount,
           voiceCount: detailResult.detail.voiceCount,
           emojiCount: detailResult.detail.emojiCount,
-          groupInfo: detailResult.detail.groupInfo,
+          groupInfo: isGroupChat ? {} : detailResult.detail.groupInfo,
         })
+
+        if (isGroupChat) {
+          setIsLoadingGroupInfo(true)
+          void (async () => {
+            try {
+              const groupResult = await window.electronAPI.chat.getSessionGroupInfo(username)
+              if (requestId !== sessionDetailRequestIdRef.current) return
+              if (groupResult.success) {
+                setSessionDetail(prev => {
+                  if (!prev || prev.wxid !== username) return prev
+                  return {
+                    ...prev,
+                    groupInfo: groupResult.groupInfo || {}
+                  }
+                })
+              }
+            } catch { }
+            finally {
+              if (requestId === sessionDetailRequestIdRef.current) {
+                setIsLoadingGroupInfo(false)
+              }
+            }
+          })()
+        }
       }
-      setExportRecords(records)
     } catch { }
-    setIsLoadingDetail(false)
+    finally {
+      if (requestId === sessionDetailRequestIdRef.current) {
+        setIsLoadingDetail(false)
+      }
+    }
   }
 
   const toggleContact = (username: string) => {
@@ -970,7 +1017,7 @@ function ExportPage() {
                           )}
                         </div>
                         <h3 style={{ margin: 0, textAlign: 'center' }}>{session?.displayName || selectedSession}</h3>
-                        {isLoadingDetail ? (
+                        {isLoadingDetail && !sessionDetail ? (
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8, opacity: 0.6 }}>
                             <Loader2 size={16} className="spin" />
                             <span>加载中...</span>
@@ -1008,20 +1055,26 @@ function ExportPage() {
                               <>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-color, #e0e0e0)' }}>
                                   <span style={{ opacity: 0.6 }}>群主</span>
-                                  <span title={sessionDetail.groupInfo.ownerUsername || ''}>
-                                    {sessionDetail.groupInfo.ownerDisplayName || sessionDetail.groupInfo.ownerUsername || '未知'}
-                                  </span>
+                                  {isLoadingGroupInfo && sessionDetail.groupInfo.ownerUsername === undefined && sessionDetail.groupInfo.ownerDisplayName === undefined ? (
+                                    renderFieldLoading()
+                                  ) : (
+                                    <span title={sessionDetail.groupInfo.ownerUsername || ''}>
+                                      {sessionDetail.groupInfo.ownerDisplayName || sessionDetail.groupInfo.ownerUsername || '未知'}
+                                    </span>
+                                  )}
                                 </div>
-                                {sessionDetail.groupInfo.memberCount !== undefined && (
-                                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-color, #e0e0e0)' }}>
-                                    <span style={{ opacity: 0.6 }}>群总人数</span>
-                                    <span>{sessionDetail.groupInfo.memberCount.toLocaleString()} 人</span>
-                                  </div>
-                                )}
-                                {sessionDetail.groupInfo.friendMemberCount !== undefined && (
-                                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-color, #e0e0e0)' }}>
-                                    <span style={{ opacity: 0.6 }}>群内好友数</span>
-                                    {(sessionDetail.groupInfo.friendMembers?.length || 0) > 0 ? (
+                                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-color, #e0e0e0)' }}>
+                                  <span style={{ opacity: 0.6 }}>群总人数</span>
+                                  {isLoadingGroupInfo && sessionDetail.groupInfo.memberCount === undefined
+                                    ? renderFieldLoading()
+                                    : <span>{sessionDetail.groupInfo.memberCount !== undefined ? `${sessionDetail.groupInfo.memberCount.toLocaleString()} 人` : '--'}</span>}
+                                </div>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-color, #e0e0e0)' }}>
+                                  <span style={{ opacity: 0.6 }}>群内好友数</span>
+                                  {isLoadingGroupInfo && sessionDetail.groupInfo.friendMemberCount === undefined ? (
+                                    renderFieldLoading()
+                                  ) : sessionDetail.groupInfo.friendMemberCount !== undefined ? (
+                                    (sessionDetail.groupInfo.friendMembers?.length || 0) > 0 ? (
                                       <button
                                         type="button"
                                         className="group-friend-count-btn"
@@ -1032,15 +1085,17 @@ function ExportPage() {
                                       </button>
                                     ) : (
                                       <span>{sessionDetail.groupInfo.friendMemberCount.toLocaleString()} 人</span>
-                                    )}
-                                  </div>
-                                )}
-                                {sessionDetail.groupInfo.selfMessageCount !== undefined && (
-                                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-color, #e0e0e0)' }}>
-                                    <span style={{ opacity: 0.6 }}>我发的消息</span>
-                                    <span>{sessionDetail.groupInfo.selfMessageCount.toLocaleString()} 条</span>
-                                  </div>
-                                )}
+                                    )
+                                  ) : (
+                                    <span>--</span>
+                                  )}
+                                </div>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-color, #e0e0e0)' }}>
+                                  <span style={{ opacity: 0.6 }}>我发的消息</span>
+                                  {isLoadingGroupInfo && sessionDetail.groupInfo.selfMessageCount === undefined
+                                    ? renderFieldLoading()
+                                    : <span>{sessionDetail.groupInfo.selfMessageCount !== undefined ? `${sessionDetail.groupInfo.selfMessageCount.toLocaleString()} 条` : '--'}</span>}
+                                </div>
                               </>
                             )}
                             {sessionDetail.firstMessageTime && (

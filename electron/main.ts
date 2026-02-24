@@ -1921,11 +1921,19 @@ function registerIpcHandlers() {
     return chatService.getSessionMessageCounts(usernames)
   })
 
-  ipcMain.handle('chat:getSessionDetail', async (_, sessionId: string) => {
-    const result = await chatService.getSessionDetail(sessionId)
+  ipcMain.handle('chat:getSessionDetail', async (_, sessionId: string, options?: { includeGroupInfo?: boolean }) => {
+    const result = await chatService.getSessionDetail(sessionId, options)
     if (!result.success) {
       // 获取会话详情失败可能是数据库未连接，使用WARN级别
       logService?.warn('Chat', '获取会话详情失败', { sessionId, error: result.error })
+    }
+    return result
+  })
+
+  ipcMain.handle('chat:getSessionGroupInfo', async (_, sessionId: string) => {
+    const result = await chatService.getSessionGroupInfo(sessionId)
+    if (!result.success) {
+      logService?.warn('Chat', '获取群聊扩展详情失败', { sessionId, error: result.error })
     }
     return result
   })

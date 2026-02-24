@@ -3925,7 +3925,10 @@ class ChatService extends EventEmitter {
   /**
    * 获取会话详情信息
    */
-  async getSessionDetail(sessionId: string): Promise<{
+  async getSessionDetail(
+    sessionId: string,
+    options?: { includeGroupInfo?: boolean }
+  ): Promise<{
     success: boolean
     detail?: {
       wxid: string
@@ -4079,7 +4082,8 @@ class ChatService extends EventEmitter {
         selfMessageCount?: number
       } | undefined
 
-      if (sessionId.includes('@chatroom')) {
+      const includeGroupInfo = options?.includeGroupInfo !== false
+      if (includeGroupInfo && sessionId.includes('@chatroom')) {
         groupInfo = await this.getGroupSessionDetailExtras(sessionId, dbTablePairs)
       }
 
@@ -4105,6 +4109,35 @@ class ChatService extends EventEmitter {
       }
     } catch (e) {
       console.error('ChatService: 获取会话详情失败:', e)
+      return { success: false, error: String(e) }
+    }
+  }
+
+  async getSessionGroupInfo(sessionId: string): Promise<{
+    success: boolean
+    groupInfo?: {
+      ownerUsername?: string
+      ownerDisplayName?: string
+      memberCount?: number
+      friendMemberCount?: number
+      friendMembers?: Array<{ username: string; displayName: string }>
+      selfMessageCount?: number
+    }
+    error?: string
+  }> {
+    try {
+      if (!this.dbDir) {
+        return { success: false, error: '数据库未连接' }
+      }
+      if (!sessionId.includes('@chatroom')) {
+        return { success: true, groupInfo: {} }
+      }
+
+      const dbTablePairs = this.findSessionTables(sessionId)
+      const groupInfo = await this.getGroupSessionDetailExtras(sessionId, dbTablePairs)
+      return { success: true, groupInfo }
+    } catch (e) {
+      console.error('ChatService: 获取群聊扩展详情失败:', e)
       return { success: false, error: String(e) }
     }
   }
