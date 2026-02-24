@@ -217,6 +217,9 @@ function ExportPage() {
     }
   } | null>(null)
   const [showGroupFriendsPopup, setShowGroupFriendsPopup] = useState(false)
+  const [groupFriendMessageCounts, setGroupFriendMessageCounts] = useState<Record<string, number>>({})
+  const [groupFriendMessageCountsStatus, setGroupFriendMessageCountsStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
+  const [groupFriendMessageCountsSessionId, setGroupFriendMessageCountsSessionId] = useState<string | null>(null)
   const [isLoadingDetail, setIsLoadingDetail] = useState(false)
   const [isLoadingGroupInfo, setIsLoadingGroupInfo] = useState(false)
   const [exportRecords, setExportRecords] = useState<{ exportTime: number; format: string; messageCount: number }[]>([])
@@ -255,6 +258,7 @@ function ExportPage() {
   const deferredSessionMessageCounts = useDeferredValue(sessionMessageCounts)
   const sessionCountRequestIdRef = useRef(0)
   const sessionDetailRequestIdRef = useRef(0)
+  const groupFriendMessageCountsRequestIdRef = useRef(0)
   const sessionImageOverviewRequestIdRef = useRef(0)
   const sessionImageAssetsRequestIdRef = useRef(0)
   const sessionTypeFilterRef = useRef<SessionTypeFilter>('private')
@@ -864,12 +868,62 @@ function ExportPage() {
     setFilteredContacts(filtered)
   }, [contactSearchKeyword, contacts, contactOptions.contactTypes])
 
+  useEffect(() => {
+    const friendMembers = sessionDetail?.groupInfo?.friendMembers || []
+    if (!showGroupFriendsPopup || !selectedSession || !selectedSession.includes('@chatroom')) return
+    if (friendMembers.length === 0) return
+
+    const alreadyHandledCurrentSession = groupFriendMessageCountsSessionId === selectedSession &&
+      (groupFriendMessageCountsStatus === 'loading' || groupFriendMessageCountsStatus === 'ready' || groupFriendMessageCountsStatus === 'error')
+    if (alreadyHandledCurrentSession) return
+
+    const requestId = ++groupFriendMessageCountsRequestIdRef.current
+    setGroupFriendMessageCounts({})
+    setGroupFriendMessageCountsSessionId(selectedSession)
+    setGroupFriendMessageCountsStatus('loading')
+
+    void (async () => {
+      try {
+        const result = await window.electronAPI.groupAnalytics.getGroupMessageRanking(selectedSession, 100000)
+        if (requestId !== groupFriendMessageCountsRequestIdRef.current) return
+
+        if (result.success && result.data) {
+          const counts: Record<string, number> = {}
+          for (const item of result.data) {
+            const username = item?.member?.username
+            if (!username) continue
+            counts[username] = Number(item.messageCount || 0)
+          }
+          setGroupFriendMessageCounts(counts)
+          setGroupFriendMessageCountsStatus('ready')
+        } else {
+          setGroupFriendMessageCounts({})
+          setGroupFriendMessageCountsStatus('error')
+        }
+      } catch {
+        if (requestId !== groupFriendMessageCountsRequestIdRef.current) return
+        setGroupFriendMessageCounts({})
+        setGroupFriendMessageCountsStatus('error')
+      }
+    })()
+  }, [
+    showGroupFriendsPopup,
+    selectedSession,
+    sessionDetail?.groupInfo?.friendMembers,
+    groupFriendMessageCountsSessionId,
+    groupFriendMessageCountsStatus
+  ])
+
   const selectSession = async (username: string) => {
     const requestId = ++sessionDetailRequestIdRef.current
+    groupFriendMessageCountsRequestIdRef.current++
     sessionImageAssetsRequestIdRef.current++
     setSelectedSession(username)
     setShowExportSettings(false)
     setShowGroupFriendsPopup(false)
+    setGroupFriendMessageCounts({})
+    setGroupFriendMessageCountsStatus('idle')
+    setGroupFriendMessageCountsSessionId(null)
     setShowSessionImageAssetsModal(false)
     setSessionImageAssets([])
     setSessionImageAssetsError(null)
@@ -1644,7 +1698,12 @@ function ExportPage() {
                                       <button
                                         type="button"
                                         className="group-friend-count-btn"
-                                        onClick={() => setShowGroupFriendsPopup(true)}
+                                        onClick={() => {
+                                          setGroupFriendMessageCounts({})
+                                          setGroupFriendMessageCountsStatus('idle')
+                                          setGroupFriendMessageCountsSessionId(null)
+                                          setShowGroupFriendsPopup(true)
+                                        }}
                                       >
                                         <span>{sessionDetail.groupInfo.friendMemberCount.toLocaleString()} 人</span>
                                         <Eye size={13} />
@@ -2249,6 +2308,13 @@ function ExportPage() {
                     <div className="group-friends-meta">
                       <div className="group-friends-name">{friend.displayName}</div>
                       <div className="group-friends-username">{friend.username}</div>
+                    </div>
+                    <div className={`group-friends-message-count ${groupFriendMessageCountsStatus === 'loading' ? 'is-loading' : ''} ${groupFriendMessageCountsStatus === 'error' ? 'is-error' : ''}`}>
+                      {groupFriendMessageCountsSessionId === selectedSession && groupFriendMessageCountsStatus === 'ready'
+                        ? `${(groupFriendMessageCounts[friend.username] || 0).toLocaleString()}条`
+                        : groupFriendMessageCountsSessionId === selectedSession && groupFriendMessageCountsStatus === 'loading'
+                          ? '统计中...'
+                          : '--'}
                     </div>
                   </div>
                 ))

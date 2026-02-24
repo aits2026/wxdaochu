@@ -2243,10 +2243,27 @@
   }
 
   .group-friends-meta {
+    flex: 1;
     min-width: 0;
     display: flex;
     flex-direction: column;
     gap: 2px;
+  }
+
+  .group-friends-message-count {
+    flex-shrink: 0;
+    min-width: 56px;
+    text-align: right;
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+
+    &.is-loading,
+    &.is-error {
+      font-weight: 400;
+      color: var(--text-tertiary);
+    }
   }
 
   .group-friends-name {
