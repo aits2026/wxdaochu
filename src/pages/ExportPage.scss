@@ -35,13 +35,13 @@
   .session-list-controls {
     margin: 10px 12px 0;
     padding: 10px 10px 6px;
-    border-radius: 12px;
-    border: 1px solid var(--border-color);
-    background: var(--card-bg);
+    border-radius: 0;
+    border: none;
+    background: transparent;
     display: flex;
     flex-direction: column;
     gap: 0;
-    box-shadow: 0 1px 0 rgba(15, 23, 42, 0.02);
+    box-shadow: none;
   }
 
   .session-table-layer {
@@ -49,9 +49,9 @@
     flex: 1;
     min-height: 0;
     margin: 8px 12px 14px;
-    border-radius: 12px;
-    background: var(--bg-secondary);
-    border: 1px solid rgba(127, 127, 127, 0.08);
+    border-radius: 0;
+    background: transparent;
+    border: none;
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -78,12 +78,12 @@
 
     &::before {
       left: 10px;
-      background: linear-gradient(to right, var(--bg-secondary), transparent);
+      background: linear-gradient(to right, var(--card-bg), transparent);
     }
 
     &::after {
       right: 10px;
-      background: linear-gradient(to left, var(--bg-secondary), transparent);
+      background: linear-gradient(to left, var(--card-bg), transparent);
     }
 
     &.can-scroll-left::before {
@@ -927,10 +927,25 @@
     min-height: 0;
     overflow-x: auto;
     overflow-y: hidden;
-    padding: 10px 10px 10px;
+    padding: 0 10px 10px;
     display: flex;
     flex-direction: column;
     gap: 0;
+    scrollbar-width: none;
+
+    &::-webkit-scrollbar {
+      width: 0;
+      height: 0;
+    }
+  }
+
+  .export-session-table-header-scroll {
+    flex-shrink: 0;
+    margin: 10px 0 0;
+    padding: 0 10px;
+    box-sizing: border-box;
+    overflow-x: auto;
+    overflow-y: hidden;
     scrollbar-width: none;
 
     &::-webkit-scrollbar {

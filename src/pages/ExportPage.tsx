@@ -579,9 +579,10 @@ function ExportPage() {
   const sessionVideoOverviewRequestIdRef = useRef<Record<string, number>>({})
   const sessionVideoAssetsRequestIdRef = useRef(0)
   const sessionTypeFilterRef = useRef<SessionTypeFilter>('private')
+  const sessionTableHeaderScrollRef = useRef<HTMLDivElement | null>(null)
   const sessionTableScrollRef = useRef<HTMLDivElement | null>(null)
   const sessionTableScrollbarRef = useRef<HTMLDivElement | null>(null)
-  const sessionTableScrollSyncSourceRef = useRef<'main' | 'bar' | null>(null)
+  const sessionTableScrollSyncSourceRef = useRef<'main' | 'header' | 'bar' | null>(null)
   const hasBootstrappedChatCacheRef = useRef(false)
   const bootstrappedChatCacheKeyRef = useRef<string | null>(null)
   const chatCacheDataLoadedAtRef = useRef(0)
@@ -1104,6 +1105,12 @@ function ExportPage() {
         ? prev
         : next
     ))
+
+    const header = sessionTableHeaderScrollRef.current
+    if (header && Math.abs(header.scrollLeft - next.scrollLeft) > 1) {
+      sessionTableScrollSyncSourceRef.current = 'main'
+      header.scrollLeft = next.scrollLeft
+    }
 
     const bar = sessionTableScrollbarRef.current
     if (bar && Math.abs(bar.scrollLeft - next.scrollLeft) > 1) {
@@ -3105,11 +3112,56 @@ function ExportPage() {
               ) : (
                 <>
                   <div
+                    className="export-session-table-header-scroll"
+                    ref={sessionTableHeaderScrollRef}
+                    onScroll={(e) => {
+                      if (sessionTableScrollSyncSourceRef.current === 'main' || sessionTableScrollSyncSourceRef.current === 'bar') {
+                        sessionTableScrollSyncSourceRef.current = null
+                        return
+                      }
+
+                      const targetScrollLeft = e.currentTarget.scrollLeft
+
+                      const main = sessionTableScrollRef.current
+                      if (main && Math.abs(main.scrollLeft - targetScrollLeft) > 1) {
+                        sessionTableScrollSyncSourceRef.current = 'header'
+                        main.scrollLeft = targetScrollLeft
+                      }
+
+                      const bar = sessionTableScrollbarRef.current
+                      if (bar && Math.abs(bar.scrollLeft - targetScrollLeft) > 1) {
+                        sessionTableScrollSyncSourceRef.current = 'header'
+                        bar.scrollLeft = targetScrollLeft
+                      }
+                    }}
+                  >
+                    <div className={`export-session-table-header ${sessionListGridClass}`}>
+                      {sessionListHeaderColumns.map(label => (
+                        <div
+                          key={label}
+                          className={`export-session-table-header-cell ${SESSION_TABLE_HEADER_MEDIA_ICONS[label] ? 'is-media-header' : ''}`}
+                          title={label}
+                        >
+                          {SESSION_TABLE_HEADER_MEDIA_ICONS[label] ? (
+                            <>
+                              <span className="header-media-icon">{SESSION_TABLE_HEADER_MEDIA_ICONS[label]}</span>
+                              <span>{label}</span>
+                            </>
+                          ) : (
+                            <span>{label}</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div
                     className="export-session-list"
                     ref={sessionTableScrollRef}
                     onScroll={(e) => {
-                      if (sessionTableScrollSyncSourceRef.current === 'bar') {
+                      if (sessionTableScrollSyncSourceRef.current === 'header' || sessionTableScrollSyncSourceRef.current === 'bar') {
                         sessionTableScrollSyncSourceRef.current = null
+                        updateSessionTableHorizontalScrollState()
+                        return
                       }
 
                       const current = e.currentTarget
@@ -3126,6 +3178,12 @@ function ExportPage() {
                         ) ? prev : next
                       })
 
+                      const header = sessionTableHeaderScrollRef.current
+                      if (header && Math.abs(header.scrollLeft - current.scrollLeft) > 1) {
+                        sessionTableScrollSyncSourceRef.current = 'main'
+                        header.scrollLeft = current.scrollLeft
+                      }
+
                       const bar = sessionTableScrollbarRef.current
                       if (bar && Math.abs(bar.scrollLeft - current.scrollLeft) > 1) {
                         sessionTableScrollSyncSourceRef.current = 'main'
@@ -3133,24 +3191,6 @@ function ExportPage() {
                       }
                     }}
                   >
-                  <div className={`export-session-table-header ${sessionListGridClass}`}>
-                    {sessionListHeaderColumns.map(label => (
-                      <div
-                        key={label}
-                        className={`export-session-table-header-cell ${SESSION_TABLE_HEADER_MEDIA_ICONS[label] ? 'is-media-header' : ''}`}
-                        title={label}
-                      >
-                        {SESSION_TABLE_HEADER_MEDIA_ICONS[label] ? (
-                          <>
-                            <span className="header-media-icon">{SESSION_TABLE_HEADER_MEDIA_ICONS[label]}</span>
-                            <span>{label}</span>
-                          </>
-                        ) : (
-                          <span>{label}</span>
-                        )}
-                      </div>
-                    ))}
-                  </div>
                   <div className="export-session-list-body">
                   {/* @ts-ignore - react-window v2 类型定义与当前 rowProps 推断不一致 */}
                   <List
@@ -3187,6 +3227,11 @@ function ExportPage() {
                         if (Math.abs(main.scrollLeft - e.currentTarget.scrollLeft) <= 1) return
                         sessionTableScrollSyncSourceRef.current = 'bar'
                         main.scrollLeft = e.currentTarget.scrollLeft
+
+                        const header = sessionTableHeaderScrollRef.current
+                        if (header && Math.abs(header.scrollLeft - e.currentTarget.scrollLeft) > 1) {
+                          header.scrollLeft = e.currentTarget.scrollLeft
+                        }
                       }}
                       aria-hidden="true"
                     >
