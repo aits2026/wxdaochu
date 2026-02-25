@@ -533,6 +533,12 @@ export interface ElectronAPI {
       success: boolean
       successCount?: number
       failCount?: number
+      sessionOutputs?: Array<{
+        sessionId: string
+        outputPath: string
+        openTargetPath: string
+        openTargetType: 'file' | 'directory'
+      }>
       error?: string
     }>
     exportSession: (sessionId: string, outputPath: string, options: ExportOptions) => Promise<{
@@ -561,9 +567,16 @@ export interface ElectronAPI {
       format: string
       messageCount: number
       outputDir?: string
+      outputTargetType?: 'file' | 'directory'
     }[]>
     getLatestExportTimes: (sessionUsernames: string[]) => Promise<Record<string, number>>
-    saveExportRecord: (sessionUsername: string, format: string, messageCount: number, outputDir?: string) => Promise<void>
+    saveExportRecord: (
+      sessionUsername: string,
+      format: string,
+      messageCount: number,
+      outputDir?: string,
+      outputTargetType?: 'file' | 'directory'
+    ) => Promise<void>
   }
   activation: {
     getDeviceId: () => Promise<string>

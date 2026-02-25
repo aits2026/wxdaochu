@@ -55,6 +55,12 @@ interface ExportResult {
   success: boolean
   successCount?: number
   failCount?: number
+  sessionOutputs?: Array<{
+    sessionId: string
+    outputPath: string
+    openTargetPath: string
+    openTargetType: 'file' | 'directory'
+  }>
   error?: string
 }
 
@@ -180,6 +186,14 @@ interface QueuedChatExportJob {
   outputDir: string
   options: ExportOptions
   queuedAt: number
+}
+
+interface SessionExportRecord {
+  exportTime: number
+  format: string
+  messageCount: number
+  outputDir?: string
+  outputTargetType?: 'file' | 'directory'
 }
 
 interface SessionCardGroupInfo {
@@ -632,7 +646,7 @@ function ExportPage() {
   const [commonGroupMessageCountsSessionId, setCommonGroupMessageCountsSessionId] = useState<string | null>(null)
   const [isLoadingDetail, setIsLoadingDetail] = useState(false)
   const [isLoadingGroupInfo, setIsLoadingGroupInfo] = useState(false)
-  const [exportRecords, setExportRecords] = useState<{ exportTime: number; format: string; messageCount: number; outputDir?: string }[]>([])
+  const [exportRecords, setExportRecords] = useState<SessionExportRecord[]>([])
   const [sessionDetailDiagnostics, setSessionDetailDiagnostics] = useState<SessionDetailLoadDiagnostics | null>(null)
   const [showSessionDetailDiagnostics, setShowSessionDetailDiagnostics] = useState(false)
   const [showSessionDetailDiagPayloads, setShowSessionDetailDiagPayloads] = useState(false)
@@ -2738,16 +2752,23 @@ function ExportPage() {
     }
   }
 
-  const openExportRecordFolder = useCallback(async (outputDir?: string) => {
-    if (!outputDir) return
+  const openExportRecordFolder = useCallback(async (
+    outputPath?: string,
+    outputTargetType?: 'file' | 'directory'
+  ) => {
+    if (!outputPath) return
     try {
-      const result = await window.electronAPI.shell.openPath(outputDir)
-      if (result) {
-        alert('导出目录不存在或无法打开')
+      if (outputTargetType === 'directory') {
+        const result = await window.electronAPI.shell.openPath(outputPath)
+        if (result) {
+          alert('导出目录不存在或无法打开')
+        }
+        return
       }
+      await window.electronAPI.shell.showItemInFolder(outputPath)
     } catch (e) {
-      console.error('打开导出目录失败:', e)
-      alert('打开导出目录失败')
+      console.error('打开导出位置失败:', e)
+      alert('打开导出位置失败')
     }
   }, [])
 
@@ -2936,6 +2957,10 @@ function ExportPage() {
         )
         setExportResult(result)
         if (result.success) {
+          const sessionOutput = result.sessionOutputs?.find(item => item.sessionId === job.sessionId) || result.sessionOutputs?.[0]
+          const exportOpenTargetPath = sessionOutput?.openTargetPath || job.outputDir
+          const exportOpenTargetType = sessionOutput?.openTargetType || 'directory'
+
           taskCenterPatchTask(job.taskId, {
             status: 'success',
             progressCurrent: 1,
@@ -2944,11 +2969,18 @@ function ExportPage() {
             failCount: result.failCount ?? 0,
             phase: '导出完成',
             detail: '',
-            outputDir: job.outputDir,
+            outputDir: exportOpenTargetPath,
+            outputTargetType: exportOpenTargetType,
             format: formatLabel
           })
 
-          await window.electronAPI.export.saveExportRecord(job.sessionId, job.options.format, job.messageCount, job.outputDir)
+          await window.electronAPI.export.saveExportRecord(
+            job.sessionId,
+            job.options.format,
+            job.messageCount,
+            exportOpenTargetPath,
+            exportOpenTargetType
+          )
           const records = await window.electronAPI.export.getExportRecords(job.sessionId)
           if (selectedSession === job.sessionId) {
             setExportRecords(records)
@@ -4312,10 +4344,10 @@ function ExportPage() {
                                           onClick={(e) => {
                                             e.stopPropagation()
                                             if (!hasOutputDir) return
-                                            void openExportRecordFolder(rec.outputDir)
+                                            void openExportRecordFolder(rec.outputDir, rec.outputTargetType)
                                           }}
                                           disabled={!hasOutputDir}
-                                          title={hasOutputDir ? `打开导出文件夹${rec.outputDir ? `: ${rec.outputDir}` : ''}` : '旧记录未保存导出路径'}
+                                          title={hasOutputDir ? `打开导出位置${rec.outputDir ? `: ${rec.outputDir}` : ''}` : '旧记录未保存导出路径'}
                                           style={{
                                             height: 22,
                                             padding: '0 8px',
@@ -4333,7 +4365,7 @@ function ExportPage() {
                                           }}
                                         >
                                           <FolderOpen size={11} />
-                                          <span>{hasOutputDir ? '打开文件夹' : '无路径'}</span>
+                                          <span>{hasOutputDir ? '打开导出位置' : '无路径'}</span>
                                         </button>
                                       </div>
                                     </div>

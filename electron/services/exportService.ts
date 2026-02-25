@@ -124,6 +124,13 @@ export interface ExportProgress {
   stepUnit?: string
 }
 
+export interface ExportSessionOutputTarget {
+  sessionId: string
+  outputPath: string
+  openTargetPath: string
+  openTargetType: 'file' | 'directory'
+}
+
 interface ExportMediaProgress {
   detail: string
   current?: number
@@ -2338,9 +2345,16 @@ class ExportService {
     outputDir: string,
     options: ExportOptions,
     onProgress?: (progress: ExportProgress) => void
-  ): Promise<{ success: boolean; successCount: number; failCount: number; error?: string }> {
+  ): Promise<{
+    success: boolean
+    successCount: number
+    failCount: number
+    sessionOutputs?: ExportSessionOutputTarget[]
+    error?: string
+  }> {
     let successCount = 0
     let failCount = 0
+    const sessionOutputs: ExportSessionOutputTarget[] = []
 
     try {
       if (!this.dbDir) {
@@ -2438,6 +2452,12 @@ class ExportService {
 
         if (result.success) {
           successCount++
+          sessionOutputs.push({
+            sessionId,
+            outputPath,
+            openTargetPath: hasMedia ? sessionOutputDir : outputPath,
+            openTargetType: hasMedia ? 'directory' : 'file'
+          })
         } else {
           failCount++
           console.error(`导出 ${sessionId} 失败:`, result.error)
@@ -2460,9 +2480,9 @@ class ExportService {
         stepUnit: '%'
       })
 
-      return { success: true, successCount, failCount }
+      return { success: true, successCount, failCount, sessionOutputs }
     } catch (e) {
-      return { success: false, successCount, failCount, error: String(e) }
+      return { success: false, successCount, failCount, sessionOutputs, error: String(e) }
     }
   }
 

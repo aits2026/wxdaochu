@@ -20,6 +20,7 @@ export interface GlobalTaskRecord {
   currentName?: string
   format?: string
   outputDir?: string
+  outputTargetType?: 'file' | 'directory'
   error?: string
   createdAt: number
   updatedAt: number

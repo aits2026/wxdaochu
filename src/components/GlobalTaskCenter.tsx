@@ -18,6 +18,19 @@ function TaskCard({
   onRemove: (taskId: string) => void
   highlighted?: boolean
 }) {
+  const openExportTarget = useCallback(async () => {
+    if (!task.outputDir) return
+    try {
+      if (task.outputTargetType === 'directory') {
+        await window.electronAPI.shell.openPath(task.outputDir)
+        return
+      }
+      await window.electronAPI.shell.showItemInFolder(task.outputDir)
+    } catch (e) {
+      console.error('打开导出位置失败:', e)
+    }
+  }, [task.outputDir, task.outputTargetType])
+
   const isRunning = task.status === 'running'
   const isFinished = task.status === 'success' || task.status === 'error'
   const progressPercent = task.progressTotal > 0
@@ -116,10 +129,10 @@ function TaskCard({
           {task.status === 'success' && task.outputDir && (
             <button
               type="button"
-              onClick={() => void window.electronAPI.shell.openPath(task.outputDir!)}
+              onClick={() => void openExportTarget()}
             >
               <ExternalLink size={12} />
-              <span>打开目录</span>
+              <span>打开导出位置</span>
             </button>
           )}
           <button type="button" onClick={() => onRemove(task.id)}>

@@ -2126,9 +2126,19 @@ function registerIpcHandlers() {
     return exportRecordService.getLatestRecordTimes(Array.isArray(sessionUsernames) ? sessionUsernames : [])
   })
 
-  ipcMain.handle('export:saveExportRecord', (_, sessionUsername: string, format: string, messageCount: number, outputDir?: string) => {
-    exportRecordService.saveRecord(sessionUsername, format, messageCount, outputDir)
-  })
+  ipcMain.handle(
+    'export:saveExportRecord',
+    (
+      _,
+      sessionUsername: string,
+      format: string,
+      messageCount: number,
+      outputDir?: string,
+      outputTargetType?: 'file' | 'directory'
+    ) => {
+      exportRecordService.saveRecord(sessionUsername, format, messageCount, outputDir, outputTargetType)
+    }
+  )
 
   // 导出相关
   ipcMain.handle('export:exportSessions', async (event, sessionIds: string[], outputDir: string, options: ExportOptions) => {

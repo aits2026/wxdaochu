@@ -6,7 +6,8 @@ export interface ExportRecord {
   exportTime: number   // Unix ms
   format: string
   messageCount: number // 导出时的消息总数
-  outputDir?: string   // 导出时选择的目录（用于快速打开）
+  outputDir?: string   // 导出位置（兼容旧数据；新数据可能为文件或目录路径）
+  outputTargetType?: 'file' | 'directory'
 }
 
 type RecordStore = { [sessionUsername: string]: ExportRecord[] }
@@ -54,7 +55,13 @@ export class ExportRecordService {
     return result
   }
 
-  saveRecord(sessionUsername: string, format: string, messageCount: number, outputDir?: string) {
+  saveRecord(
+    sessionUsername: string,
+    format: string,
+    messageCount: number,
+    outputDir?: string,
+    outputTargetType?: 'file' | 'directory'
+  ) {
     if (!this.store[sessionUsername]) {
       this.store[sessionUsername] = []
     }
@@ -63,6 +70,7 @@ export class ExportRecordService {
       format,
       messageCount,
       outputDir,
+      outputTargetType
     })
     this.save()
   }
