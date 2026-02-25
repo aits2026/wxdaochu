@@ -158,10 +158,13 @@ interface SessionDetailLoadDiagnostics {
 interface ExportSessionRowData {
   sessions: ChatSession[]
   selectedSession: string | null
+  sessionTypeFilter: SessionTypeFilter
   sessionMessageCounts: SessionMessageCountMap
   sessionCardStatsMap: Record<string, SessionCardStats>
   onSelect: (username: string) => void
   onEnsureCardStats: (session: ChatSession) => void
+  onOpenChatWindow: (session: ChatSession) => void
+  onOpenCommonGroups: (session: ChatSession) => void
 }
 
 interface SessionCardGroupInfo {
@@ -173,6 +176,9 @@ interface SessionCardGroupInfo {
 interface SessionCardStats {
   status: 'idle' | 'loading' | 'ready' | 'error'
   error?: string
+  remark?: string
+  nickName?: string
+  alias?: string
   messageCount?: number
   firstMessageTime?: number
   latestMessageTime?: number
@@ -194,6 +200,22 @@ const getAvatarLetter = (name: string) => {
 const formatSessionCardDate = (timestamp?: number) => (
   timestamp ? new Date(timestamp * 1000).toLocaleDateString('zh-CN') : '--'
 )
+
+const getSessionTableLayoutClass = (filter: SessionTypeFilter) => {
+  if (filter === 'private') return 'session-grid-private'
+  if (filter === 'group') return 'session-grid-group'
+  return 'session-grid-official'
+}
+
+const getSessionTableHeaderColumns = (filter: SessionTypeFilter) => {
+  if (filter === 'private') {
+    return ['会话信息', '总消息', '共同群聊', '最早时间', '最新时间', '图片', '视频', '表情包', '语音']
+  }
+  if (filter === 'group') {
+    return ['会话信息', '总消息', '群人数', '群内好友数', '我发消息', '最早时间', '最新时间', '图片', '视频', '表情包', '语音']
+  }
+  return ['会话信息', '总消息', '最早时间', '最新时间', '图片', '视频', '表情包', '语音']
+}
 
 const SESSION_DETAIL_DIAG_STEP_LABELS: Record<SessionDetailDiagStepKey, string> = {
   init: '初始化会话状态',
@@ -245,20 +267,39 @@ const matchesSessionTypeFilter = (session: ChatSession, filter: SessionTypeFilte
 }
 
 const ExportSessionRow = (props: RowComponentProps<ExportSessionRowData>) => {
-  const { index, style, sessions, selectedSession, sessionMessageCounts, sessionCardStatsMap, onSelect, onEnsureCardStats } = props
+  const {
+    index,
+    style,
+    sessions,
+    selectedSession,
+    sessionTypeFilter,
+    sessionMessageCounts,
+    sessionCardStatsMap,
+    onSelect,
+    onEnsureCardStats,
+    onOpenChatWindow,
+    onOpenCommonGroups
+  } = props
   const session = sessions[index]
   const cardStats = sessionCardStatsMap[session.username]
   const messageCount = cardStats?.messageCount ?? sessionMessageCounts[session.username]
   const isGroup = session.username.includes('@chatroom')
-  const isOfficial = session.accountType === 'official'
   const isPrivate = session.accountType === 'friend'
   const statsLoading = cardStats?.status === 'loading' || (isGroup && cardStats?.groupInfoLoading)
   const mediaStats = [
     { label: '图片', icon: <Image size={12} />, count: cardStats?.imageCount },
-    { label: '表情', icon: <Smile size={12} />, count: cardStats?.emojiCount },
     { label: '视频', icon: <Video size={12} />, count: cardStats?.videoCount },
+    { label: '表情包', icon: <Smile size={12} />, count: cardStats?.emojiCount },
     { label: '语音', icon: <Mic size={12} />, count: cardStats?.voiceCount }
   ] as const
+  const gridClass = getSessionTableLayoutClass(sessionTypeFilter)
+  const primaryName = (cardStats?.remark || cardStats?.nickName || session.displayName || session.username || '').trim()
+  const secondaryParts = [cardStats?.nickName, cardStats?.remark]
+    .map(v => v?.trim())
+    .filter((v): v is string => Boolean(v))
+    .filter((v, i, arr) => v !== primaryName && arr.indexOf(v) === i)
+  const openChatLabel = isGroup ? '打开群聊' : isPrivate ? '打开私聊' : '打开公众号'
+  const infoIdLine = cardStats?.alias ? `${session.username} · ${cardStats.alias}` : session.username
 
   useEffect(() => {
     onEnsureCardStats(session)
@@ -270,119 +311,102 @@ const ExportSessionRow = (props: RowComponentProps<ExportSessionRowData>) => {
         className={`export-session-item ${selectedSession === session.username ? 'selected' : ''}`}
         onClick={() => onSelect(session.username)}
       >
-        <div className="export-session-card-header">
-          <div className="export-avatar">
-            {session.avatarUrl ? (
-              <img src={session.avatarUrl} alt="" loading="lazy" />
-            ) : (
-              <span className={isGroup ? 'group-placeholder' : ''}>
-                {isGroup ? '群' : getAvatarLetter(session.displayName || session.username)}
-              </span>
+        <div className={`export-session-table-row ${gridClass}`}>
+          <div className="session-table-cell session-cell-info">
+            <div className="export-avatar">
+              {session.avatarUrl ? (
+                <img src={session.avatarUrl} alt="" loading="lazy" />
+              ) : (
+                <span className={isGroup ? 'group-placeholder' : ''}>
+                  {isGroup ? '群' : getAvatarLetter(session.displayName || session.username)}
+                </span>
+              )}
+            </div>
+            <div className="session-cell-info-main">
+              <div className="session-cell-title-row">
+                <div className="export-session-name">{primaryName || session.username}</div>
+                <span className={`export-session-type-badge ${isGroup ? 'group' : isPrivate ? 'private' : 'official'}`}>
+                  {isGroup ? '群聊' : isPrivate ? '私聊' : '公众号'}
+                </span>
+              </div>
+              <div className="session-cell-subtitle">
+                {secondaryParts.length > 0 ? secondaryParts.join(' · ') : (session.summary || '暂无消息')}
+              </div>
+              <div className="session-cell-weak" title={infoIdLine}>{infoIdLine}</div>
+            </div>
+            {(statsLoading || cardStats?.status === 'error') && (
+              <div className={`session-card-inline-status ${cardStats?.status === 'error' && !statsLoading ? 'error' : ''}`}>
+                {statsLoading ? <Loader2 size={12} className="spin" /> : null}
+                <span>{statsLoading ? '统计中' : '统计失败'}</span>
+              </div>
             )}
           </div>
-          <div className="export-session-info">
-            <div className="export-session-name-row">
-              <div className="export-session-name">{session.displayName || session.username}</div>
-              <span className={`export-session-type-badge ${isGroup ? 'group' : isPrivate ? 'private' : 'official'}`}>
-                {isGroup ? '群聊' : isPrivate ? '私聊' : '公众号'}
-              </span>
-            </div>
-            <div className="export-session-summary">{session.summary || '暂无消息'}</div>
-          </div>
-          <div className="export-session-count">
-            <div className="export-session-count-label">总消息</div>
+
+          <div className="session-table-cell session-cell-kpi">
             <div className="export-session-count-value">
               {messageCount !== undefined ? messageCount.toLocaleString() : '--'}
             </div>
+            <button
+              type="button"
+              className="session-table-inline-btn"
+              onClick={(e) => {
+                e.stopPropagation()
+                onOpenChatWindow(session)
+              }}
+            >
+              {openChatLabel}
+            </button>
           </div>
-        </div>
 
-        <div className="export-session-card-metrics">
           {isPrivate && (
             <>
-              <div className="session-metric-pill">
-                <span className="metric-label">共同群聊</span>
-                <span className="metric-value">
-                  {cardStats?.commonGroupCount !== undefined ? `${cardStats.commonGroupCount.toLocaleString()} 个` : '--'}
-                </span>
+              <div className="session-table-cell session-cell-metric">
+                <button
+                  type="button"
+                  className="session-table-inline-btn metric-link-btn"
+                  onClick={async (e) => {
+                    e.stopPropagation()
+                    onOpenCommonGroups(session)
+                  }}
+                >
+                  <span>{cardStats?.commonGroupCount !== undefined ? `${cardStats.commonGroupCount.toLocaleString()} 个` : '--'}</span>
+                  <Eye size={12} />
+                </button>
               </div>
-              <div className="session-metric-pill">
-                <span className="metric-label">最早消息</span>
-                <span className="metric-value">{formatSessionCardDate(cardStats?.firstMessageTime)}</span>
-              </div>
-              <div className="session-metric-pill">
-                <span className="metric-label">最新消息</span>
-                <span className="metric-value">{formatSessionCardDate(cardStats?.latestMessageTime)}</span>
-              </div>
+              <div className="session-table-cell session-cell-metric">{formatSessionCardDate(cardStats?.firstMessageTime)}</div>
+              <div className="session-table-cell session-cell-metric">{formatSessionCardDate(cardStats?.latestMessageTime)}</div>
             </>
           )}
 
           {isGroup && (
             <>
-              <div className="session-metric-pill">
-                <span className="metric-label">群人数</span>
-                <span className="metric-value">
-                  {cardStats?.groupInfo?.memberCount !== undefined ? `${cardStats.groupInfo.memberCount.toLocaleString()} 人` : '--'}
-                </span>
+              <div className="session-table-cell session-cell-metric">
+                {cardStats?.groupInfo?.memberCount !== undefined ? cardStats.groupInfo.memberCount.toLocaleString() : '--'}
               </div>
-              <div className="session-metric-pill">
-                <span className="metric-label">群内好友</span>
-                <span className="metric-value">
-                  {cardStats?.groupInfo?.friendMemberCount !== undefined ? `${cardStats.groupInfo.friendMemberCount.toLocaleString()} 人` : '--'}
-                </span>
+              <div className="session-table-cell session-cell-metric">
+                {cardStats?.groupInfo?.friendMemberCount !== undefined ? cardStats.groupInfo.friendMemberCount.toLocaleString() : '--'}
               </div>
-              <div className="session-metric-pill">
-                <span className="metric-label">我发消息</span>
-                <span className="metric-value">
-                  {cardStats?.groupInfo?.selfMessageCount !== undefined ? `${cardStats.groupInfo.selfMessageCount.toLocaleString()} 条` : '--'}
-                </span>
+              <div className="session-table-cell session-cell-metric">
+                {cardStats?.groupInfo?.selfMessageCount !== undefined ? cardStats.groupInfo.selfMessageCount.toLocaleString() : '--'}
               </div>
-              <div className="session-metric-pill">
-                <span className="metric-label">最早消息</span>
-                <span className="metric-value">{formatSessionCardDate(cardStats?.firstMessageTime)}</span>
-              </div>
-              <div className="session-metric-pill">
-                <span className="metric-label">最新消息</span>
-                <span className="metric-value">{formatSessionCardDate(cardStats?.latestMessageTime)}</span>
-              </div>
+              <div className="session-table-cell session-cell-metric">{formatSessionCardDate(cardStats?.firstMessageTime)}</div>
+              <div className="session-table-cell session-cell-metric">{formatSessionCardDate(cardStats?.latestMessageTime)}</div>
             </>
           )}
 
           {isOfficial && (
             <>
-              <div className="session-metric-pill">
-                <span className="metric-label">最早消息</span>
-                <span className="metric-value">{formatSessionCardDate(cardStats?.firstMessageTime)}</span>
-              </div>
-              <div className="session-metric-pill">
-                <span className="metric-label">最新消息</span>
-                <span className="metric-value">{formatSessionCardDate((cardStats?.latestMessageTime ?? session.lastTimestamp) || undefined)}</span>
-              </div>
+              <div className="session-table-cell session-cell-metric">{formatSessionCardDate(cardStats?.firstMessageTime)}</div>
+              <div className="session-table-cell session-cell-metric">{formatSessionCardDate((cardStats?.latestMessageTime ?? session.lastTimestamp) || undefined)}</div>
             </>
           )}
-        </div>
 
-        <div className="export-session-card-footer">
-          <div className="session-media-pills">
-            {mediaStats.map(item => (
-              <div key={item.label} className="session-media-pill">
-                {item.icon}
-                <span>{item.label}</span>
-                <strong>{item.count !== undefined ? item.count.toLocaleString() : '--'}</strong>
-              </div>
-            ))}
-          </div>
-          {statsLoading && (
-            <div className="session-card-inline-status">
-              <Loader2 size={12} className="spin" />
-              <span>统计中</span>
+          {mediaStats.map(item => (
+            <div key={item.label} className="session-table-cell session-cell-metric session-cell-media" title={item.label}>
+              <span className="media-icon">{item.icon}</span>
+              <span className="media-value">{item.count !== undefined ? item.count.toLocaleString() : '--'}</span>
             </div>
-          )}
-          {cardStats?.status === 'error' && !statsLoading && (
-            <div className="session-card-inline-status error">
-              <span>统计失败</span>
-            </div>
-          )}
+          ))}
         </div>
       </div>
     </div>
@@ -1026,6 +1050,19 @@ function ExportPage() {
     return filtered
   }, [sessions, sessionTypeFilter, deferredSearchKeyword, deferredSessionMessageCounts, loadedSessionCountUsernames])
 
+  const sessionListHeaderColumns = useMemo(
+    () => getSessionTableHeaderColumns(sessionTypeFilter),
+    [sessionTypeFilter]
+  )
+  const sessionListGridClass = useMemo(
+    () => getSessionTableLayoutClass(sessionTypeFilter),
+    [sessionTypeFilter]
+  )
+  const sessionListRowHeight = useMemo(
+    () => (sessionTypeFilter === 'group' ? 126 : 122),
+    [sessionTypeFilter]
+  )
+
   useEffect(() => {
     if (!selectedSession) return
     if (sessions.some(session => session.username === selectedSession)) return
@@ -1089,6 +1126,9 @@ function ExportPage() {
 
     patchSessionCardStats(selectedSession, {
       status: 'ready',
+      remark: sessionDetail.remark,
+      nickName: sessionDetail.nickName,
+      alias: sessionDetail.alias,
       messageCount: sessionDetail.messageCount,
       firstMessageTime: sessionDetail.firstMessageTime,
       latestMessageTime: sessionDetail.latestMessageTime,
@@ -1132,6 +1172,9 @@ function ExportPage() {
 
       patchSessionCardStats(username, {
         status: 'ready',
+        remark: detailResult.detail.remark,
+        nickName: detailResult.detail.nickName,
+        alias: detailResult.detail.alias,
         messageCount: detailResult.detail.messageCount,
         firstMessageTime: detailResult.detail.firstMessageTime,
         latestMessageTime: detailResult.detail.latestMessageTime,
@@ -2337,6 +2380,22 @@ function ExportPage() {
     })
   }, [selectedSession, selectSession])
 
+  const handleOpenChatWindowFromList = useCallback((session: ChatSession) => {
+    void window.electronAPI.window.openChatWindow(session.username)
+  }, [])
+
+  const handleOpenCommonGroupsFromList = useCallback(async (session: ChatSession) => {
+    if (session.accountType !== 'friend') return
+    const isCurrentReady = selectedSession === session.username && sessionDetail?.wxid === session.username
+    if (!isCurrentReady) {
+      await selectSession(session.username)
+    }
+    setCommonGroupMessageCounts({})
+    setCommonGroupMessageCountsStatus('idle')
+    setCommonGroupMessageCountsSessionId(null)
+    setShowCommonGroupsPopup(true)
+  }, [selectSession, selectedSession, sessionDetail?.wxid])
+
   useEffect(() => {
     const cachedSelectedSession = pendingCachedSelectedSessionRef.current
     if (!cachedSelectedSession) return
@@ -2940,21 +2999,31 @@ function ExportPage() {
               </div>
             ) : (
               <div className="export-session-list">
+                <div className={`export-session-table-header ${sessionListGridClass}`}>
+                  {sessionListHeaderColumns.map(label => (
+                    <div key={label} className="export-session-table-header-cell" title={label}>{label}</div>
+                  ))}
+                </div>
+                <div className="export-session-list-body">
                 {/* @ts-ignore - react-window v2 类型定义与当前 rowProps 推断不一致 */}
                 <List
                   style={{ height: '100%', width: '100%' }}
                   rowCount={filteredSessions.length}
-                  rowHeight={196}
+                  rowHeight={sessionListRowHeight}
                   rowProps={{
                     sessions: filteredSessions,
                     selectedSession,
+                    sessionTypeFilter,
                     sessionMessageCounts,
                     sessionCardStatsMap,
                     onSelect: selectSession,
-                    onEnsureCardStats: ensureSessionCardStats
+                    onEnsureCardStats: ensureSessionCardStats,
+                    onOpenChatWindow: handleOpenChatWindowFromList,
+                    onOpenCommonGroups: handleOpenCommonGroupsFromList
                   }}
                   rowComponent={ExportSessionRow}
                 />
+                </div>
               </div>
             )}
           </div>
