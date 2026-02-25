@@ -1539,6 +1539,7 @@
     .export-action-row {
       display: flex;
       gap: 10px;
+      flex-wrap: wrap;
     }
   }
 
@@ -1567,6 +1568,30 @@
       cursor: not-allowed;
     }
 
+    &.export-btn-stat {
+      flex-direction: column;
+      align-items: flex-start;
+      justify-content: center;
+      gap: 4px;
+      padding: 10px 14px;
+      min-width: 160px;
+
+      .export-btn-mainline {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        line-height: 1.2;
+      }
+
+      .export-btn-subline {
+        font-size: 11px;
+        line-height: 1.2;
+        font-weight: 500;
+        opacity: 0.82;
+        white-space: nowrap;
+      }
+    }
+
     &.export-btn-secondary {
       background: none;
       color: var(--primary);
@@ -1574,6 +1599,23 @@
 
       &:hover:not(:disabled) {
         background: rgba(var(--primary-rgb), 0.08);
+      }
+
+      &.export-btn-stat {
+        .export-btn-subline {
+          color: var(--text-secondary);
+        }
+
+        &:disabled {
+          color: var(--text-tertiary);
+          border-color: var(--border-color);
+          background: var(--bg-secondary);
+
+          .export-btn-subline {
+            color: var(--text-tertiary);
+            opacity: 1;
+          }
+        }
       }
     }
 

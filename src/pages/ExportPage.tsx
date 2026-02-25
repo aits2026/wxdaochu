@@ -792,6 +792,21 @@ function ExportPage() {
     return map
   }, [sessions])
 
+  const selectedSessionItem = useMemo(
+    () => (selectedSession ? sessionByUsername.get(selectedSession) : undefined),
+    [selectedSession, sessionByUsername]
+  )
+  const isSelectedFriendSession = selectedSessionItem?.accountType === 'friend'
+  const selectedSessionMessageCountLabel = sessionDetail
+    ? `${sessionDetail.messageCount.toLocaleString()} 条消息`
+    : '--'
+  const selectedSessionMomentsTotalCount = snsUserPostCountsStatus === 'ready'
+    ? (snsUserPostCounts[(sessionDetail?.wxid || selectedSessionItem?.username || selectedSession || '').trim()] ?? 0)
+    : null
+  const selectedSessionMomentsCountLabel = isSelectedFriendSession
+    ? (selectedSessionMomentsTotalCount !== null ? `${selectedSessionMomentsTotalCount.toLocaleString()} 条动态` : '--')
+    : '不适用'
+
   const renderFieldLoading = () => (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, opacity: 0.65, fontSize: 12 }}>
       <Loader2 size={12} style={{ animation: 'exportSpin 1s linear infinite' }} />
@@ -2063,46 +2078,6 @@ function ExportPage() {
                                 )}
                               </div>
                             )}
-                            {session?.accountType === 'friend' && (
-                              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-color, #e0e0e0)' }}>
-                                <span style={{ opacity: 0.6 }}>对方朋友圈</span>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                                  <span style={{ fontSize: 12, opacity: 0.7, minWidth: 28, textAlign: 'right' }}>
-                                    {snsUserPostCountsStatus === 'ready'
-                                      ? `${(snsUserPostCounts[(sessionDetail.wxid || session?.username || selectedSession || '').trim()] ?? 0).toLocaleString()}条`
-                                      : '--'}
-                                  </span>
-                                  <button
-                                    type="button"
-                                    className="group-friend-count-btn"
-                                    onClick={async () => {
-                                      const targetUsername = (
-                                        sessionDetail.wxid
-                                        || session?.username
-                                        || selectedSession
-                                        || ''
-                                      ).trim()
-                                      if (!targetUsername) return
-                                      const targetName = (sessionDetail.remark || sessionDetail.nickName || session?.displayName || targetUsername).trim()
-                                      try {
-                                        await window.electronAPI.window.openMomentsWindow({
-                                          preset: {
-                                            type: 'user',
-                                            username: targetUsername,
-                                            label: `${targetName}的朋友圈`
-                                          }
-                                        })
-                                      } catch (e) {
-                                        console.error('打开对方朋友圈失败:', e)
-                                      }
-                                    }}
-                                  >
-                                    <span>查看</span>
-                                    <Aperture size={13} />
-                                  </button>
-                                </div>
-                              </div>
-                            )}
                             {session?.username.includes('@chatroom') && sessionDetail.groupInfo && (
                               <>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-color, #e0e0e0)' }}>
@@ -2307,11 +2282,14 @@ function ExportPage() {
                 <div className="export-action">
                   <div className="export-action-row">
                     <button
-                      className="export-btn export-btn-secondary"
+                      className="export-btn export-btn-secondary export-btn-stat"
                       onClick={() => window.electronAPI.window.openChatWindow(selectedSession!)}
                     >
-                      <Eye size={16} />
-                      <span>查看会话</span>
+                      <span className="export-btn-mainline">
+                        <Eye size={16} />
+                        <span>查看会话</span>
+                      </span>
+                      <span className="export-btn-subline">{selectedSessionMessageCountLabel}</span>
                     </button>
                     <button
                       className="export-btn"
@@ -2320,6 +2298,42 @@ function ExportPage() {
                     >
                       <Download size={16} />
                       <span>导出此会话</span>
+                    </button>
+                    <button
+                      className="export-btn export-btn-secondary export-btn-stat"
+                      disabled={!isSelectedFriendSession || !selectedSession || !sessionDetail}
+                      onClick={async () => {
+                        const targetUsername = (
+                          sessionDetail?.wxid
+                          || selectedSessionItem?.username
+                          || selectedSession
+                          || ''
+                        ).trim()
+                        if (!targetUsername) return
+                        const targetName = (
+                          sessionDetail?.remark
+                          || sessionDetail?.nickName
+                          || selectedSessionItem?.displayName
+                          || targetUsername
+                        ).trim()
+                        try {
+                          await window.electronAPI.window.openMomentsWindow({
+                            preset: {
+                              type: 'user',
+                              username: targetUsername,
+                              label: `${targetName}的朋友圈`
+                            }
+                          })
+                        } catch (e) {
+                          console.error('打开对方朋友圈失败:', e)
+                        }
+                      }}
+                    >
+                      <span className="export-btn-mainline">
+                        <Aperture size={16} />
+                        <span>TA的朋友圈</span>
+                      </span>
+                      <span className="export-btn-subline">{selectedSessionMomentsCountLabel}</span>
                     </button>
                   </div>
                 </div>
