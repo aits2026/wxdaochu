@@ -92,7 +92,10 @@ export interface ExportOptions {
   exportVideos?: boolean
   exportEmojis?: boolean
   exportVoices?: boolean
-  mediaPathMap?: Map<number, string>
+  // 视频文件去重（多个消息可引用同一文件）；默认开启以节省空间
+  dedupeVideoFiles?: boolean
+  // 媒体路径映射表：消息实例键 -> 相对路径（避免仅用 createTime 发生同秒覆盖）
+  mediaPathMap?: Map<string, string>
 }
 
 export interface ContactExportOptions {
@@ -525,10 +528,83 @@ class ExportService {
     return /^[A-Za-z0-9+/=]+$/.test(s)
   }
 
+  private buildMediaPathMapKey(params: {
+    platformMessageId?: string | number | null
+    localMessageId?: string | number | null
+    createTime?: number | null
+    localType?: number | null
+    senderUsername?: string | null
+    isSend?: boolean | null
+  }): string | undefined {
+    const platformMessageId = params.platformMessageId !== undefined && params.platformMessageId !== null
+      ? String(params.platformMessageId)
+      : ''
+    if (platformMessageId) return `srv:${platformMessageId}`
+
+    const localMessageId = params.localMessageId !== undefined && params.localMessageId !== null
+      ? String(params.localMessageId)
+      : ''
+    if (localMessageId) return `loc:${localMessageId}`
+
+    const hasFallbackFields = params.createTime !== undefined || params.localType !== undefined || params.senderUsername
+    if (!hasFallbackFields) return undefined
+
+    const createTime = Number(params.createTime || 0)
+    const localType = Number(params.localType || 0)
+    const sender = String(params.senderUsername || '')
+    const sendFlag = params.isSend ? 1 : 0
+    return `fallback:${createTime}:${localType}:${sendFlag}:${sender}`
+  }
+
+  private getMediaPathFromMap(
+    mediaPathMap?: Map<string, string>,
+    mediaMapKey?: string,
+    createTime?: number
+  ): string | undefined {
+    if (!mediaPathMap) return undefined
+
+    if (mediaMapKey && mediaPathMap.has(mediaMapKey)) {
+      return mediaPathMap.get(mediaMapKey)
+    }
+
+    // 兼容旧的 createTime 键映射（仅用于历史逻辑兜底）
+    if (createTime) {
+      const legacyMap = mediaPathMap as unknown as Map<number, string>
+      if (legacyMap.has(createTime)) {
+        return legacyMap.get(createTime)
+      }
+    }
+
+    return undefined
+  }
+
+  private setMediaPathMapEntry(
+    mediaPathMap: Map<string, string>,
+    relativePath: string,
+    mediaMapKey?: string,
+    createTime?: number
+  ) {
+    if (mediaMapKey) {
+      mediaPathMap.set(mediaMapKey, relativePath)
+      return
+    }
+    if (createTime) {
+      const legacyMap = mediaPathMap as unknown as Map<number, string>
+      legacyMap.set(createTime, relativePath)
+    }
+  }
+
   /**
    * 解析消息内容为可读文本
    */
-  private parseMessageContent(content: string, localType: number, sessionId?: string, createTime?: number, mediaPathMap?: Map<number, string>): string | null {
+  private parseMessageContent(
+    content: string,
+    localType: number,
+    sessionId?: string,
+    createTime?: number,
+    mediaPathMap?: Map<string, string>,
+    mediaMapKey?: string
+  ): string | null {
     if (!content) return null
 
     // 检查 XML 中的 type 标签（支持大 localType 的情况）
@@ -540,16 +616,18 @@ class ExportService {
         return this.stripSenderPrefix(content)
       case 3: {
         // 图片消息：如果有媒体映射表，返回相对路径
-        if (mediaPathMap && createTime && mediaPathMap.has(createTime)) {
-          return `[图片] ${mediaPathMap.get(createTime)}`
+        const mediaPath = this.getMediaPathFromMap(mediaPathMap, mediaMapKey, createTime)
+        if (mediaPath) {
+          return `[图片] ${mediaPath}`
         }
         return '[图片]'
       }
       case 34: {
         // 语音消息
         const transcript = (sessionId && createTime) ? voiceTranscribeService.getCachedTranscript(sessionId, createTime) : null
-        if (mediaPathMap && createTime && mediaPathMap.has(createTime)) {
-          return `[语音消息] ${mediaPathMap.get(createTime)}${transcript ? ' ' + transcript : ''}`
+        const mediaPath = this.getMediaPathFromMap(mediaPathMap, mediaMapKey, createTime)
+        if (mediaPath) {
+          return `[语音消息] ${mediaPath}${transcript ? ' ' + transcript : ''}`
         }
         if (transcript) {
           return `[语音消息] ${transcript}`
@@ -558,14 +636,16 @@ class ExportService {
       }
       case 42: return '[名片]'
       case 43: {
-        if (mediaPathMap && createTime && mediaPathMap.has(createTime)) {
-          return `[视频] ${mediaPathMap.get(createTime)}`
+        const mediaPath = this.getMediaPathFromMap(mediaPathMap, mediaMapKey, createTime)
+        if (mediaPath) {
+          return `[视频] ${mediaPath}`
         }
         return '[视频]'
       }
       case 47: {
-        if (mediaPathMap && createTime && mediaPathMap.has(createTime)) {
-          return `[动画表情] ${mediaPathMap.get(createTime)}`
+        const mediaPath = this.getMediaPathFromMap(mediaPathMap, mediaMapKey, createTime)
+        if (mediaPath) {
+          return `[动画表情] ${mediaPath}`
         }
         return '[动画表情]'
       }
@@ -816,6 +896,15 @@ class ExportService {
 
             // 提取消息ID (local_id 或 server_id)
             const platformMessageId = row.server_id ? String(row.server_id) : (row.local_id ? String(row.local_id) : undefined)
+            const localMessageId = row.local_id ? String(row.local_id) : undefined
+            const mediaMapKey = this.buildMediaPathMapKey({
+              platformMessageId,
+              localMessageId,
+              createTime,
+              localType,
+              senderUsername: actualSender,
+              isSend
+            })
 
             // 提取引用消息ID (从 type 57 的 XML 中解析)
             let replyToMessageId: string | undefined
@@ -856,6 +945,8 @@ class ExportService {
               senderUsername: actualSender,
               isSend,
               platformMessageId,
+              localMessageId,
+              mediaMapKey,
               replyToMessageId,
               groupNickname,
               chatRecordList
@@ -897,7 +988,14 @@ class ExportService {
 
       for (const msg of allMessages) {
         const memberInfo = memberSet.get(msg.senderUsername) || { platformId: msg.senderUsername, accountName: msg.senderUsername }
-        let parsedContent = this.parseMessageContent(msg.content, msg.localType, sessionId, msg.createTime, options.mediaPathMap)
+        let parsedContent = this.parseMessageContent(
+          msg.content,
+          msg.localType,
+          sessionId,
+          msg.createTime,
+          options.mediaPathMap,
+          msg.mediaMapKey
+        )
 
         // 转账消息：追加 "谁转账给谁" 信息
         if (parsedContent && parsedContent.startsWith('[转账]') && msg.content) {
@@ -1550,6 +1648,15 @@ class ExportService {
 
             // 提取消息ID
             const platformMessageId = row.server_id ? String(row.server_id) : (row.local_id ? String(row.local_id) : undefined)
+            const localMessageId = row.local_id ? String(row.local_id) : undefined
+            const mediaMapKey = this.buildMediaPathMapKey({
+              platformMessageId,
+              localMessageId,
+              createTime,
+              localType,
+              senderUsername: actualSender,
+              isSend
+            })
 
             // 提取引用消息ID
             let replyToMessageId: string | undefined
@@ -1578,7 +1685,7 @@ class ExportService {
               type: this.getMessageTypeName(localType, content),
               localType,
               chatLabType: this.convertMessageType(localType, content),
-              content: this.parseMessageContent(content, localType, sessionId, createTime, options.mediaPathMap),
+              content: this.parseMessageContent(content, localType, sessionId, createTime, options.mediaPathMap, mediaMapKey),
               rawContent: content, // 保留原始内容（用于转账描述解析）
               isSend: isSend ? 1 : 0,
               senderUsername: actualSender,
@@ -1758,6 +1865,16 @@ class ExportService {
               actualSender = isSend ? cleanedMyWxid : (senderUsername || sessionId)
             }
             const senderInfo = await this.getContactInfo(actualSender)
+            const platformMessageId = row.server_id ? String(row.server_id) : (row.local_id ? String(row.local_id) : undefined)
+            const localMessageId = row.local_id ? String(row.local_id) : undefined
+            const mediaMapKey = this.buildMediaPathMapKey({
+              platformMessageId,
+              localMessageId,
+              createTime,
+              localType,
+              senderUsername: actualSender,
+              isSend
+            })
 
             // 检查是否是聊天记录消息（type=19）
             const xmlType = this.extractXmlValue(content, 'type')
@@ -1774,6 +1891,9 @@ class ExportService {
               senderName: senderInfo.displayName,
               senderAvatar: options.exportAvatars ? senderInfo.avatarUrl : undefined,
               isSend,
+              platformMessageId,
+              localMessageId,
+              mediaMapKey,
               chatRecordList
             })
           }
@@ -1798,7 +1918,14 @@ class ExportService {
         const time = new Date(msg.createTime * 1000)
 
         // 获取消息内容（使用统一的解析方法）
-        let messageContent = this.parseMessageContent(msg.content, msg.type, sessionId, msg.createTime, options.mediaPathMap)
+        let messageContent = this.parseMessageContent(
+          msg.content,
+          msg.type,
+          sessionId,
+          msg.createTime,
+          options.mediaPathMap,
+          msg.mediaMapKey
+        )
 
         // 转账消息：追加 "谁转账给谁" 信息
         if (messageContent && messageContent.startsWith('[转账]') && msg.content) {
@@ -1988,6 +2115,16 @@ class ExportService {
               actualSender = isSend ? cleanedMyWxid : (senderUsername || sessionId)
             }
             const senderInfo = await this.getContactInfo(actualSender)
+            const platformMessageId = row.server_id ? String(row.server_id) : (row.local_id ? String(row.local_id) : undefined)
+            const localMessageId = row.local_id ? String(row.local_id) : undefined
+            const mediaMapKey = this.buildMediaPathMapKey({
+              platformMessageId,
+              localMessageId,
+              createTime,
+              localType,
+              senderUsername: actualSender,
+              isSend
+            })
 
             // 检查是否是聊天记录消息
             const xmlType = this.extractXmlValue(content, 'type')
@@ -2001,9 +2138,12 @@ class ExportService {
               sender: actualSender,
               senderName: senderInfo.displayName,
               type: localType,
-              content: this.parseMessageContent(content, localType, sessionId, createTime, options.mediaPathMap),
+              content: this.parseMessageContent(content, localType, sessionId, createTime, options.mediaPathMap, mediaMapKey),
               rawContent: content,
               isSend,
+              platformMessageId,
+              localMessageId,
+              mediaMapKey,
               chatRecords: chatRecordList ? this.formatChatRecordsForJson(chatRecordList, options) : undefined
             })
 
@@ -2166,7 +2306,7 @@ class ExportService {
         const outputPath = path.join(sessionOutputDir, `${safeName}${ext}`)
 
         // 先导出媒体文件，收集路径映射表
-        let mediaPathMap: Map<number, string> | undefined
+        let mediaPathMap: Map<string, string> | undefined
         if (hasMedia) {
           try {
             mediaPathMap = await this.exportMediaFiles(sessionId, safeName, sessionOutputDir, options, (detail) => {
@@ -2235,9 +2375,9 @@ class ExportService {
     outputDir: string,
     options: ExportOptions,
     onDetail?: (detail: string) => void
-  ): Promise<Map<number, string>> {
-    // 返回 createTime → 相对路径 的映射表
-    const mediaPathMap = new Map<number, string>()
+  ): Promise<Map<string, string>> {
+    // 返回 消息实例键 -> 相对路径 的映射表（兼容历史 createTime 键）
+    const mediaPathMap = new Map<string, string>()
 
     const dbTablePairs = this.findSessionTables(sessionId)
     if (dbTablePairs.length === 0) return mediaPathMap
@@ -2262,6 +2402,8 @@ class ExportService {
     let emojiCount = 0
     let emojiTotal = 0
     let emojiProcessed = 0
+    const shouldDedupeVideoFiles = options.dedupeVideoFiles !== false
+    const exportedVideoPathByMd5 = new Map<string, string>()
 
     // 构建查询条件：只查需要的消息类型
     const typeConditions: string[] = []
@@ -2312,6 +2454,16 @@ class ExportService {
 
             const localType = row.local_type || row.type || 1
             const content = this.decodeMessageContent(row.message_content, row.compress_content)
+            const platformMessageId = row.server_id ? String(row.server_id) : (row.local_id ? String(row.local_id) : undefined)
+            const localMessageId = row.local_id ? String(row.local_id) : undefined
+            const mediaMapKey = this.buildMediaPathMapKey({
+              platformMessageId,
+              localMessageId,
+              createTime,
+              localType,
+              senderUsername: row.sender_username || '',
+              isSend: row.is_send === 1
+            })
 
             // 导出图片
             if (options.exportImages && localType === 3) {
@@ -2345,8 +2497,8 @@ class ExportService {
                       if (!fs.existsSync(destPath)) {
                         fs.copyFileSync(filePath, destPath)
                         imageCount++
-                        mediaPathMap.set(createTime, `images/${fileName}`)
                       }
+                      this.setMediaPathMapEntry(mediaPathMap, `images/${fileName}`, mediaMapKey, createTime)
                     }
                   }
                 }
@@ -2360,17 +2512,32 @@ class ExportService {
               try {
                 const videoMd5 = videoService.parseVideoMd5(content)
                 if (videoMd5) {
+                  if (shouldDedupeVideoFiles) {
+                    const cachedExportPath = exportedVideoPathByMd5.get(videoMd5)
+                    if (cachedExportPath) {
+                      this.setMediaPathMapEntry(mediaPathMap, cachedExportPath, mediaMapKey, createTime)
+                      continue
+                    }
+                  }
+
                   const videoInfo = videoService.getVideoInfo(videoMd5)
                   if (videoInfo.exists && videoInfo.videoUrl) {
                     const videoPath = videoInfo.videoUrl.replace(/^file:\/\/\//i, '').replace(/\//g, path.sep)
                     if (fs.existsSync(videoPath)) {
                       const fileName = `${createTime}_${videoMd5}.mp4`
                       const destPath = path.join(videoOutDir, fileName)
+                      const relativePath = `videos/${fileName}`
+                      const existedBeforeCopy = fs.existsSync(destPath)
                       if (!fs.existsSync(destPath)) {
                         fs.copyFileSync(videoPath, destPath)
                         videoCount++
-                        mediaPathMap.set(createTime, `videos/${fileName}`)
                       }
+                      if (shouldDedupeVideoFiles) {
+                        exportedVideoPathByMd5.set(videoMd5, relativePath)
+                      } else if (existedBeforeCopy) {
+                        // 非去重模式下，文件名冲突时仍保持消息引用不丢失
+                      }
+                      this.setMediaPathMapEntry(mediaPathMap, relativePath, mediaMapKey, createTime)
                     }
                   }
                 }
@@ -2424,10 +2591,10 @@ class ExportService {
                     if (sourceFile && fs.existsSync(sourceFile)) {
                       fs.copyFileSync(sourceFile, destPath)
                       emojiCount++
-                      mediaPathMap.set(createTime, `emojis/${fileName}`)
+                      this.setMediaPathMapEntry(mediaPathMap, `emojis/${fileName}`, mediaMapKey, createTime)
                     }
                   } else {
-                    mediaPathMap.set(createTime, `emojis/${fileName}`)
+                    this.setMediaPathMapEntry(mediaPathMap, `emojis/${fileName}`, mediaMapKey, createTime)
                   }
                 }
               } catch (e) {
@@ -2529,7 +2696,7 @@ class ExportService {
 
               // 已存在则跳过
               if (fs.existsSync(destPath)) {
-                mediaPathMap.set(createTime, `voices/${fileName}`)
+                this.setMediaPathMapEntry(mediaPathMap, `voices/${fileName}`, undefined, createTime)
                 continue
               }
 
@@ -2572,7 +2739,7 @@ class ExportService {
                 const wavData = this.createWavBuffer(pcmData, 24000)
                 fs.writeFileSync(destPath, wavData)
                 voiceCount++
-                mediaPathMap.set(createTime, `voices/${fileName}`)
+                this.setMediaPathMapEntry(mediaPathMap, `voices/${fileName}`, undefined, createTime)
               } catch { }
 
               // 进度日志
@@ -3110,4 +3277,3 @@ class ExportService {
 }
 
 export const exportService = new ExportService()
-

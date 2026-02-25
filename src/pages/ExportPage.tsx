@@ -89,6 +89,10 @@ interface SessionVideoAvailabilityOverview {
   readyCount: number
   thumbOnlyCount: number
   missingCount: number
+  rawMessageCount?: number
+  parsedMessageCount?: number
+  duplicateMessageCount?: number
+  parseFailedCount?: number
   status: 'idle' | 'checking' | 'ready' | 'partial' | 'error'
   checkedAt?: number
 }
@@ -931,6 +935,11 @@ function ExportPage() {
       throw new Error(listResult.error || '读取会话视频失败')
     }
 
+    const rawMessageCount = Number(listResult.stats?.rawMessageCount ?? listResult.videos.length)
+    const parsedMessageCount = Number(listResult.stats?.parsedMessageCount ?? listResult.videos.length)
+    const duplicateMessageCount = Number(listResult.stats?.duplicateMessageCount ?? Math.max(0, parsedMessageCount - listResult.videos.length))
+    const parseFailedCount = Number(listResult.stats?.parseFailedCount ?? Math.max(0, rawMessageCount - parsedMessageCount))
+
     const assets: SessionVideoAssetItem[] = []
     let readyCount = 0
     let thumbOnlyCount = 0
@@ -981,6 +990,10 @@ function ExportPage() {
       readyCount,
       thumbOnlyCount,
       missingCount,
+      rawMessageCount,
+      parsedMessageCount,
+      duplicateMessageCount,
+      parseFailedCount,
       assets
     }
   }, [])
@@ -1062,6 +1075,10 @@ function ExportPage() {
         readyCount: prev[sessionId]?.readyCount || 0,
         thumbOnlyCount: prev[sessionId]?.thumbOnlyCount || 0,
         missingCount: prev[sessionId]?.missingCount || 0,
+        rawMessageCount: prev[sessionId]?.rawMessageCount,
+        parsedMessageCount: prev[sessionId]?.parsedMessageCount,
+        duplicateMessageCount: prev[sessionId]?.duplicateMessageCount,
+        parseFailedCount: prev[sessionId]?.parseFailedCount,
         status: 'checking',
         checkedAt: prev[sessionId]?.checkedAt,
       }
@@ -1078,7 +1095,11 @@ function ExportPage() {
           readyCount: result.readyCount,
           thumbOnlyCount: result.thumbOnlyCount,
           missingCount: result.missingCount,
-          status: result.total > 0 && result.missingCount === 0 && result.thumbOnlyCount === 0 ? 'ready' : 'partial',
+          rawMessageCount: result.rawMessageCount,
+          parsedMessageCount: result.parsedMessageCount,
+          duplicateMessageCount: result.duplicateMessageCount,
+          parseFailedCount: result.parseFailedCount,
+          status: result.total > 0 && result.missingCount === 0 && result.thumbOnlyCount === 0 && result.parseFailedCount === 0 ? 'ready' : 'partial',
           checkedAt: Date.now(),
         }
       }))
@@ -1091,6 +1112,10 @@ function ExportPage() {
           readyCount: prev[sessionId]?.readyCount || 0,
           thumbOnlyCount: prev[sessionId]?.thumbOnlyCount || 0,
           missingCount: prev[sessionId]?.missingCount || 0,
+          rawMessageCount: prev[sessionId]?.rawMessageCount,
+          parsedMessageCount: prev[sessionId]?.parsedMessageCount,
+          duplicateMessageCount: prev[sessionId]?.duplicateMessageCount,
+          parseFailedCount: prev[sessionId]?.parseFailedCount,
           status: 'error',
           checkedAt: Date.now(),
         }
@@ -1158,7 +1183,11 @@ function ExportPage() {
           readyCount: result.readyCount,
           thumbOnlyCount: result.thumbOnlyCount,
           missingCount: result.missingCount,
-          status: result.total > 0 && result.missingCount === 0 && result.thumbOnlyCount === 0 ? 'ready' : 'partial',
+          rawMessageCount: result.rawMessageCount,
+          parsedMessageCount: result.parsedMessageCount,
+          duplicateMessageCount: result.duplicateMessageCount,
+          parseFailedCount: result.parseFailedCount,
+          status: result.total > 0 && result.missingCount === 0 && result.thumbOnlyCount === 0 && result.parseFailedCount === 0 ? 'ready' : 'partial',
           checkedAt: Date.now(),
         }
       }))
@@ -1241,16 +1270,26 @@ function ExportPage() {
   const sessionImageAssetsDecryptedCount = sessionImageAssetsOverview?.decryptedCount ?? decryptedImageAssets.length
   const sessionImageAssetsUndecryptedCount = sessionImageAssetsOverview?.undecryptedCount ?? Math.max(0, sessionImageAssetsTotalCount - sessionImageAssetsDecryptedCount)
   const currentSessionVideoOverview = selectedSession ? sessionVideoOverviews[selectedSession] : undefined
+  const currentSessionVideoHasCheckedOverview = Boolean(
+    currentSessionVideoOverview?.checkedAt &&
+    currentSessionVideoOverview.status !== 'checking' &&
+    currentSessionVideoOverview.status !== 'error'
+  )
   const currentSessionVideoReadyCount = currentSessionVideoOverview?.readyCount || 0
   const currentSessionVideoThumbOnlyCount = currentSessionVideoOverview?.thumbOnlyCount || 0
   const currentSessionVideoMissingCount = currentSessionVideoOverview?.missingCount || 0
+  const currentSessionVideoUniqueCount = currentSessionVideoOverview?.total || 0
+  const currentSessionVideoRawMessageCount = currentSessionVideoOverview?.rawMessageCount ?? sessionDetail?.videoCount ?? 0
+  const currentSessionVideoParsedMessageCount = currentSessionVideoOverview?.parsedMessageCount ?? currentSessionVideoUniqueCount
+  const currentSessionVideoDuplicateCount = currentSessionVideoOverview?.duplicateMessageCount ?? Math.max(0, currentSessionVideoParsedMessageCount - currentSessionVideoUniqueCount)
+  const currentSessionVideoParseFailedCount = currentSessionVideoOverview?.parseFailedCount ?? Math.max(0, currentSessionVideoRawMessageCount - currentSessionVideoParsedMessageCount)
+  const currentSessionVideoExportableCount = currentSessionVideoHasCheckedOverview ? currentSessionVideoReadyCount : (sessionDetail?.videoCount ?? 0)
   const currentSessionAllVideosReady = Boolean(
-    sessionDetail &&
-    sessionDetail.videoCount > 0 &&
     currentSessionVideoOverview &&
-    currentSessionVideoOverview.total === sessionDetail.videoCount &&
+    currentSessionVideoOverview.total > 0 &&
     currentSessionVideoOverview.thumbOnlyCount === 0 &&
     currentSessionVideoOverview.missingCount === 0 &&
+    (currentSessionVideoOverview.parseFailedCount || 0) === 0 &&
     currentSessionVideoOverview.status === 'ready'
   )
   const hasCurrentSessionVideoPreviews = (currentSessionVideoReadyCount + currentSessionVideoThumbOnlyCount) > 0
@@ -1267,6 +1306,12 @@ function ExportPage() {
     return sessionVideoOverviews[sessionVideoAssetsSessionId]
   }, [sessionVideoAssetsSessionId, sessionVideoOverviews])
   const sessionVideoAssetsTotalCount = sessionVideoAssetsOverview?.total ?? sessionVideoAssets.length
+  const sessionVideoAssetsRawMessageCount = sessionVideoAssetsOverview?.rawMessageCount ??
+    (sessionDetail && sessionVideoAssetsSessionId && sessionDetail.wxid === sessionVideoAssetsSessionId ? sessionDetail.videoCount : undefined) ??
+    sessionVideoAssetsTotalCount
+  const sessionVideoAssetsParsedMessageCount = sessionVideoAssetsOverview?.parsedMessageCount ?? sessionVideoAssetsTotalCount
+  const sessionVideoAssetsDuplicateCount = sessionVideoAssetsOverview?.duplicateMessageCount ?? Math.max(0, sessionVideoAssetsParsedMessageCount - sessionVideoAssetsTotalCount)
+  const sessionVideoAssetsParseFailedCount = sessionVideoAssetsOverview?.parseFailedCount ?? Math.max(0, sessionVideoAssetsRawMessageCount - sessionVideoAssetsParsedMessageCount)
   const sessionVideoAssetsReadyCount = sessionVideoAssetsOverview?.readyCount ?? readySessionVideoAssets.length
   const sessionVideoAssetsThumbOnlyCount = sessionVideoAssetsOverview?.thumbOnlyCount ?? thumbOnlySessionVideoAssets.length
   const sessionVideoAssetsMissingCount = sessionVideoAssetsOverview?.missingCount ?? Math.max(0, sessionVideoAssetsTotalCount - sessionVideoAssetsReadyCount - sessionVideoAssetsThumbOnlyCount)
@@ -1579,6 +1624,26 @@ function ExportPage() {
     pendingCachedSelectedSessionRef.current = null
     void selectSession(cachedSelectedSession)
   }, [selectSession])
+
+  useEffect(() => {
+    if (!selectedSession || !sessionDetail || sessionDetail.wxid !== selectedSession) return
+    if ((sessionDetail.videoCount ?? 0) <= 0) return
+
+    const overview = sessionVideoOverviews[selectedSession]
+    if (overview?.status === 'checking') return
+
+    const rawCountChanged = overview?.rawMessageCount !== undefined && overview.rawMessageCount !== sessionDetail.videoCount
+    const isStale = !overview?.checkedAt || (Date.now() - overview.checkedAt > EXPORT_CHAT_CACHE_TTL_MS)
+
+    if (!overview || rawCountChanged || isStale) {
+      void refreshSessionVideoOverview(selectedSession)
+    }
+  }, [
+    refreshSessionVideoOverview,
+    selectedSession,
+    sessionDetail,
+    sessionVideoOverviews
+  ])
 
   const toggleContact = (username: string) => {
     const newSet = new Set(selectedContacts)
@@ -2385,7 +2450,17 @@ function ExportPage() {
                                   { icon: <Smile size={13} />, label: '表情', count: sessionDetail.emojiCount },
                                   { icon: <Video size={13} />, label: '视频', count: sessionDetail.videoCount, action: 'check-video' as const },
                                   { icon: <Mic size={13} />, label: '语音', count: sessionDetail.voiceCount },
-                                ] as const).filter(item => item.count > 0).map(item => (
+                                ] as const).filter(item => item.count > 0).map(item => {
+                                  const isVideoStatCard = item.action === 'check-video'
+                                  const showCheckedVideoCount = isVideoStatCard && currentSessionVideoHasCheckedOverview
+                                  const primaryCount = showCheckedVideoCount ? currentSessionVideoReadyCount : item.count
+                                  const secondaryCountLabel = isVideoStatCard
+                                    ? (showCheckedVideoCount
+                                      ? `原始消息 ${item.count.toLocaleString()} 条 · 唯一视频 ${currentSessionVideoUniqueCount.toLocaleString()} 个`
+                                      : `原始视频消息 ${item.count.toLocaleString()} 条`)
+                                    : null
+
+                                  return (
                                   <div key={item.label} style={{
                                     flex: 1,
                                     display: 'flex',
@@ -2482,6 +2557,10 @@ function ExportPage() {
                                                   <span className="session-media-status-pill warning">
                                                     <span>仅缩略图 {currentSessionVideoThumbOnlyCount}</span>
                                                   </span>
+                                                ) : currentSessionVideoParseFailedCount > 0 ? (
+                                                  <span className="session-media-status-pill warning">
+                                                    <span>未识别 {currentSessionVideoParseFailedCount}</span>
+                                                  </span>
                                                 ) : currentSessionAllVideosReady ? (
                                                   <span className="session-media-status-pill success">
                                                     <CheckCircle size={11} />
@@ -2501,7 +2580,13 @@ function ExportPage() {
                                                   <span>重试</span>
                                                 </button>
                                                 <span className="session-media-status-pill warning">
-                                                  <span>缺失 {currentSessionVideoMissingCount}</span>
+                                                  <span>
+                                                    {currentSessionVideoMissingCount > 0
+                                                      ? `缺失 ${currentSessionVideoMissingCount}`
+                                                      : currentSessionVideoParseFailedCount > 0
+                                                        ? `未识别 ${currentSessionVideoParseFailedCount}`
+                                                        : '部分可用'}
+                                                  </span>
                                                 </span>
                                               </>
                                             ) : (
@@ -2519,9 +2604,18 @@ function ExportPage() {
                                         </div>
                                       )}
                                     </div>
-                                    <span style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)', textAlign: 'center' }}>{item.count.toLocaleString()}</span>
+                                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+                                      <span style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)', textAlign: 'center' }}>
+                                        {primaryCount.toLocaleString()}
+                                      </span>
+                                      {secondaryCountLabel && (
+                                        <span style={{ fontSize: 11, color: 'var(--text-tertiary)', textAlign: 'center', lineHeight: 1.3 }}>
+                                          {secondaryCountLabel}
+                                        </span>
+                                      )}
+                                    </div>
                                   </div>
-                                ))}
+                                )})}
                               </div>
                             )}
                             <div style={{ marginTop: 8 }}>
@@ -2788,8 +2882,23 @@ function ExportPage() {
                         <Video size={16} style={{ color: 'var(--text-tertiary)' }} />
                         <div className="checkbox-item-content">
                           <span>导出视频</span>
+                          {(sessionDetail?.videoCount ?? 0) > 0 && (
+                            <span style={{ fontSize: 11, color: 'var(--text-tertiary)', lineHeight: 1.3 }}>
+                              {currentSessionVideoOverview?.status === 'checking'
+                                ? `正在检查可导出视频（原始消息 ${currentSessionVideoRawMessageCount.toLocaleString()} 条）`
+                                : currentSessionVideoOverview?.status === 'error'
+                                  ? `视频检查失败，暂显示原始消息 ${currentSessionVideoRawMessageCount.toLocaleString()} 条（可在会话详情中重试）`
+                                : currentSessionVideoHasCheckedOverview
+                                  ? `原始消息 ${currentSessionVideoRawMessageCount.toLocaleString()} 条 · 唯一视频 ${currentSessionVideoUniqueCount.toLocaleString()} 个（按 videoMd5 去重）${currentSessionVideoDuplicateCount > 0 ? ` · 重复引用 ${currentSessionVideoDuplicateCount.toLocaleString()} 条` : ''}${currentSessionVideoParseFailedCount > 0 ? ` · 未识别 ${currentSessionVideoParseFailedCount.toLocaleString()} 条` : ''}`
+                                  : `原始消息 ${(sessionDetail?.videoCount ?? 0).toLocaleString()} 条 · 将自动检查可导出数量`}
+                            </span>
+                          )}
                         </div>
-                        <span className="checkbox-item-count">{(sessionDetail?.videoCount ?? 0).toLocaleString()} 条</span>
+                        <span className="checkbox-item-count">
+                          {currentSessionVideoHasCheckedOverview
+                            ? `${currentSessionVideoExportableCount.toLocaleString()} 个可导出`
+                            : `${(sessionDetail?.videoCount ?? 0).toLocaleString()} 条`}
+                        </span>
                       </label>
                       <label className={`checkbox-item checkbox-item-with-count ${(sessionDetail?.emojiCount ?? 0) === 0 ? 'is-zero-count' : ''}`}>
                         <input type="checkbox" checked={options.exportEmojis} onChange={e => setOptions(prev => ({ ...prev, exportEmojis: e.target.checked }))} />
@@ -2811,7 +2920,7 @@ function ExportPage() {
                       </label>
                     </div>
                     <p className="export-options-note">
-                      数量表示该会话内对应类型的消息条数（文本聊天记录为总消息数），不代表本地文件实际存在数量或最终成功导出的文件数量。
+                      图片/表情/语音数量显示的是消息条数；视频在检查完成后会显示“可导出唯一视频数（按 videoMd5 去重）”，更贴近实际导出结果。
                     </p>
                   </div>
 
@@ -3278,10 +3387,38 @@ function ExportPage() {
               {sessionVideoAssetsSessionName || sessionVideoAssetsSessionId || selectedSession}
             </div>
 
+            <div style={{
+              marginBottom: 12,
+              padding: '10px 12px',
+              borderRadius: 10,
+              background: 'var(--bg-secondary)',
+              border: '1px solid var(--border-color, #e0e0e0)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 4
+            }}>
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                原始视频消息 <strong style={{ color: 'var(--text-primary)' }}>{sessionVideoAssetsRawMessageCount.toLocaleString()}</strong> 条
+                {' '}→ 识别到唯一视频 <strong style={{ color: 'var(--text-primary)' }}>{sessionVideoAssetsTotalCount.toLocaleString()}</strong> 个（按 <code>videoMd5</code> 去重）
+                {' '}→ 可导出视频 <strong style={{ color: 'var(--text-primary)' }}>{sessionVideoAssetsReadyCount.toLocaleString()}</strong> 个
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text-tertiary)', lineHeight: 1.5 }}>
+                差异说明：
+                {sessionVideoAssetsDuplicateCount > 0 ? ` 重复引用 ${sessionVideoAssetsDuplicateCount.toLocaleString()} 条；` : ' 无重复引用；'}
+                {sessionVideoAssetsParseFailedCount > 0 ? ` 无法解析 videoMd5 ${sessionVideoAssetsParseFailedCount.toLocaleString()} 条；` : ' 无解析失败；'}
+                {sessionVideoAssetsThumbOnlyCount > 0 ? ` 仅缩略图 ${sessionVideoAssetsThumbOnlyCount.toLocaleString()} 个；` : ''}
+                {sessionVideoAssetsMissingCount > 0 ? ` 源文件缺失 ${sessionVideoAssetsMissingCount.toLocaleString()} 个。` : ''}
+              </div>
+            </div>
+
             <div className="session-image-assets-toolbar">
               <div className="session-image-assets-stats">
                 <div className="session-image-assets-stat">
-                  <span className="label">总数</span>
+                  <span className="label">原始消息</span>
+                  <strong>{sessionVideoAssetsRawMessageCount.toLocaleString()}</strong>
+                </div>
+                <div className="session-image-assets-stat">
+                  <span className="label">唯一视频</span>
                   <strong>{sessionVideoAssetsTotalCount.toLocaleString()}</strong>
                 </div>
                 <div className="session-image-assets-stat success">
@@ -3324,6 +3461,10 @@ function ExportPage() {
                 ) : sessionVideoAssetsThumbOnlyCount > 0 ? (
                   <span className="session-media-status-pill warning">
                     <span>仅缩略图 {sessionVideoAssetsThumbOnlyCount}</span>
+                  </span>
+                ) : sessionVideoAssetsParseFailedCount > 0 ? (
+                  <span className="session-media-status-pill warning">
+                    <span>未识别 {sessionVideoAssetsParseFailedCount}</span>
                   </span>
                 ) : (
                   <span className="session-media-status-pill success">

@@ -1673,7 +1673,18 @@ class ChatService extends EventEmitter {
    */
   async getAllVideoMessages(
     sessionId: string
-  ): Promise<{ success: boolean; videos?: { videoMd5?: string; createTime?: number; videoDuration?: number }[]; error?: string }> {
+  ): Promise<{
+    success: boolean
+    videos?: { videoMd5?: string; createTime?: number; videoDuration?: number }[]
+    stats?: {
+      rawMessageCount: number
+      parsedMessageCount: number
+      uniqueCount: number
+      duplicateMessageCount: number
+      parseFailedCount: number
+    }
+    error?: string
+  }> {
     try {
       if (!this.dbDir) {
         const connectResult = await this.connect()
@@ -1688,6 +1699,8 @@ class ChatService extends EventEmitter {
       }
 
       const videos: { videoMd5?: string; createTime?: number; videoDuration?: number }[] = []
+      let rawMessageCount = 0
+      let parsedMessageCount = 0
 
       for (const { db, tableName } of dbTablePairs) {
         try {
@@ -1697,9 +1710,7 @@ class ChatService extends EventEmitter {
           const hasTypeColumn = columnNames.includes('type')
 
           let typeCondition = ''
-          if (hasLocalTypeColumn && hasTypeColumn) {
-            typeCondition = '(local_type = 43 OR type = 43)'
-          } else if (hasLocalTypeColumn) {
+          if (hasLocalTypeColumn) {
             typeCondition = 'local_type = 43'
           } else if (hasTypeColumn) {
             typeCondition = 'type = 43'
@@ -1710,12 +1721,14 @@ class ChatService extends EventEmitter {
           const rows = db.prepare(
             `SELECT * FROM ${tableName} WHERE ${typeCondition}`
           ).all() as any[]
+          rawMessageCount += rows.length
 
           for (const row of rows) {
             const content = this.decodeMessageContent(row.message_content, row.compress_content)
             const videoMd5 = this.parseVideoMd5(content)
             const videoDuration = this.parseVideoDuration(content)
             if (videoMd5) {
+              parsedMessageCount++
               videos.push({ videoMd5, createTime: row.create_time, videoDuration })
             }
           }
@@ -1732,8 +1745,22 @@ class ChatService extends EventEmitter {
         return true
       })
 
-      console.log(`[ChatService] 共找到 ${unique.length} 条视频消息（去重后）`)
-      return { success: true, videos: unique }
+      const uniqueCount = unique.length
+      const duplicateMessageCount = Math.max(0, parsedMessageCount - uniqueCount)
+      const parseFailedCount = Math.max(0, rawMessageCount - parsedMessageCount)
+
+      console.log(`[ChatService] 视频消息统计: 原始=${rawMessageCount}, 可解析=${parsedMessageCount}, 去重后=${uniqueCount}, 重复=${duplicateMessageCount}, 解析失败=${parseFailedCount}`)
+      return {
+        success: true,
+        videos: unique,
+        stats: {
+          rawMessageCount,
+          parsedMessageCount,
+          uniqueCount,
+          duplicateMessageCount,
+          parseFailedCount
+        }
+      }
     } catch (e) {
       console.error('[ChatService] 获取所有视频消息失败:', e)
       return { success: false, error: String(e) }

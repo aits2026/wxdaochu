@@ -222,6 +222,13 @@ export interface ElectronAPI {
     getAllVideoMessages: (sessionId: string) => Promise<{
       success: boolean;
       videos?: { videoMd5?: string; createTime?: number; videoDuration?: number }[];
+      stats?: {
+        rawMessageCount: number;
+        parsedMessageCount: number;
+        uniqueCount: number;
+        duplicateMessageCount: number;
+        parseFailedCount: number;
+      };
       error?: string
     }>
     getContact: (username: string) => Promise<Contact | null>
@@ -789,6 +796,7 @@ export interface ExportOptions {
   dateRange?: { start: number; end: number } | null
   exportMedia?: boolean
   exportAvatars?: boolean
+  dedupeVideoFiles?: boolean
 }
 
 export interface ContactExportOptions {
