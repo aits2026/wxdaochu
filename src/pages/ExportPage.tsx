@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useDeferredValue, useMemo, useRef, startTransition } from 'react'
-import { Search, Download, FolderOpen, RefreshCw, Check, FileJson, FileText, Table, Loader2, X, FileSpreadsheet, Database, FileCode, CheckCircle, XCircle, ExternalLink, MessageSquare, Users, User, Filter, Image, Video, CircleUserRound, Smile, Mic, Newspaper, ChevronDown, MoreHorizontal, ArrowLeft, Eye, Aperture, CircleHelp } from 'lucide-react'
+import { Search, Download, FolderOpen, RefreshCw, Check, FileJson, FileText, Table, Loader2, X, FileSpreadsheet, Database, FileCode, CheckCircle, XCircle, ExternalLink, MessageSquare, Users, User, Filter, Image, Video, CircleUserRound, Smile, Mic, Newspaper, ChevronDown, MoreHorizontal, ArrowLeft, Eye, Aperture, CircleHelp, Copy } from 'lucide-react'
 import { List, RowComponentProps } from 'react-window'
 import DateRangePicker from '../components/DateRangePicker'
 import { useTitleBarStore } from '../stores/titleBarStore'
@@ -63,6 +63,10 @@ type LoadSessionsOptions = {
   silent?: boolean
   preserveCounts?: boolean
 }
+type SelectSessionOptions = {
+  source?: 'select' | 'refresh'
+  forceReconnect?: boolean
+}
 
 const EXPORT_CHAT_CACHE_TTL_MS = 60 * 1000
 const OVERVIEW_CHECKING_TIMEOUT_MS = 20 * 1000
@@ -114,6 +118,43 @@ interface SessionVideoAssetItem {
 // 会话类型筛选
 type SessionTypeFilter = 'group' | 'private' | 'official'
 
+type SessionDetailDiagStepKey = 'init' | 'reconnect' | 'exportRecords' | 'sessionDetail' | 'groupInfo' | 'finish'
+type SessionDetailDiagStepStatus = 'pending' | 'loading' | 'success' | 'error' | 'skipped'
+
+interface SessionDetailDiagStep {
+  status: SessionDetailDiagStepStatus
+  message?: string
+  payloadSummary?: string
+  startedAt?: number
+  durationMs?: number
+  updatedAt?: number
+}
+
+interface SessionDetailDiagEvent {
+  ts: number
+  level: 'info' | 'warn' | 'error'
+  message: string
+  data?: string
+}
+
+interface SessionDetailLoadDiagnostics {
+  runId: number
+  requestId: number
+  source: 'select' | 'refresh'
+  sessionId: string
+  status: 'idle' | 'running' | 'success' | 'error'
+  startedAt: number
+  finishedAt?: number
+  error?: string
+  context?: {
+    forceReconnect: boolean
+    selectedSessionBefore?: string | null
+    sessionAccountType?: string
+  }
+  steps: Record<SessionDetailDiagStepKey, SessionDetailDiagStep>
+  events: SessionDetailDiagEvent[]
+}
+
 interface ExportSessionRowData {
   sessions: ChatSession[]
   selectedSession: string | null
@@ -125,6 +166,49 @@ const getAvatarLetter = (name: string) => {
   if (!name) return '?'
   return [...name][0] || '?'
 }
+
+const SESSION_DETAIL_DIAG_STEP_LABELS: Record<SessionDetailDiagStepKey, string> = {
+  init: '初始化会话状态',
+  reconnect: '强制重连 chat 服务',
+  exportRecords: '加载导出记录',
+  sessionDetail: '加载会话详情 (getSessionDetail)',
+  groupInfo: '加载群扩展信息',
+  finish: '结束'
+}
+
+const SESSION_DETAIL_DIAG_STEP_ORDER: SessionDetailDiagStepKey[] = [
+  'init',
+  'reconnect',
+  'exportRecords',
+  'sessionDetail',
+  'groupInfo',
+  'finish'
+]
+
+const createSessionDetailDiagnostics = (
+  runId: number,
+  requestId: number,
+  sessionId: string,
+  source: 'select' | 'refresh',
+  context?: SessionDetailLoadDiagnostics['context']
+): SessionDetailLoadDiagnostics => ({
+  runId,
+  requestId,
+  source,
+  sessionId,
+  status: 'running',
+  startedAt: Date.now(),
+  context,
+  steps: {
+    init: { status: 'pending' },
+    reconnect: { status: 'pending' },
+    exportRecords: { status: 'pending' },
+    sessionDetail: { status: 'pending' },
+    groupInfo: { status: 'pending' },
+    finish: { status: 'pending' }
+  },
+  events: []
+})
 
 const matchesSessionTypeFilter = (session: ChatSession, filter: SessionTypeFilter) => {
   if (filter === 'group') return session.accountType === 'group'
@@ -270,6 +354,9 @@ function ExportPage() {
   const [isLoadingDetail, setIsLoadingDetail] = useState(false)
   const [isLoadingGroupInfo, setIsLoadingGroupInfo] = useState(false)
   const [exportRecords, setExportRecords] = useState<{ exportTime: number; format: string; messageCount: number }[]>([])
+  const [sessionDetailDiagnostics, setSessionDetailDiagnostics] = useState<SessionDetailLoadDiagnostics | null>(null)
+  const [showSessionDetailDiagnostics, setShowSessionDetailDiagnostics] = useState(false)
+  const [isRefreshingSessionDetail, setIsRefreshingSessionDetail] = useState(false)
   const [showExportSettings, setShowExportSettings] = useState(false)
   const [showMoreMenu, setShowMoreMenu] = useState(false)
   const [showUsageTipsPopover, setShowUsageTipsPopover] = useState(false)
@@ -321,6 +408,7 @@ function ExportPage() {
   const chatCacheDataLoadedAtRef = useRef(0)
   const pendingCachedSelectedSessionRef = useRef<string | null>(null)
   const identityChipCopyResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const sessionDetailDiagRunIdRef = useRef(0)
 
   useEffect(() => {
     sessionTypeFilterRef.current = sessionTypeFilter
@@ -824,6 +912,140 @@ function ExportPage() {
       <span>加载中...</span>
     </span>
   )
+
+  const toDiagSummary = useCallback((value: unknown, maxLen = 1200) => {
+    if (value == null) return undefined
+    try {
+      const text = JSON.stringify(value, (_key, v) => {
+        if (Array.isArray(v) && v.length > 20) {
+          return [...v.slice(0, 20), `...(${v.length - 20} more)`]
+        }
+        return v
+      })
+      if (!text) return undefined
+      return text.length > maxLen ? `${text.slice(0, maxLen)}...<truncated ${text.length - maxLen} chars>` : text
+    } catch {
+      return String(value)
+    }
+  }, [])
+
+  const updateSessionDetailDiagStep = useCallback((
+    runId: number,
+    step: SessionDetailDiagStepKey,
+    status: SessionDetailDiagStepStatus,
+    message?: string,
+    payload?: unknown
+  ) => {
+    setSessionDetailDiagnostics(prev => {
+      if (!prev || prev.runId !== runId) return prev
+      const prevStep = prev.steps[step]
+      const now = Date.now()
+      const isLoading = status === 'loading'
+      const nextStartedAt = isLoading ? now : (prevStep.startedAt ?? prevStep.updatedAt)
+      const durationMs = (!isLoading && nextStartedAt) ? Math.max(0, now - nextStartedAt) : prevStep.durationMs
+      return {
+        ...prev,
+        steps: {
+          ...prev.steps,
+          [step]: {
+            status,
+            message,
+            payloadSummary: payload !== undefined ? toDiagSummary(payload) : prevStep.payloadSummary,
+            startedAt: nextStartedAt,
+            durationMs,
+            updatedAt: now
+          }
+        }
+      }
+    })
+  }, [toDiagSummary])
+
+  const appendSessionDetailDiagEvent = useCallback((
+    runId: number,
+    level: 'info' | 'warn' | 'error',
+    message: string,
+    data?: unknown
+  ) => {
+    setSessionDetailDiagnostics(prev => {
+      if (!prev || prev.runId !== runId) return prev
+      const event: SessionDetailDiagEvent = {
+        ts: Date.now(),
+        level,
+        message,
+        data: data !== undefined ? toDiagSummary(data, 2000) : undefined
+      }
+      const nextEvents = [...prev.events, event]
+      return {
+        ...prev,
+        events: nextEvents.length > 40 ? nextEvents.slice(-40) : nextEvents
+      }
+    })
+  }, [toDiagSummary])
+
+  const finishSessionDetailDiag = useCallback((
+    runId: number,
+    status: 'success' | 'error',
+    error?: string
+  ) => {
+    setSessionDetailDiagnostics(prev => {
+      if (!prev || prev.runId !== runId) return prev
+      return {
+        ...prev,
+        status,
+        error,
+        finishedAt: Date.now()
+      }
+    })
+  }, [])
+
+  const formatDiagTime = useCallback((ts?: number) => {
+    if (!ts) return '--'
+    return new Date(ts).toLocaleTimeString('zh-CN', { hour12: false })
+  }, [])
+
+  const getSessionDetailDiagnosticsText = useCallback(() => {
+    if (!sessionDetailDiagnostics) return '暂无会话详情诊断记录'
+    const lines: string[] = []
+    lines.push(`runId: ${sessionDetailDiagnostics.runId}`)
+    lines.push(`requestId: ${sessionDetailDiagnostics.requestId}`)
+    lines.push(`会话: ${sessionDetailDiagnostics.sessionId}`)
+    lines.push(`来源: ${sessionDetailDiagnostics.source === 'refresh' ? '手动刷新' : '选择会话'}`)
+    lines.push(`状态: ${sessionDetailDiagnostics.status}`)
+    if (sessionDetailDiagnostics.context) {
+      lines.push(`上下文: ${JSON.stringify(sessionDetailDiagnostics.context)}`)
+    }
+    lines.push(`开始: ${new Date(sessionDetailDiagnostics.startedAt).toLocaleString('zh-CN')}`)
+    if (sessionDetailDiagnostics.finishedAt) {
+      lines.push(`结束: ${new Date(sessionDetailDiagnostics.finishedAt).toLocaleString('zh-CN')}`)
+      lines.push(`耗时: ${Math.max(0, sessionDetailDiagnostics.finishedAt - sessionDetailDiagnostics.startedAt)} ms`)
+    }
+    SESSION_DETAIL_DIAG_STEP_ORDER.forEach(step => {
+      const item = sessionDetailDiagnostics.steps[step]
+      const time = item.updatedAt ? formatDiagTime(item.updatedAt) : '--'
+      lines.push(`- ${SESSION_DETAIL_DIAG_STEP_LABELS[step]}: ${item.status}${item.message ? ` | ${item.message}` : ''}${item.durationMs != null ? ` | ${item.durationMs}ms` : ''} | ${time}`)
+      if (item.payloadSummary) {
+        lines.push(`  payload: ${item.payloadSummary}`)
+      }
+    })
+    if (sessionDetailDiagnostics.events.length > 0) {
+      lines.push('事件时间线:')
+      sessionDetailDiagnostics.events.forEach((event, idx) => {
+        lines.push(`${idx + 1}. [${formatDiagTime(event.ts)}] ${event.level.toUpperCase()} ${event.message}${event.data ? ` | ${event.data}` : ''}`)
+      })
+    }
+    if (sessionDetailDiagnostics.error) {
+      lines.push(`错误: ${sessionDetailDiagnostics.error}`)
+    }
+    return lines.join('\n')
+  }, [formatDiagTime, sessionDetailDiagnostics])
+
+  const copySessionDetailDiagnostics = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(getSessionDetailDiagnosticsText())
+    } catch (e) {
+      console.error('复制会话详情诊断信息失败:', e)
+    }
+  }, [getSessionDetailDiagnosticsText])
 
   const toLocalFileUrl = (localPath?: string) => {
     if (!localPath) return undefined
@@ -1520,8 +1742,38 @@ function ExportPage() {
     commonGroupMessageCountsStatus
   ])
 
-  const selectSession = async (username: string) => {
+  const selectSession = async (username: string, options?: SelectSessionOptions) => {
+    const source = options?.source || 'select'
+    const forceReconnect = Boolean(options?.forceReconnect)
     const requestId = ++sessionDetailRequestIdRef.current
+    const diagRunId = ++sessionDetailDiagRunIdRef.current
+    const selectedSessionBefore = selectedSession
+    const sessionAccountType = sessionByUsername.get(username)?.accountType || (username.includes('@chatroom') ? 'group' : 'unknown')
+    setSessionDetailDiagnostics(createSessionDetailDiagnostics(diagRunId, requestId, username, source, {
+      forceReconnect,
+      selectedSessionBefore,
+      sessionAccountType
+    }))
+    updateSessionDetailDiagStep(diagRunId, 'init', 'loading', '重置右侧详情状态', {
+      source,
+      forceReconnect,
+      username,
+      requestId,
+      selectedSessionBefore,
+      sessionAccountType
+    })
+    appendSessionDetailDiagEvent(diagRunId, 'info', '开始会话详情加载', {
+      requestId,
+      source,
+      forceReconnect,
+      username,
+      selectedSessionBefore,
+      sessionAccountType
+    })
+    if (source === 'refresh') {
+      setIsRefreshingSessionDetail(true)
+      setShowSessionDetailDiagnostics(true)
+    }
     groupFriendMessageCountsRequestIdRef.current++
     commonGroupMessageCountsRequestIdRef.current++
     sessionImageAssetsRequestIdRef.current++
@@ -1560,21 +1812,82 @@ function ExportPage() {
     setExportRecords([])
     setIsLoadingDetail(true)
     setIsLoadingGroupInfo(false)
+    updateSessionDetailDiagStep(diagRunId, 'init', 'success', '详情区状态已重置', {
+      selectedSessionAfterReset: username
+    })
+    if (forceReconnect) {
+      updateSessionDetailDiagStep(diagRunId, 'reconnect', 'loading', '准备重连聊天服务')
+      appendSessionDetailDiagEvent(diagRunId, 'info', '准备调用 chat.connect')
+    } else {
+      updateSessionDetailDiagStep(diagRunId, 'reconnect', 'skipped', '普通会话切换不强制重连')
+    }
+    updateSessionDetailDiagStep(diagRunId, 'exportRecords', 'loading', '读取导出记录中')
 
-    void (async () => {
+    const isRequestActive = () => requestId === sessionDetailRequestIdRef.current
+    const markSupersededIfNeeded = () => {
+      if (isRequestActive()) return false
+      const supersededError = `请求已被新的会话切换覆盖 (currentRequestId=${sessionDetailRequestIdRef.current}, localRequestId=${requestId})`
+      appendSessionDetailDiagEvent(diagRunId, 'warn', '请求被覆盖', {
+        currentRequestId: sessionDetailRequestIdRef.current,
+        localRequestId: requestId,
+        selectedSessionNow: selectedSession
+      })
+      updateSessionDetailDiagStep(diagRunId, 'finish', 'error', supersededError)
+      finishSessionDetailDiag(diagRunId, 'error', supersededError)
+      return true
+    }
+
+    const exportRecordsTask = (async () => {
       try {
         const records = await window.electronAPI.export.getExportRecords(username)
-        if (requestId !== sessionDetailRequestIdRef.current) return
+        if (!isRequestActive()) return
         setExportRecords(records)
-      } catch { }
+        const exportRecordsSummary = {
+          count: records.length,
+          latest: records[0] || null
+        }
+        updateSessionDetailDiagStep(diagRunId, 'exportRecords', 'success', `共 ${records.length} 条导出记录`, exportRecordsSummary)
+        appendSessionDetailDiagEvent(diagRunId, 'info', '导出记录加载完成', exportRecordsSummary)
+      } catch (e) {
+        if (!isRequestActive()) return
+        updateSessionDetailDiagStep(diagRunId, 'exportRecords', 'error', String(e), { error: String(e) })
+        appendSessionDetailDiagEvent(diagRunId, 'error', '导出记录加载失败', { error: String(e) })
+      }
     })()
 
+    let finalError: string | null = null
     try {
+      if (forceReconnect) {
+        const connectResult = await window.electronAPI.chat.connect()
+        if (markSupersededIfNeeded()) return
+        if (!connectResult.success) {
+          const message = connectResult.error || 'chat.connect 失败'
+          updateSessionDetailDiagStep(diagRunId, 'reconnect', 'error', message, connectResult)
+          appendSessionDetailDiagEvent(diagRunId, 'error', 'chat.connect 失败', connectResult)
+          throw new Error(message)
+        }
+        updateSessionDetailDiagStep(diagRunId, 'reconnect', 'success', 'chat.connect 成功', connectResult)
+        appendSessionDetailDiagEvent(diagRunId, 'info', 'chat.connect 成功', connectResult)
+      }
+
+      updateSessionDetailDiagStep(diagRunId, 'sessionDetail', 'loading', '请求会话详情中')
       const detailResult = await window.electronAPI.chat.getSessionDetail(username, { includeGroupInfo: false })
-      if (requestId !== sessionDetailRequestIdRef.current) return
+      if (markSupersededIfNeeded()) return
 
       if (detailResult.success && detailResult.detail) {
         const isGroupChat = username.includes('@chatroom')
+        const detailSummary = {
+          success: detailResult.success,
+          wxid: detailResult.detail.wxid,
+          messageCount: detailResult.detail.messageCount,
+          imageCount: detailResult.detail.imageCount,
+          videoCount: detailResult.detail.videoCount,
+          voiceCount: detailResult.detail.voiceCount,
+          emojiCount: detailResult.detail.emojiCount,
+          commonGroupCount: detailResult.detail.commonGroupCount,
+          messageTablesCount: detailResult.detail.messageTables?.length || 0,
+          isGroupChat
+        }
         setSessionDetail({
           wxid: detailResult.detail.wxid,
           remark: detailResult.detail.remark,
@@ -1592,46 +1905,108 @@ function ExportPage() {
           messageTables: detailResult.detail.messageTables || [],
           groupInfo: isGroupChat ? {} : detailResult.detail.groupInfo,
         })
+        updateSessionDetailDiagStep(
+          diagRunId,
+          'sessionDetail',
+          'success',
+          `消息 ${Number(detailResult.detail.messageCount || 0).toLocaleString()} 条，表 ${detailResult.detail.messageTables?.length || 0} 个`
+          , detailSummary
+        )
+        appendSessionDetailDiagEvent(diagRunId, 'info', 'getSessionDetail 成功', detailSummary)
 
         if (isGroupChat) {
           setIsLoadingGroupInfo(true)
-          void (async () => {
-            try {
-              const groupResult = await window.electronAPI.chat.getSessionGroupInfo(username)
-              if (requestId !== sessionDetailRequestIdRef.current) return
-              if (groupResult.success) {
-                setSessionDetail(prev => {
-                  if (!prev || prev.wxid !== username) return prev
-                  return {
-                    ...prev,
-                    groupInfo: groupResult.groupInfo || {}
-                  }
-                })
+          updateSessionDetailDiagStep(diagRunId, 'groupInfo', 'loading', '请求群扩展信息中')
+          appendSessionDetailDiagEvent(diagRunId, 'info', '准备调用 getSessionGroupInfo', { username })
+          try {
+            const groupResult = await window.electronAPI.chat.getSessionGroupInfo(username)
+            if (markSupersededIfNeeded()) return
+            if (groupResult.success) {
+              const groupSummary = {
+                success: groupResult.success,
+                ownerUsername: groupResult.groupInfo?.ownerUsername,
+                ownerDisplayName: groupResult.groupInfo?.ownerDisplayName,
+                memberCount: groupResult.groupInfo?.memberCount,
+                friendMemberCount: groupResult.groupInfo?.friendMemberCount,
+                friendMembersCount: groupResult.groupInfo?.friendMembers?.length || 0,
+                selfMessageCount: groupResult.groupInfo?.selfMessageCount
               }
-            } catch { }
-            finally {
-              if (requestId === sessionDetailRequestIdRef.current) {
-                setIsLoadingGroupInfo(false)
-              }
+              setSessionDetail(prev => {
+                if (!prev || prev.wxid !== username) return prev
+                return {
+                  ...prev,
+                  groupInfo: groupResult.groupInfo || {}
+                }
+              })
+              updateSessionDetailDiagStep(diagRunId, 'groupInfo', 'success', '群扩展信息加载完成', groupSummary)
+              appendSessionDetailDiagEvent(diagRunId, 'info', 'getSessionGroupInfo 成功', groupSummary)
+            } else {
+              updateSessionDetailDiagStep(diagRunId, 'groupInfo', 'error', groupResult.error || '获取群扩展信息失败', groupResult)
+              appendSessionDetailDiagEvent(diagRunId, 'error', 'getSessionGroupInfo 返回失败', groupResult)
             }
-          })()
+          } catch (e) {
+            if (!isRequestActive()) return
+            updateSessionDetailDiagStep(diagRunId, 'groupInfo', 'error', String(e), { error: String(e) })
+            appendSessionDetailDiagEvent(diagRunId, 'error', 'getSessionGroupInfo 异常', { error: String(e) })
+          } finally {
+            if (isRequestActive()) {
+              setIsLoadingGroupInfo(false)
+            }
+          }
+        } else {
+          updateSessionDetailDiagStep(diagRunId, 'groupInfo', 'skipped', '非群聊会话')
         }
       } else {
+        const errorMessage = detailResult.error || 'getSessionDetail 返回空结果'
+        updateSessionDetailDiagStep(diagRunId, 'sessionDetail', 'error', errorMessage, detailResult)
+        appendSessionDetailDiagEvent(diagRunId, 'error', 'getSessionDetail 返回失败', detailResult)
         console.error('加载会话详情失败:', {
           username,
-          error: detailResult.error || 'unknown error',
+          error: errorMessage,
           note: '若会话列表来自缓存且未触发 chat.connect()，这里会失败'
         })
+        throw new Error(errorMessage)
       }
     } catch (e) {
+      finalError = String(e)
       console.error('加载会话详情异常:', e)
+      appendSessionDetailDiagEvent(diagRunId, 'error', '会话详情加载流程异常', { error: finalError })
+      setShowSessionDetailDiagnostics(true)
     }
     finally {
-      if (requestId === sessionDetailRequestIdRef.current) {
+      await exportRecordsTask
+      if (isRequestActive()) {
+        if (finalError) {
+          updateSessionDetailDiagStep(diagRunId, 'finish', 'error', finalError, {
+            requestId,
+            currentRequestId: sessionDetailRequestIdRef.current
+          })
+          appendSessionDetailDiagEvent(diagRunId, 'error', '流程结束（失败）', { error: finalError })
+          finishSessionDetailDiag(diagRunId, 'error', finalError)
+        } else {
+          updateSessionDetailDiagStep(diagRunId, 'finish', 'success', '详情加载流程结束', {
+            requestId,
+            currentRequestId: sessionDetailRequestIdRef.current
+          })
+          appendSessionDetailDiagEvent(diagRunId, 'info', '流程结束（成功）', { requestId })
+          finishSessionDetailDiag(diagRunId, 'success')
+        }
         setIsLoadingDetail(false)
+      }
+      if (source === 'refresh') {
+        setIsRefreshingSessionDetail(false)
       }
     }
   }
+
+  const handleRefreshSelectedSessionDetail = useCallback(() => {
+    if (!selectedSession) return
+    setShowSessionDetailDiagnostics(true)
+    void selectSession(selectedSession, {
+      source: 'refresh',
+      forceReconnect: true
+    })
+  }, [selectedSession, selectSession])
 
   useEffect(() => {
     const cachedSelectedSession = pendingCachedSelectedSessionRef.current
@@ -2276,62 +2651,299 @@ function ExportPage() {
                     const subtitleParts = subtitleCandidates.filter((value, index, list) => (
                       value !== primaryName && list.indexOf(value) === index
                     ))
+                    const diag = sessionDetailDiagnostics
+                    const diagStatusLabel = diag
+                      ? (diag.status === 'running' ? '加载中' : diag.status === 'success' ? '成功' : diag.status === 'error' ? '失败' : '待执行')
+                      : '未执行'
+                    const diagStatusColor = diag
+                      ? (diag.status === 'running' ? '#2563eb' : diag.status === 'success' ? '#059669' : diag.status === 'error' ? '#dc2626' : 'var(--text-tertiary)')
+                      : 'var(--text-tertiary)'
+                    const diagLatestTs = diag?.finishedAt || diag?.startedAt
+                    const renderDiagStepStatus = (status: SessionDetailDiagStepStatus) => {
+                      if (status === 'loading') {
+                        return (
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: '#2563eb', fontSize: 12 }}>
+                            <Loader2 size={12} className="spin" />
+                            <span>加载中</span>
+                          </span>
+                        )
+                      }
+                      if (status === 'success') {
+                        return (
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: '#059669', fontSize: 12 }}>
+                            <CheckCircle size={12} />
+                            <span>成功</span>
+                          </span>
+                        )
+                      }
+                      if (status === 'error') {
+                        return (
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: '#dc2626', fontSize: 12 }}>
+                            <XCircle size={12} />
+                            <span>失败</span>
+                          </span>
+                        )
+                      }
+                      if (status === 'skipped') {
+                        return <span style={{ color: 'var(--text-tertiary)', fontSize: 12 }}>跳过</span>
+                      }
+                      return <span style={{ color: 'var(--text-tertiary)', fontSize: 12 }}>待执行</span>
+                    }
                     return (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 14, padding: '20px 16px 28px' }}>
-                        <div className="session-identity-card">
-                          <div className="export-avatar session-identity-avatar">
-                            {session?.avatarUrl ? (
-                              <img src={session.avatarUrl} alt="" />
-                            ) : (
-                              <span className="session-identity-avatar-fallback">
-                                {session?.username.includes('@chatroom') ? '群' : getAvatarLetter(session?.displayName || session?.username || '')}
-                              </span>
-                            )}
-                          </div>
-                          <div className="session-identity-main">
-                            <div className="session-identity-title" title={primaryName || undefined}>
-                              {primaryName}
+                        <div style={{ display: 'flex', gap: 10, alignItems: 'stretch' }}>
+                          <div className="session-identity-card" style={{ flex: 1 }}>
+                            <div className="export-avatar session-identity-avatar">
+                              {session?.avatarUrl ? (
+                                <img src={session.avatarUrl} alt="" />
+                              ) : (
+                                <span className="session-identity-avatar-fallback">
+                                  {session?.username.includes('@chatroom') ? '群' : getAvatarLetter(session?.displayName || session?.username || '')}
+                                </span>
+                              )}
                             </div>
-                            {subtitleParts.length > 0 && (
-                              <div className="session-identity-subtitle" title={subtitleParts.join(' · ')}>
-                                {subtitleParts.join(' · ')}
+                            <div className="session-identity-main">
+                              <div className="session-identity-title" title={primaryName || undefined}>
+                                {primaryName}
                               </div>
-                            )}
-                            {sessionDetail && (
-                              <div className="session-identity-chips">
-                                <button
-                                  type="button"
-                                  className={`session-identity-chip session-identity-chip-mono ${copiedIdentityChip === 'wxid' ? 'copied' : ''}`}
-                                  title={`点击复制 wxid: ${sessionDetail.wxid}`}
-                                  onClick={() => { void copyIdentityValue(sessionDetail.wxid, 'wxid') }}
-                                >
-                                  <span className="session-identity-chip-label">wxid</span>
-                                  <span className="session-identity-chip-value">{sessionDetail.wxid}</span>
-                                  {copiedIdentityChip === 'wxid' && (
-                                    <span className="session-identity-chip-state">已复制</span>
-                                  )}
-                                </button>
-                                {sessionDetail.alias && (
+                              {subtitleParts.length > 0 && (
+                                <div className="session-identity-subtitle" title={subtitleParts.join(' · ')}>
+                                  {subtitleParts.join(' · ')}
+                                </div>
+                              )}
+                              {sessionDetail && (
+                                <div className="session-identity-chips">
                                   <button
                                     type="button"
-                                    className={`session-identity-chip ${copiedIdentityChip === 'alias' ? 'copied' : ''}`}
-                                    title={`点击复制 微信号: ${sessionDetail.alias}`}
-                                    onClick={() => {
-                                      if (sessionDetail.alias) {
-                                        void copyIdentityValue(sessionDetail.alias, 'alias')
-                                      }
-                                    }}
+                                    className={`session-identity-chip session-identity-chip-mono ${copiedIdentityChip === 'wxid' ? 'copied' : ''}`}
+                                    title={`点击复制 wxid: ${sessionDetail.wxid}`}
+                                    onClick={() => { void copyIdentityValue(sessionDetail.wxid, 'wxid') }}
                                   >
-                                    <span className="session-identity-chip-label">微信号</span>
-                                    <span className="session-identity-chip-value">{sessionDetail.alias}</span>
-                                    {copiedIdentityChip === 'alias' && (
+                                    <span className="session-identity-chip-label">wxid</span>
+                                    <span className="session-identity-chip-value">{sessionDetail.wxid}</span>
+                                    {copiedIdentityChip === 'wxid' && (
                                       <span className="session-identity-chip-state">已复制</span>
                                     )}
                                   </button>
-                                )}
-                              </div>
-                            )}
+                                  {sessionDetail.alias && (
+                                    <button
+                                      type="button"
+                                      className={`session-identity-chip ${copiedIdentityChip === 'alias' ? 'copied' : ''}`}
+                                      title={`点击复制 微信号: ${sessionDetail.alias}`}
+                                      onClick={() => {
+                                        if (sessionDetail.alias) {
+                                          void copyIdentityValue(sessionDetail.alias, 'alias')
+                                        }
+                                      }}
+                                    >
+                                      <span className="session-identity-chip-label">微信号</span>
+                                      <span className="session-identity-chip-value">{sessionDetail.alias}</span>
+                                      {copiedIdentityChip === 'alias' && (
+                                        <span className="session-identity-chip-state">已复制</span>
+                                      )}
+                                    </button>
+                                  )}
+                                </div>
+                              )}
+                            </div>
                           </div>
+                          <button
+                            type="button"
+                            onClick={handleRefreshSelectedSessionDetail}
+                            disabled={!selectedSession || isRefreshingSessionDetail}
+                            title="强制重连 chat 服务并重新加载当前会话详情"
+                            style={{
+                              alignSelf: 'flex-start',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 6,
+                              height: 38,
+                              padding: '0 12px',
+                              borderRadius: 10,
+                              border: '1px solid rgba(var(--primary-rgb), 0.22)',
+                              background: isRefreshingSessionDetail ? 'rgba(var(--primary-rgb), 0.08)' : 'var(--bg-primary)',
+                              color: 'var(--text-primary)',
+                              cursor: (!selectedSession || isRefreshingSessionDetail) ? 'not-allowed' : 'pointer',
+                              opacity: (!selectedSession || isRefreshingSessionDetail) ? 0.6 : 1,
+                              flexShrink: 0
+                            }}
+                          >
+                            <RefreshCw size={14} className={isRefreshingSessionDetail ? 'spin' : ''} />
+                            <span style={{ fontSize: 12, fontWeight: 600 }}>刷新</span>
+                          </button>
+                        </div>
+                        <div style={{
+                          border: '1px solid var(--border-color)',
+                          borderRadius: 12,
+                          background: 'var(--bg-secondary)',
+                          padding: 10,
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: 8
+                        }}>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>诊断状态</span>
+                                <span style={{ fontSize: 12, fontWeight: 600, color: diagStatusColor }}>{diagStatusLabel}</span>
+                              </div>
+                              <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>
+                                最近一次: {diagLatestTs ? formatDiagTime(diagLatestTs) : '--'}
+                                {diag ? ` · ${diag.source === 'refresh' ? '手动刷新' : '选择会话'}` : ''}
+                              </div>
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                              <button
+                                type="button"
+                                onClick={() => { void copySessionDetailDiagnostics() }}
+                                disabled={!diag}
+                                title="复制会话详情诊断日志"
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  width: 28,
+                                  height: 28,
+                                  borderRadius: 8,
+                                  border: '1px solid var(--border-color)',
+                                  background: 'var(--bg-primary)',
+                                  color: 'var(--text-secondary)',
+                                  cursor: diag ? 'pointer' : 'not-allowed',
+                                  opacity: diag ? 1 : 0.5
+                                }}
+                              >
+                                <Copy size={13} />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setShowSessionDetailDiagnostics(prev => !prev)}
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: 5,
+                                  height: 28,
+                                  padding: '0 8px',
+                                  borderRadius: 8,
+                                  border: '1px solid var(--border-color)',
+                                  background: 'var(--bg-primary)',
+                                  color: 'var(--text-secondary)',
+                                  cursor: 'pointer'
+                                }}
+                              >
+                                <span style={{ fontSize: 11 }}>{showSessionDetailDiagnostics ? '收起详情' : '展开详情'}</span>
+                                <ChevronDown size={12} style={{ transform: showSessionDetailDiagnostics ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s ease' }} />
+                              </button>
+                            </div>
+                          </div>
+                          {showSessionDetailDiagnostics && (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                              {diag ? (
+                                <>
+                                  {SESSION_DETAIL_DIAG_STEP_ORDER.map(stepKey => {
+                                    const step = diag.steps[stepKey]
+                                    return (
+                                      <div
+                                        key={stepKey}
+                                        style={{
+                                          display: 'grid',
+                                          gridTemplateColumns: 'minmax(0, 1fr) auto',
+                                          gap: 8,
+                                          alignItems: 'start',
+                                          padding: '7px 8px',
+                                          borderRadius: 8,
+                                          background: 'var(--bg-primary)',
+                                          border: '1px solid rgba(0,0,0,0.03)'
+                                        }}
+                                      >
+                                        <div style={{ minWidth: 0 }}>
+                                          <div style={{ fontSize: 12, color: 'var(--text-primary)' }}>
+                                            {SESSION_DETAIL_DIAG_STEP_LABELS[stepKey]}
+                                          </div>
+                                          <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 2, wordBreak: 'break-all' }}>
+                                            {step.message || '—'}
+                                            {step.durationMs != null ? ` · ${step.durationMs}ms` : ''}
+                                            {step.updatedAt ? ` · ${formatDiagTime(step.updatedAt)}` : ''}
+                                          </div>
+                                          {step.payloadSummary && (
+                                            <div style={{
+                                              marginTop: 5,
+                                              padding: '5px 6px',
+                                              borderRadius: 6,
+                                              background: 'rgba(0,0,0,0.03)',
+                                              color: 'var(--text-secondary)',
+                                              fontSize: 10,
+                                              lineHeight: 1.35,
+                                              wordBreak: 'break-all',
+                                              fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace'
+                                            }}>
+                                              {step.payloadSummary}
+                                            </div>
+                                          )}
+                                        </div>
+                                        <div>{renderDiagStepStatus(step.status)}</div>
+                                      </div>
+                                    )
+                                  })}
+                                  {diag.events.length > 0 && (
+                                    <div style={{
+                                      marginTop: 2,
+                                      padding: '8px',
+                                      borderRadius: 8,
+                                      border: '1px solid rgba(0,0,0,0.04)',
+                                      background: 'var(--bg-primary)'
+                                    }}>
+                                      <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 6 }}>
+                                        事件时间线（最近 {diag.events.length} 条）
+                                      </div>
+                                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 180, overflowY: 'auto', paddingRight: 2 }}>
+                                        {diag.events.map((event, idx) => (
+                                          <div key={`${event.ts}-${idx}`} style={{ fontSize: 11, lineHeight: 1.35 }}>
+                                            <div style={{ color: 'var(--text-secondary)' }}>
+                                              <span style={{ color: event.level === 'error' ? '#dc2626' : event.level === 'warn' ? '#d97706' : '#2563eb', fontWeight: 600 }}>
+                                                [{event.level.toUpperCase()}]
+                                              </span>
+                                              {' '}
+                                              {formatDiagTime(event.ts)}
+                                              {' · '}
+                                              <span style={{ color: 'var(--text-primary)' }}>{event.message}</span>
+                                            </div>
+                                            {event.data && (
+                                              <div style={{
+                                                marginTop: 2,
+                                                color: 'var(--text-tertiary)',
+                                                wordBreak: 'break-all',
+                                                fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace'
+                                              }}>
+                                                {event.data}
+                                              </div>
+                                            )}
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  )}
+                                  {diag.error && (
+                                    <div style={{
+                                      padding: '8px 10px',
+                                      borderRadius: 8,
+                                      border: '1px solid rgba(220, 38, 38, 0.18)',
+                                      background: 'rgba(220, 38, 38, 0.05)',
+                                      color: '#b91c1c',
+                                      fontSize: 12,
+                                      lineHeight: 1.4,
+                                      wordBreak: 'break-all'
+                                    }}>
+                                      错误信息：{diag.error}
+                                    </div>
+                                  )}
+                                </>
+                              ) : (
+                                <div style={{ fontSize: 12, color: 'var(--text-tertiary)', padding: '4px 2px' }}>
+                                  还没有会话详情诊断记录，点击右上角“刷新”开始诊断。
+                                </div>
+                              )}
+                            </div>
+                          )}
                         </div>
                         {isLoadingDetail && !sessionDetail ? (
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8, opacity: 0.6, padding: '8px 6px' }}>
