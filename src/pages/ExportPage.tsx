@@ -248,6 +248,7 @@ function ExportPage() {
   const [showTaskCenterPopover, setShowTaskCenterPopover] = useState(false)
   const [snsUserPostCounts, setSnsUserPostCounts] = useState<Record<string, number>>({})
   const [snsUserPostCountsStatus, setSnsUserPostCountsStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
+  const [copiedIdentityChip, setCopiedIdentityChip] = useState<'wxid' | 'alias' | null>(null)
   const [options, setOptions] = useState<ExportOptions>({
     format: 'json',
     startDate: '',
@@ -288,10 +289,27 @@ function ExportPage() {
   const bootstrappedChatCacheKeyRef = useRef<string | null>(null)
   const chatCacheDataLoadedAtRef = useRef(0)
   const pendingCachedSelectedSessionRef = useRef<string | null>(null)
+  const identityChipCopyResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     sessionTypeFilterRef.current = sessionTypeFilter
   }, [sessionTypeFilter])
+
+  useEffect(() => {
+    return () => {
+      if (identityChipCopyResetTimerRef.current) {
+        clearTimeout(identityChipCopyResetTimerRef.current)
+      }
+    }
+  }, [])
+
+  useEffect(() => {
+    setCopiedIdentityChip(null)
+    if (identityChipCopyResetTimerRef.current) {
+      clearTimeout(identityChipCopyResetTimerRef.current)
+      identityChipCopyResetTimerRef.current = null
+    }
+  }, [selectedSession])
 
   const exportChatCacheKey = useMemo(() => {
     if (!isDbConnected) return ''
@@ -795,6 +813,22 @@ function ExportPage() {
       sessionId
     )
   }, [sessionByUsername, sessionDetail?.nickName, sessionDetail?.remark])
+
+  const copyIdentityValue = useCallback(async (value: string, chip: 'wxid' | 'alias') => {
+    if (!value) return
+    try {
+      await navigator.clipboard.writeText(value)
+      setCopiedIdentityChip(chip)
+      if (identityChipCopyResetTimerRef.current) {
+        clearTimeout(identityChipCopyResetTimerRef.current)
+      }
+      identityChipCopyResetTimerRef.current = setTimeout(() => {
+        setCopiedIdentityChip(current => (current === chip ? null : current))
+      }, 1200)
+    } catch (e) {
+      console.error('复制身份信息失败:', e)
+    }
+  }, [])
 
   const inspectSessionImageAssets = useCallback(async (sessionId: string) => {
     const listResult = await window.electronAPI.chat.getAllImageMessages(sessionId)
@@ -1923,47 +1957,85 @@ function ExportPage() {
                 <div className="settings-content">
                   {(() => {
                     const session = selectedSession ? sessionByUsername.get(selectedSession) : undefined
+                    const primaryName = (
+                      sessionDetail?.remark ||
+                      sessionDetail?.nickName ||
+                      session?.displayName ||
+                      selectedSession
+                    )?.trim() || selectedSession
+                    const subtitleCandidates = [
+                      sessionDetail?.nickName?.trim(),
+                      sessionDetail?.remark?.trim(),
+                      session?.displayName?.trim()
+                    ].filter(Boolean) as string[]
+                    const subtitleParts = subtitleCandidates.filter((value, index, list) => (
+                      value !== primaryName && list.indexOf(value) === index
+                    ))
                     return (
-                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16, padding: '32px 16px' }}>
-                        <div className="export-avatar" style={{ width: 64, height: 64, fontSize: 24 }}>
-                          {session?.avatarUrl ? (
-                            <img src={session.avatarUrl} alt="" style={{ width: 64, height: 64, borderRadius: 8 }} />
-                          ) : (
-                            <span style={{ width: 64, height: 64, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 8, background: 'var(--bg-secondary, #f0f0f0)' }}>
-                              {session?.username.includes('@chatroom') ? '群' : getAvatarLetter(session?.displayName || session?.username || '')}
-                            </span>
-                          )}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 14, padding: '20px 16px 28px' }}>
+                        <div className="session-identity-card">
+                          <div className="export-avatar session-identity-avatar">
+                            {session?.avatarUrl ? (
+                              <img src={session.avatarUrl} alt="" />
+                            ) : (
+                              <span className="session-identity-avatar-fallback">
+                                {session?.username.includes('@chatroom') ? '群' : getAvatarLetter(session?.displayName || session?.username || '')}
+                              </span>
+                            )}
+                          </div>
+                          <div className="session-identity-main">
+                            <div className="session-identity-title" title={primaryName || undefined}>
+                              {primaryName}
+                            </div>
+                            {subtitleParts.length > 0 && (
+                              <div className="session-identity-subtitle" title={subtitleParts.join(' · ')}>
+                                {subtitleParts.join(' · ')}
+                              </div>
+                            )}
+                            {sessionDetail && (
+                              <div className="session-identity-chips">
+                                <button
+                                  type="button"
+                                  className={`session-identity-chip session-identity-chip-mono ${copiedIdentityChip === 'wxid' ? 'copied' : ''}`}
+                                  title={`点击复制 wxid: ${sessionDetail.wxid}`}
+                                  onClick={() => { void copyIdentityValue(sessionDetail.wxid, 'wxid') }}
+                                >
+                                  <span className="session-identity-chip-label">wxid</span>
+                                  <span className="session-identity-chip-value">{sessionDetail.wxid}</span>
+                                  {copiedIdentityChip === 'wxid' && (
+                                    <span className="session-identity-chip-state">已复制</span>
+                                  )}
+                                </button>
+                                {sessionDetail.alias && (
+                                  <button
+                                    type="button"
+                                    className={`session-identity-chip ${copiedIdentityChip === 'alias' ? 'copied' : ''}`}
+                                    title={`点击复制 微信号: ${sessionDetail.alias}`}
+                                    onClick={() => {
+                                      if (sessionDetail.alias) {
+                                        void copyIdentityValue(sessionDetail.alias, 'alias')
+                                      }
+                                    }}
+                                  >
+                                    <span className="session-identity-chip-label">微信号</span>
+                                    <span className="session-identity-chip-value">{sessionDetail.alias}</span>
+                                    {copiedIdentityChip === 'alias' && (
+                                      <span className="session-identity-chip-state">已复制</span>
+                                    )}
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                          </div>
                         </div>
-                        <h3 style={{ margin: 0, textAlign: 'center' }}>{session?.displayName || selectedSession}</h3>
                         {isLoadingDetail && !sessionDetail ? (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, opacity: 0.6 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, opacity: 0.6, padding: '8px 6px' }}>
                             <Loader2 size={16} className="spin" />
                             <span>加载中...</span>
                           </div>
                         ) : sessionDetail ? (
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: '100%', padding: '0 16px' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-color, #e0e0e0)' }}>
-                              <span style={{ opacity: 0.6 }}>微信ID</span>
-                              <span style={{ fontFamily: 'monospace', fontSize: 13 }}>{sessionDetail.wxid}</span>
-                            </div>
-                            {sessionDetail.remark && (
-                              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-color, #e0e0e0)' }}>
-                                <span style={{ opacity: 0.6 }}>备注</span>
-                                <span>{sessionDetail.remark}</span>
-                              </div>
-                            )}
-                            {sessionDetail.nickName && (
-                              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-color, #e0e0e0)' }}>
-                                <span style={{ opacity: 0.6 }}>昵称</span>
-                                <span>{sessionDetail.nickName}</span>
-                              </div>
-                            )}
-                            {sessionDetail.alias && (
-                              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-color, #e0e0e0)' }}>
-                                <span style={{ opacity: 0.6 }}>微信号</span>
-                                <span>{sessionDetail.alias}</span>
-                              </div>
-                            )}
+                            <div className="session-detail-divider" />
                             <div style={{ height: 8 }} />
                             <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-color, #e0e0e0)' }}>
                               <span style={{ opacity: 0.6 }}>消息总数</span>
