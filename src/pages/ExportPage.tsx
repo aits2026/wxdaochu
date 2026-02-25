@@ -159,13 +159,41 @@ interface ExportSessionRowData {
   sessions: ChatSession[]
   selectedSession: string | null
   sessionMessageCounts: SessionMessageCountMap
+  sessionCardStatsMap: Record<string, SessionCardStats>
   onSelect: (username: string) => void
+  onEnsureCardStats: (session: ChatSession) => void
+}
+
+interface SessionCardGroupInfo {
+  memberCount?: number
+  friendMemberCount?: number
+  selfMessageCount?: number
+}
+
+interface SessionCardStats {
+  status: 'idle' | 'loading' | 'ready' | 'error'
+  error?: string
+  messageCount?: number
+  firstMessageTime?: number
+  latestMessageTime?: number
+  imageCount?: number
+  videoCount?: number
+  voiceCount?: number
+  emojiCount?: number
+  commonGroupCount?: number
+  groupInfo?: SessionCardGroupInfo
+  groupInfoLoading?: boolean
+  updatedAt?: number
 }
 
 const getAvatarLetter = (name: string) => {
   if (!name) return '?'
   return [...name][0] || '?'
 }
+
+const formatSessionCardDate = (timestamp?: number) => (
+  timestamp ? new Date(timestamp * 1000).toLocaleDateString('zh-CN') : '--'
+)
 
 const SESSION_DETAIL_DIAG_STEP_LABELS: Record<SessionDetailDiagStepKey, string> = {
   init: '初始化会话状态',
@@ -217,35 +245,145 @@ const matchesSessionTypeFilter = (session: ChatSession, filter: SessionTypeFilte
 }
 
 const ExportSessionRow = (props: RowComponentProps<ExportSessionRowData>) => {
-  const { index, style, sessions, selectedSession, sessionMessageCounts, onSelect } = props
+  const { index, style, sessions, selectedSession, sessionMessageCounts, sessionCardStatsMap, onSelect, onEnsureCardStats } = props
   const session = sessions[index]
-  const messageCount = sessionMessageCounts[session.username]
+  const cardStats = sessionCardStatsMap[session.username]
+  const messageCount = cardStats?.messageCount ?? sessionMessageCounts[session.username]
   const isGroup = session.username.includes('@chatroom')
+  const isOfficial = session.accountType === 'official'
+  const isPrivate = session.accountType === 'friend'
+  const statsLoading = cardStats?.status === 'loading' || (isGroup && cardStats?.groupInfoLoading)
+  const mediaStats = [
+    { label: '图片', icon: <Image size={12} />, count: cardStats?.imageCount },
+    { label: '表情', icon: <Smile size={12} />, count: cardStats?.emojiCount },
+    { label: '视频', icon: <Video size={12} />, count: cardStats?.videoCount },
+    { label: '语音', icon: <Mic size={12} />, count: cardStats?.voiceCount }
+  ] as const
+
+  useEffect(() => {
+    onEnsureCardStats(session)
+  }, [onEnsureCardStats, session])
 
   return (
-    <div style={style}>
+    <div style={{ ...style, padding: '8px 12px', boxSizing: 'border-box' }}>
       <div
         className={`export-session-item ${selectedSession === session.username ? 'selected' : ''}`}
         onClick={() => onSelect(session.username)}
       >
-        <div className="export-avatar">
-          {session.avatarUrl ? (
-            <img src={session.avatarUrl} alt="" loading="lazy" />
-          ) : (
-            <span className={isGroup ? 'group-placeholder' : ''}>
-              {isGroup ? '群' : getAvatarLetter(session.displayName || session.username)}
-            </span>
+        <div className="export-session-card-header">
+          <div className="export-avatar">
+            {session.avatarUrl ? (
+              <img src={session.avatarUrl} alt="" loading="lazy" />
+            ) : (
+              <span className={isGroup ? 'group-placeholder' : ''}>
+                {isGroup ? '群' : getAvatarLetter(session.displayName || session.username)}
+              </span>
+            )}
+          </div>
+          <div className="export-session-info">
+            <div className="export-session-name-row">
+              <div className="export-session-name">{session.displayName || session.username}</div>
+              <span className={`export-session-type-badge ${isGroup ? 'group' : isPrivate ? 'private' : 'official'}`}>
+                {isGroup ? '群聊' : isPrivate ? '私聊' : '公众号'}
+              </span>
+            </div>
+            <div className="export-session-summary">{session.summary || '暂无消息'}</div>
+          </div>
+          <div className="export-session-count">
+            <div className="export-session-count-label">总消息</div>
+            <div className="export-session-count-value">
+              {messageCount !== undefined ? messageCount.toLocaleString() : '--'}
+            </div>
+          </div>
+        </div>
+
+        <div className="export-session-card-metrics">
+          {isPrivate && (
+            <>
+              <div className="session-metric-pill">
+                <span className="metric-label">共同群聊</span>
+                <span className="metric-value">
+                  {cardStats?.commonGroupCount !== undefined ? `${cardStats.commonGroupCount.toLocaleString()} 个` : '--'}
+                </span>
+              </div>
+              <div className="session-metric-pill">
+                <span className="metric-label">最早消息</span>
+                <span className="metric-value">{formatSessionCardDate(cardStats?.firstMessageTime)}</span>
+              </div>
+              <div className="session-metric-pill">
+                <span className="metric-label">最新消息</span>
+                <span className="metric-value">{formatSessionCardDate(cardStats?.latestMessageTime)}</span>
+              </div>
+            </>
+          )}
+
+          {isGroup && (
+            <>
+              <div className="session-metric-pill">
+                <span className="metric-label">群人数</span>
+                <span className="metric-value">
+                  {cardStats?.groupInfo?.memberCount !== undefined ? `${cardStats.groupInfo.memberCount.toLocaleString()} 人` : '--'}
+                </span>
+              </div>
+              <div className="session-metric-pill">
+                <span className="metric-label">群内好友</span>
+                <span className="metric-value">
+                  {cardStats?.groupInfo?.friendMemberCount !== undefined ? `${cardStats.groupInfo.friendMemberCount.toLocaleString()} 人` : '--'}
+                </span>
+              </div>
+              <div className="session-metric-pill">
+                <span className="metric-label">我发消息</span>
+                <span className="metric-value">
+                  {cardStats?.groupInfo?.selfMessageCount !== undefined ? `${cardStats.groupInfo.selfMessageCount.toLocaleString()} 条` : '--'}
+                </span>
+              </div>
+              <div className="session-metric-pill">
+                <span className="metric-label">最早消息</span>
+                <span className="metric-value">{formatSessionCardDate(cardStats?.firstMessageTime)}</span>
+              </div>
+              <div className="session-metric-pill">
+                <span className="metric-label">最新消息</span>
+                <span className="metric-value">{formatSessionCardDate(cardStats?.latestMessageTime)}</span>
+              </div>
+            </>
+          )}
+
+          {isOfficial && (
+            <>
+              <div className="session-metric-pill">
+                <span className="metric-label">最早消息</span>
+                <span className="metric-value">{formatSessionCardDate(cardStats?.firstMessageTime)}</span>
+              </div>
+              <div className="session-metric-pill">
+                <span className="metric-label">最新消息</span>
+                <span className="metric-value">{formatSessionCardDate((cardStats?.latestMessageTime ?? session.lastTimestamp) || undefined)}</span>
+              </div>
+            </>
           )}
         </div>
-        <div className="export-session-info">
-          <div className="export-session-name">{session.displayName || session.username}</div>
-          <div className="export-session-summary">{session.summary || '暂无消息'}</div>
-        </div>
-        {messageCount !== undefined && (
-          <div className="export-session-count">
-            {messageCount.toLocaleString()}
+
+        <div className="export-session-card-footer">
+          <div className="session-media-pills">
+            {mediaStats.map(item => (
+              <div key={item.label} className="session-media-pill">
+                {item.icon}
+                <span>{item.label}</span>
+                <strong>{item.count !== undefined ? item.count.toLocaleString() : '--'}</strong>
+              </div>
+            ))}
           </div>
-        )}
+          {statsLoading && (
+            <div className="session-card-inline-status">
+              <Loader2 size={12} className="spin" />
+              <span>统计中</span>
+            </div>
+          )}
+          {cardStats?.status === 'error' && !statsLoading && (
+            <div className="session-card-inline-status error">
+              <span>统计失败</span>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   )
@@ -318,6 +456,7 @@ function ExportPage() {
 
   const [showFormatPicker, setShowFormatPicker] = useState(false)
   const [selectedSession, setSelectedSession] = useState<string | null>(null)
+  const [sessionCardStatsMap, setSessionCardStatsMap] = useState<Record<string, SessionCardStats>>({})
   const [sessionDetail, setSessionDetail] = useState<{
     wxid: string
     remark?: string
@@ -397,6 +536,8 @@ function ExportPage() {
   const deferredSessionMessageCounts = useDeferredValue(sessionMessageCounts)
   const sessionCountRequestIdRef = useRef(0)
   const sessionDetailRequestIdRef = useRef(0)
+  const sessionCardStatsMapRef = useRef<Record<string, SessionCardStats>>({})
+  const sessionCardStatsLoadingRef = useRef<Record<string, boolean>>({})
   const groupFriendMessageCountsRequestIdRef = useRef(0)
   const commonGroupMessageCountsRequestIdRef = useRef(0)
   const sessionImageOverviewRequestIdRef = useRef<Record<string, number>>({})
@@ -415,6 +556,10 @@ function ExportPage() {
   useEffect(() => {
     sessionTypeFilterRef.current = sessionTypeFilter
   }, [sessionTypeFilter])
+
+  useEffect(() => {
+    sessionCardStatsMapRef.current = sessionCardStatsMap
+  }, [sessionCardStatsMap])
 
   useEffect(() => {
     return () => {
@@ -604,6 +749,8 @@ function ExportPage() {
       const sessionsResult = await window.electronAPI.chat.getSessions()
       if (sessionsResult.success && sessionsResult.sessions) {
         setSessions(sessionsResult.sessions)
+        setSessionCardStatsMap({})
+        sessionCardStatsLoadingRef.current = {}
         chatCacheDataLoadedAtRef.current = Date.now()
 
         const currentUsernames = new Set(sessionsResult.sessions.map(s => s.username))
@@ -868,7 +1015,7 @@ function ExportPage() {
 
     const hasCountsForCurrentFiltered = filtered.length > 0 && filtered.every(s => loadedSessionCountUsernames.has(s.username))
 
-    if (sessionTypeFilter !== 'official' && hasCountsForCurrentFiltered) {
+    if (hasCountsForCurrentFiltered) {
       filtered = [...filtered].sort((a, b) => {
         const countDiff = (deferredSessionMessageCounts[b.username] || 0) - (deferredSessionMessageCounts[a.username] || 0)
         if (countDiff !== 0) return countDiff
@@ -897,6 +1044,149 @@ function ExportPage() {
     () => (selectedSession ? sessionByUsername.get(selectedSession) : undefined),
     [selectedSession, sessionByUsername]
   )
+
+  useEffect(() => {
+    if (sessions.length === 0) {
+      setSessionCardStatsMap({})
+      sessionCardStatsLoadingRef.current = {}
+      return
+    }
+    const currentUsernames = new Set(sessions.map(session => session.username))
+    setSessionCardStatsMap(prev => {
+      let changed = false
+      const next: Record<string, SessionCardStats> = {}
+      for (const [username, stats] of Object.entries(prev)) {
+        if (currentUsernames.has(username)) {
+          next[username] = stats
+        } else {
+          changed = true
+        }
+      }
+      return changed ? next : prev
+    })
+    Object.keys(sessionCardStatsLoadingRef.current).forEach(username => {
+      if (!currentUsernames.has(username)) {
+        delete sessionCardStatsLoadingRef.current[username]
+      }
+    })
+  }, [sessions])
+
+  const patchSessionCardStats = useCallback((username: string, patch: Partial<SessionCardStats>) => {
+    setSessionCardStatsMap(prev => {
+      const prevItem = prev[username] || { status: 'idle' as const }
+      return {
+        ...prev,
+        [username]: {
+          ...prevItem,
+          ...patch
+        }
+      }
+    })
+  }, [])
+
+  useEffect(() => {
+    if (!selectedSession || !sessionDetail || sessionDetail.wxid !== selectedSession) return
+
+    patchSessionCardStats(selectedSession, {
+      status: 'ready',
+      messageCount: sessionDetail.messageCount,
+      firstMessageTime: sessionDetail.firstMessageTime,
+      latestMessageTime: sessionDetail.latestMessageTime,
+      imageCount: sessionDetail.imageCount,
+      videoCount: sessionDetail.videoCount,
+      voiceCount: sessionDetail.voiceCount,
+      emojiCount: sessionDetail.emojiCount,
+      commonGroupCount: sessionDetail.commonGroupCount,
+      groupInfo: sessionDetail.groupInfo ? {
+        memberCount: sessionDetail.groupInfo.memberCount,
+        friendMemberCount: sessionDetail.groupInfo.friendMemberCount,
+        selfMessageCount: sessionDetail.groupInfo.selfMessageCount
+      } : undefined,
+      groupInfoLoading: isLoadingGroupInfo,
+      updatedAt: Date.now(),
+      error: undefined
+    })
+  }, [isLoadingGroupInfo, patchSessionCardStats, selectedSession, sessionDetail])
+
+  const ensureSessionCardStats = useCallback(async (session: ChatSession) => {
+    const username = session.username
+    const current = sessionCardStatsMapRef.current[username]
+
+    if (current?.status === 'ready' && (!username.includes('@chatroom') || current.groupInfo?.memberCount !== undefined || current.groupInfo?.friendMemberCount !== undefined || current.groupInfo?.selfMessageCount !== undefined)) {
+      return
+    }
+    if (sessionCardStatsLoadingRef.current[username]) return
+
+    sessionCardStatsLoadingRef.current[username] = true
+    patchSessionCardStats(username, {
+      status: current?.status === 'ready' ? 'ready' : 'loading',
+      error: undefined,
+      groupInfoLoading: username.includes('@chatroom')
+    })
+
+    try {
+      const detailResult = await window.electronAPI.chat.getSessionDetail(username, { includeGroupInfo: false })
+      if (!detailResult.success || !detailResult.detail) {
+        throw new Error(detailResult.error || '获取会话统计失败')
+      }
+
+      patchSessionCardStats(username, {
+        status: 'ready',
+        messageCount: detailResult.detail.messageCount,
+        firstMessageTime: detailResult.detail.firstMessageTime,
+        latestMessageTime: detailResult.detail.latestMessageTime,
+        imageCount: detailResult.detail.imageCount,
+        videoCount: detailResult.detail.videoCount,
+        voiceCount: detailResult.detail.voiceCount,
+        emojiCount: detailResult.detail.emojiCount,
+        commonGroupCount: detailResult.detail.commonGroupCount,
+        groupInfoLoading: username.includes('@chatroom'),
+        updatedAt: Date.now(),
+        error: undefined
+      })
+
+      if (username.includes('@chatroom')) {
+        const groupResult = await window.electronAPI.chat.getSessionGroupInfo(username)
+        if (groupResult.success) {
+          patchSessionCardStats(username, {
+            status: 'ready',
+            groupInfo: {
+              memberCount: groupResult.groupInfo?.memberCount,
+              friendMemberCount: groupResult.groupInfo?.friendMemberCount,
+              selfMessageCount: groupResult.groupInfo?.selfMessageCount
+            },
+            groupInfoLoading: false,
+            updatedAt: Date.now()
+          })
+        } else {
+          patchSessionCardStats(username, {
+            status: 'ready',
+            groupInfoLoading: false
+          })
+        }
+      } else {
+        patchSessionCardStats(username, {
+          groupInfoLoading: false
+        })
+      }
+    } catch (error) {
+      patchSessionCardStats(username, {
+        status: 'error',
+        error: String(error),
+        groupInfoLoading: false
+      })
+    } finally {
+      delete sessionCardStatsLoadingRef.current[username]
+    }
+  }, [patchSessionCardStats])
+
+  const closeSessionDrawer = useCallback(() => {
+    setShowExportSettings(false)
+    setShowGroupFriendsPopup(false)
+    setShowCommonGroupsPopup(false)
+    setSelectedSession(null)
+  }, [])
+
   const isSelectedFriendSession = selectedSessionItem?.accountType === 'friend'
   const selectedSessionMessageCountLabel = sessionDetail
     ? `${sessionDetail.messageCount.toLocaleString()} 条消息`
@@ -2450,7 +2740,8 @@ function ExportPage() {
       {/* 聊天记录导出 */}
       {activeTab === 'chat' && (
         <>
-          <div className="session-panel">
+          <div className="chat-export-layout">
+          <div className="session-panel chat-session-panel">
             <div className="session-account-header">
               <div className="session-account-avatar">
                 {exportAccountInfo.avatarUrl ? (
@@ -2653,12 +2944,14 @@ function ExportPage() {
                 <List
                   style={{ height: '100%', width: '100%' }}
                   rowCount={filteredSessions.length}
-                  rowHeight={72}
+                  rowHeight={196}
                   rowProps={{
                     sessions: filteredSessions,
                     selectedSession,
                     sessionMessageCounts,
-                    onSelect: selectSession
+                    sessionCardStatsMap,
+                    onSelect: selectSession,
+                    onEnsureCardStats: ensureSessionCardStats
                   }}
                   rowComponent={ExportSessionRow}
                 />
@@ -2666,10 +2959,21 @@ function ExportPage() {
             )}
           </div>
 
-          <div className="settings-panel">
+          {selectedSession && <div className="chat-session-drawer-backdrop" onClick={closeSessionDrawer} />}
+          {selectedSession && (
+            <div className="chat-session-drawer" role="dialog" aria-modal="false" aria-label="会话详情侧边栏">
+              <button
+                type="button"
+                className="chat-session-drawer-close"
+                onClick={closeSessionDrawer}
+                aria-label="关闭会话详情"
+              >
+                <X size={16} />
+              </button>
+              <div className="settings-panel chat-session-drawer-panel">
             {!selectedSession ? (
               <div className="empty-state" style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <span>请从左侧选择一个会话</span>
+                <span>请选择一个会话</span>
               </div>
             ) : !showExportSettings ? (
               <>
@@ -3692,6 +3996,9 @@ function ExportPage() {
                 </div>
               </>
             )}
+              </div>
+            </div>
+          )}
           </div>
         </>
       )}
