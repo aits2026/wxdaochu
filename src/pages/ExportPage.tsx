@@ -67,6 +67,7 @@ type LoadSessionsOptions = {
 
 const EXPORT_CHAT_CACHE_TTL_MS = 60 * 1000
 const OVERVIEW_CHECKING_TIMEOUT_MS = 20 * 1000
+const IMAGE_CACHE_RESOLVE_TIMEOUT_MS = 3000
 
 interface SessionImageDecryptOverview {
   total: number
@@ -316,6 +317,7 @@ function ExportPage() {
   const groupFriendMessageCountsRequestIdRef = useRef(0)
   const commonGroupMessageCountsRequestIdRef = useRef(0)
   const sessionImageOverviewRequestIdRef = useRef<Record<string, number>>({})
+  const sessionImageOverviewPendingRef = useRef<Record<string, boolean>>({})
   const sessionImageAssetsRequestIdRef = useRef(0)
   const sessionVideoOverviewRequestIdRef = useRef<Record<string, number>>({})
   const sessionVideoAssetsRequestIdRef = useRef(0)
@@ -875,10 +877,20 @@ function ExportPage() {
       let localPath: string | undefined
 
       try {
-        const cacheResult = await window.electronAPI.image.resolveCache({
-          sessionId,
-          imageMd5: img.imageMd5,
-          imageDatName: img.imageDatName,
+        let timeoutId: number | undefined
+        const cacheResult = await Promise.race([
+          window.electronAPI.image.resolveCache({
+            sessionId,
+            imageMd5: img.imageMd5,
+            imageDatName: img.imageDatName,
+          }),
+          new Promise<{ success: false; localPath?: string; error?: string }>((resolve) => {
+            timeoutId = window.setTimeout(() => resolve({ success: false, error: 'timeout' }), IMAGE_CACHE_RESOLVE_TIMEOUT_MS)
+          })
+        ]).finally(() => {
+          if (timeoutId !== undefined) {
+            window.clearTimeout(timeoutId)
+          }
         })
         if (cacheResult.success && cacheResult.localPath) {
           localPath = cacheResult.localPath
@@ -1005,6 +1017,9 @@ function ExportPage() {
   }, [])
 
   const refreshSessionImageOverview = useCallback(async (sessionId: string) => {
+    if (sessionImageOverviewPendingRef.current[sessionId]) return
+    sessionImageOverviewPendingRef.current[sessionId] = true
+
     const requestId = (sessionImageOverviewRequestIdRef.current[sessionId] || 0) + 1
     sessionImageOverviewRequestIdRef.current[sessionId] = requestId
 
@@ -1048,6 +1063,8 @@ function ExportPage() {
           checkingStartedAt: undefined,
         }
       }))
+    } finally {
+      delete sessionImageOverviewPendingRef.current[sessionId]
     }
   }, [inspectSessionImageAssets])
 
@@ -2464,7 +2481,7 @@ function ExportPage() {
                                             ) : currentSessionImageOverview?.status === 'checking' ? (
                                               <span className="session-media-status-pill checking">
                                                 <Loader2 size={11} className="spin" />
-                                                <span>检查中</span>
+                                                <span>解析中</span>
                                               </span>
                                             ) : hasCurrentSessionDecryptedImages ? (
                                               <>
@@ -2487,7 +2504,17 @@ function ExportPage() {
                                                     <span>未解密 {currentSessionImageUndecryptedCount}</span>
                                                   </span>
                                                 )}
-                                              </>
+                                            </>
+                                            ) : currentSessionImageOverview?.status === 'error' ? (
+                                              <button
+                                                type="button"
+                                                className="session-media-action-btn"
+                                                onClick={() => selectedSession && void refreshSessionImageOverview(selectedSession)}
+                                                disabled={!selectedSession}
+                                                title="重新检查该会话图片"
+                                              >
+                                                <span>重试</span>
+                                              </button>
                                             ) : (
                                               <button
                                                 type="button"
