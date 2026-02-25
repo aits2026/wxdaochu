@@ -1845,6 +1845,21 @@
     justify-content: flex-end;
   }
 
+  .session-media-stat-card.clickable-image-card {
+    cursor: pointer;
+    transition: background-color 0.15s ease, box-shadow 0.15s ease;
+
+    &:hover {
+      background: rgba(var(--primary-rgb), 0.06) !important;
+      box-shadow: inset 0 0 0 1px rgba(var(--primary-rgb), 0.12);
+    }
+
+    &:focus-visible {
+      outline: none;
+      box-shadow: inset 0 0 0 2px rgba(var(--primary-rgb), 0.28);
+    }
+  }
+
   .session-media-status-pill {
     display: inline-flex;
     align-items: center;
