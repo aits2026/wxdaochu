@@ -2755,38 +2755,65 @@ function ExportPage() {
 
                   <div className="setting-section">
                     <h3>导出选项</h3>
-                    <div className="export-options">
+                    <div className="export-options export-options-with-counts">
+                      <label className="checkbox-item checkbox-item-with-count is-fixed">
+                        <input type="checkbox" checked disabled readOnly />
+                        <div className="custom-checkbox"></div>
+                        <FileText size={16} style={{ color: 'var(--text-tertiary)' }} />
+                        <div className="checkbox-item-content">
+                          <span>导出纯文本聊天记录</span>
+                          <span className="checkbox-item-badge">默认导出</span>
+                        </div>
+                        <span className="checkbox-item-count">
+                          包含 {(sessionDetail?.messageCount ?? 0).toLocaleString()} 条消息
+                        </span>
+                      </label>
                       <label className="checkbox-item">
                         <input type="checkbox" checked={options.exportAvatars} onChange={e => setOptions(prev => ({ ...prev, exportAvatars: e.target.checked }))} />
                         <div className="custom-checkbox"></div>
                         <CircleUserRound size={16} style={{ color: 'var(--text-tertiary)' }} />
                         <span>导出头像</span>
                       </label>
-                      <label className="checkbox-item">
+                      <label className={`checkbox-item checkbox-item-with-count ${(sessionDetail?.imageCount ?? 0) === 0 ? 'is-zero-count' : ''}`}>
                         <input type="checkbox" checked={options.exportImages} onChange={e => setOptions(prev => ({ ...prev, exportImages: e.target.checked }))} />
                         <div className="custom-checkbox"></div>
                         <Image size={16} style={{ color: 'var(--text-tertiary)' }} />
-                        <span>导出图片</span>
+                        <div className="checkbox-item-content">
+                          <span>导出图片</span>
+                        </div>
+                        <span className="checkbox-item-count">{(sessionDetail?.imageCount ?? 0).toLocaleString()} 条</span>
                       </label>
-                      <label className="checkbox-item">
+                      <label className={`checkbox-item checkbox-item-with-count ${(sessionDetail?.videoCount ?? 0) === 0 ? 'is-zero-count' : ''}`}>
                         <input type="checkbox" checked={options.exportVideos} onChange={e => setOptions(prev => ({ ...prev, exportVideos: e.target.checked }))} />
                         <div className="custom-checkbox"></div>
                         <Video size={16} style={{ color: 'var(--text-tertiary)' }} />
-                        <span>导出视频</span>
+                        <div className="checkbox-item-content">
+                          <span>导出视频</span>
+                        </div>
+                        <span className="checkbox-item-count">{(sessionDetail?.videoCount ?? 0).toLocaleString()} 条</span>
                       </label>
-                      <label className="checkbox-item">
+                      <label className={`checkbox-item checkbox-item-with-count ${(sessionDetail?.emojiCount ?? 0) === 0 ? 'is-zero-count' : ''}`}>
                         <input type="checkbox" checked={options.exportEmojis} onChange={e => setOptions(prev => ({ ...prev, exportEmojis: e.target.checked }))} />
                         <div className="custom-checkbox"></div>
                         <Smile size={16} style={{ color: 'var(--text-tertiary)' }} />
-                        <span>导出表情包</span>
+                        <div className="checkbox-item-content">
+                          <span>导出表情包</span>
+                        </div>
+                        <span className="checkbox-item-count">{(sessionDetail?.emojiCount ?? 0).toLocaleString()} 条</span>
                       </label>
-                      <label className="checkbox-item">
+                      <label className={`checkbox-item checkbox-item-with-count ${(sessionDetail?.voiceCount ?? 0) === 0 ? 'is-zero-count' : ''}`}>
                         <input type="checkbox" checked={options.exportVoices} onChange={e => setOptions(prev => ({ ...prev, exportVoices: e.target.checked }))} />
                         <div className="custom-checkbox"></div>
                         <Mic size={16} style={{ color: 'var(--text-tertiary)' }} />
-                        <span>导出语音</span>
+                        <div className="checkbox-item-content">
+                          <span>导出语音</span>
+                        </div>
+                        <span className="checkbox-item-count">{(sessionDetail?.voiceCount ?? 0).toLocaleString()} 条</span>
                       </label>
                     </div>
+                    <p className="export-options-note">
+                      数量表示该会话内对应类型的消息条数（文本聊天记录为总消息数），不代表本地文件实际存在数量或最终成功导出的文件数量。
+                    </p>
                   </div>
 
                   <div className="setting-section">
