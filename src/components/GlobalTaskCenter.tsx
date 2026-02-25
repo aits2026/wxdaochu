@@ -11,10 +11,12 @@ const formatTaskTime = (timestamp?: number) => {
 
 function TaskCard({
   task,
-  onRemove
+  onRemove,
+  highlighted
 }: {
   task: GlobalTaskRecord
   onRemove: (taskId: string) => void
+  highlighted?: boolean
 }) {
   const isRunning = task.status === 'running'
   const isFinished = task.status === 'success' || task.status === 'error'
@@ -47,7 +49,7 @@ function TaskCard({
   }
 
   return (
-    <div className="global-task-center-card">
+    <div className={`global-task-center-card ${highlighted ? 'highlighted' : ''}`}>
       <div className="global-task-center-card-top">
         <div className="global-task-center-main">
           <span className="global-task-center-type">{task.typeLabel}</span>
@@ -135,12 +137,15 @@ interface GlobalTaskCenterProps {
 }
 
 function GlobalTaskCenter({ variant = 'titlebar', label = '任务中心' }: GlobalTaskCenterProps) {
-  const [open, setOpen] = useState(false)
   const [popoverStyle, setPopoverStyle] = useState<CSSProperties | undefined>(undefined)
   const triggerRef = useRef<HTMLButtonElement | null>(null)
+  const open = useTaskCenterStore(state => state.isTaskCenterOpen)
   const tasks = useTaskCenterStore(state => state.tasks)
   const removeTask = useTaskCenterStore(state => state.removeTask)
   const clearFinishedTasks = useTaskCenterStore(state => state.clearFinishedTasks)
+  const setTaskCenterOpen = useTaskCenterStore(state => state.setTaskCenterOpen)
+  const highlightedTaskId = useTaskCenterStore(state => state.highlightedTaskId)
+  const clearTaskHighlight = useTaskCenterStore(state => state.clearTaskHighlight)
 
   const sortedTasks = useMemo(
     () => tasks.slice().sort((a, b) => b.updatedAt - a.updatedAt),
@@ -175,16 +180,24 @@ function GlobalTaskCenter({ variant = 'titlebar', label = '任务中心' }: Glob
     }
   }, [open, updatePopoverPosition])
 
+  useEffect(() => {
+    if (!highlightedTaskId) return
+    const timer = window.setTimeout(() => {
+      clearTaskHighlight(highlightedTaskId)
+    }, 2600)
+    return () => {
+      window.clearTimeout(timer)
+    }
+  }, [highlightedTaskId, clearTaskHighlight])
+
   const toggleOpen = () => {
-    setOpen(prev => {
-      const next = !prev
-      if (next) {
-        requestAnimationFrame(() => {
-          updatePopoverPosition()
-        })
-      }
-      return next
-    })
+    const next = !open
+    setTaskCenterOpen(next)
+    if (next) {
+      requestAnimationFrame(() => {
+        updatePopoverPosition()
+      })
+    }
   }
 
   return (
@@ -211,7 +224,7 @@ function GlobalTaskCenter({ variant = 'titlebar', label = '任务中心' }: Glob
 
       {open && (
         <>
-          <div className="global-task-center-overlay" onClick={() => setOpen(false)} />
+          <div className="global-task-center-overlay" onClick={() => setTaskCenterOpen(false)} />
           <div
             className={`global-task-center-popover ${isSidebar ? 'anchor-sidebar' : 'anchor-titlebar'}`}
             style={isSidebar ? popoverStyle : undefined}
@@ -225,7 +238,7 @@ function GlobalTaskCenter({ variant = 'titlebar', label = '任务中心' }: Glob
                     <span>清空已完成</span>
                   </button>
                 )}
-                <button type="button" onClick={() => setOpen(false)}>收起</button>
+                <button type="button" onClick={() => setTaskCenterOpen(false)}>收起</button>
               </div>
             </div>
 
@@ -237,7 +250,7 @@ function GlobalTaskCenter({ variant = 'titlebar', label = '任务中心' }: Glob
                   <div className="global-task-center-section">
                     <div className="section-title">待开始（{pendingTasks.length}）</div>
                     {pendingTasks.map(task => (
-                      <TaskCard key={task.id} task={task} onRemove={removeTask} />
+                      <TaskCard key={task.id} task={task} onRemove={removeTask} highlighted={task.id === highlightedTaskId} />
                     ))}
                   </div>
                 )}
@@ -246,7 +259,7 @@ function GlobalTaskCenter({ variant = 'titlebar', label = '任务中心' }: Glob
                   <div className="global-task-center-section">
                     <div className="section-title">进行中（{runningTasks.length}）</div>
                     {runningTasks.map(task => (
-                      <TaskCard key={task.id} task={task} onRemove={removeTask} />
+                      <TaskCard key={task.id} task={task} onRemove={removeTask} highlighted={task.id === highlightedTaskId} />
                     ))}
                   </div>
                 )}
@@ -255,7 +268,7 @@ function GlobalTaskCenter({ variant = 'titlebar', label = '任务中心' }: Glob
                   <div className="global-task-center-section">
                     <div className="section-title">已完成（{finishedTasks.length}）</div>
                     {finishedTasks.map(task => (
-                      <TaskCard key={task.id} task={task} onRemove={removeTask} />
+                      <TaskCard key={task.id} task={task} onRemove={removeTask} highlighted={task.id === highlightedTaskId} />
                     ))}
                   </div>
                 )}

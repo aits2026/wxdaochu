@@ -45,11 +45,18 @@ interface ExportProgressPayload {
 interface TaskCenterState {
   tasks: GlobalTaskRecord[]
   activeExportTaskId: string | null
+  isTaskCenterOpen: boolean
+  highlightedTaskId: string | null
   upsertTask: (task: GlobalTaskRecord) => void
   patchTask: (taskId: string, patch: TaskPatch) => void
   removeTask: (taskId: string) => void
   clearFinishedTasks: () => void
   setActiveExportTaskId: (taskId: string | null) => void
+  setTaskCenterOpen: (open: boolean) => void
+  openTaskCenter: () => void
+  closeTaskCenter: () => void
+  highlightTask: (taskId: string) => void
+  clearTaskHighlight: (taskId?: string) => void
   updateActiveExportProgress: (progress: ExportProgressPayload) => void
 }
 
@@ -69,6 +76,8 @@ const touchTask = (task: GlobalTaskRecord, patch: TaskPatch): GlobalTaskRecord =
 export const useTaskCenterStore = create<TaskCenterState>((set, get) => ({
   tasks: [],
   activeExportTaskId: null,
+  isTaskCenterOpen: false,
+  highlightedTaskId: null,
 
   upsertTask: (task) => set(state => {
     const nextTask = {
@@ -100,14 +109,27 @@ export const useTaskCenterStore = create<TaskCenterState>((set, get) => ({
 
   removeTask: (taskId) => set(state => ({
     tasks: state.tasks.filter(task => task.id !== taskId),
-    activeExportTaskId: state.activeExportTaskId === taskId ? null : state.activeExportTaskId
+    activeExportTaskId: state.activeExportTaskId === taskId ? null : state.activeExportTaskId,
+    highlightedTaskId: state.highlightedTaskId === taskId ? null : state.highlightedTaskId
   })),
 
-  clearFinishedTasks: () => set(state => ({
-    tasks: state.tasks.filter(task => task.status === 'pending' || task.status === 'running')
-  })),
+  clearFinishedTasks: () => set(state => {
+    const tasks = state.tasks.filter(task => task.status === 'pending' || task.status === 'running')
+    const highlightedStillExists = tasks.some(task => task.id === state.highlightedTaskId)
+    return {
+      tasks,
+      highlightedTaskId: highlightedStillExists ? state.highlightedTaskId : null
+    }
+  }),
 
   setActiveExportTaskId: (taskId) => set({ activeExportTaskId: taskId }),
+  setTaskCenterOpen: (open) => set({ isTaskCenterOpen: open }),
+  openTaskCenter: () => set({ isTaskCenterOpen: true }),
+  closeTaskCenter: () => set({ isTaskCenterOpen: false }),
+  highlightTask: (taskId) => set({ highlightedTaskId: taskId }),
+  clearTaskHighlight: (taskId) => set(state => ({
+    highlightedTaskId: taskId && state.highlightedTaskId !== taskId ? state.highlightedTaskId : null
+  })),
 
   updateActiveExportProgress: (progress) => {
     const state = get()
