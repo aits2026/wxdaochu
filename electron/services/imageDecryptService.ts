@@ -1,7 +1,7 @@
 import { app, BrowserWindow } from 'electron'
 import { basename, dirname, extname, join } from 'path'
 import { pathToFileURL } from 'url'
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'fs'
 import { writeFile } from 'fs/promises'
 import crypto from 'crypto'
 import Database from 'better-sqlite3'
@@ -51,6 +51,7 @@ export class ImageDecryptService {
   private cacheIndexed = false
   private cacheIndexing: Promise<void> | null = null
   private updateFlags = new Map<string, boolean>()
+  private imageCacheRootPrepared = false
 
   async resolveCachedImage(payload: { sessionId?: string; imageMd5?: string; imageDatName?: string }): Promise<DecryptResult & { hasUpdate?: boolean }> {
     // 不再等待缓存索引，直接查找
@@ -1330,31 +1331,61 @@ export class ImageDecryptService {
   }
 
   /**
-   * 获取默认缓存路径（与 dataManagementService 保持一致）
+   * 获取默认缓存路径（图片缓存固定在文档目录，避免随安装目录变化）
    */
   private getDefaultCachePath(): string {
-    // 开发环境使用文档目录
-    if (process.env.VITE_DEV_SERVER_URL) {
-      const documentsPath = app.getPath('documents')
-      return join(documentsPath, 'VXdaochuData')
-    }
+    const documentsPath = app.getPath('documents')
+    return join(documentsPath, 'VXdaochuData')
+  }
 
-    // 生产环境
+  /**
+   * 历史默认缓存路径（旧版本在非 C 盘安装时使用安装目录）
+   */
+  private getLegacyInstallDefaultCachePath(): string | null {
+    if (process.env.VITE_DEV_SERVER_URL) return null
+
     const exePath = app.getPath('exe')
-    const installDir = require('path').dirname(exePath)
-
-    // 检查是否安装在 C 盘
+    const installDir = dirname(exePath)
     const isOnCDrive = /^[cC]:/i.test(installDir) || installDir.startsWith('\\\\')
 
-    if (isOnCDrive) {
-      const documentsPath = app.getPath('documents')
-      return join(documentsPath, 'VXdaochuData')
-    }
-
+    if (isOnCDrive) return null
     return join(installDir, 'VXdaochuData')
   }
 
+  /**
+   * 在无自定义 cachePath 时，尝试把旧安装目录里的 Images 迁移到文档目录。
+   * 迁移失败也不影响使用，后续仍会通过兼容路径查找复用旧缓存。
+   */
+  private prepareImageCacheRoot(): void {
+    if (this.imageCacheRootPrepared) return
+    this.imageCacheRootPrepared = true
+
+    const configured = this.configService.get('cachePath')
+    if (configured) return
+
+    const defaultBase = this.getDefaultCachePath()
+    const defaultImages = join(defaultBase, 'Images')
+    const defaultImagesLower = join(defaultBase, 'images')
+    if (existsSync(defaultImages) || existsSync(defaultImagesLower)) return
+
+    const legacyBase = this.getLegacyInstallDefaultCachePath()
+    if (!legacyBase || legacyBase === defaultBase) return
+
+    const legacyCandidates = [join(legacyBase, 'Images'), join(legacyBase, 'images')]
+    const legacyImages = legacyCandidates.find(p => existsSync(p))
+    if (!legacyImages) return
+
+    try {
+      mkdirSync(defaultBase, { recursive: true })
+      renameSync(legacyImages, defaultImages)
+      console.log(`[ImageDecrypt] 已迁移旧图片缓存到文档目录: ${legacyImages} -> ${defaultImages}`)
+    } catch (e) {
+      console.warn(`[ImageDecrypt] 迁移旧图片缓存失败，将继续通过兼容路径复用: ${legacyImages}`, e)
+    }
+  }
+
   private getCacheRoot(): string {
+    this.prepareImageCacheRoot()
     const configured = this.configService.get('cachePath')
     const root = configured
       ? join(configured, 'Images')
@@ -1373,25 +1404,36 @@ export class ImageDecryptService {
     const roots: string[] = []
     const configured = this.configService.get('cachePath')
     const documentsPath = app.getPath('documents')
+    const addRoot = (rootPath?: string | null) => {
+      if (!rootPath) return
+      roots.push(rootPath)
+    }
 
     // 主要路径（当前使用的）
     const mainRoot = this.getCacheRoot()
-    roots.push(mainRoot)
+    addRoot(mainRoot)
 
     // 如果配置了自定义路径，也检查其下的 Images
     if (configured) {
-      roots.push(join(configured, 'Images'))
-      roots.push(join(configured, 'images'))
+      addRoot(join(configured, 'Images'))
+      addRoot(join(configured, 'images'))
     }
 
     // 默认路径
     const defaultPath = this.getDefaultCachePath()
-    roots.push(join(defaultPath, 'Images'))
-    roots.push(join(defaultPath, 'images'))
+    addRoot(join(defaultPath, 'Images'))
+    addRoot(join(defaultPath, 'images'))
+
+    // 兼容旧的安装目录默认路径（旧版本非 C 盘安装）
+    const legacyInstallPath = this.getLegacyInstallDefaultCachePath()
+    if (legacyInstallPath) {
+      addRoot(join(legacyInstallPath, 'Images'))
+      addRoot(join(legacyInstallPath, 'images'))
+    }
 
     // 兼容旧的 VXdaochu/Images 路径
     const oldPath = join(documentsPath, 'VXdaochu', 'Images')
-    roots.push(oldPath)
+    addRoot(oldPath)
 
     // 去重
     const uniqueRoots = Array.from(new Set(roots))
