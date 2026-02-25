@@ -314,7 +314,7 @@ const ExportSessionRow = (props: RowComponentProps<ExportSessionRowData>) => {
   }, [onEnsureCardStats, session])
 
   return (
-    <div style={{ ...style, padding: '4px 12px', boxSizing: 'border-box' }}>
+    <div style={{ ...style, padding: '0 12px', boxSizing: 'border-box' }}>
       <div
         className={`export-session-item ${selectedSession === session.username ? 'selected' : ''}`}
         onClick={() => onSelect(session.username)}
@@ -1068,7 +1068,7 @@ function ExportPage() {
     [sessionTypeFilter]
   )
   const sessionListRowHeight = useMemo(
-    () => (sessionTypeFilter === 'group' ? 106 : 102),
+    () => (sessionTypeFilter === 'group' ? 98 : 94),
     [sessionTypeFilter]
   )
 
