@@ -579,6 +579,9 @@ function ExportPage() {
   const sessionVideoOverviewRequestIdRef = useRef<Record<string, number>>({})
   const sessionVideoAssetsRequestIdRef = useRef(0)
   const sessionTypeFilterRef = useRef<SessionTypeFilter>('private')
+  const sessionTableScrollRef = useRef<HTMLDivElement | null>(null)
+  const sessionTableScrollbarRef = useRef<HTMLDivElement | null>(null)
+  const sessionTableScrollSyncSourceRef = useRef<'main' | 'bar' | null>(null)
   const hasBootstrappedChatCacheRef = useRef(false)
   const bootstrappedChatCacheKeyRef = useRef<string | null>(null)
   const chatCacheDataLoadedAtRef = useRef(0)
@@ -1070,6 +1073,88 @@ function ExportPage() {
   const sessionListRowHeight = useMemo(
     () => (sessionTypeFilter === 'group' ? 76 : 72),
     [sessionTypeFilter]
+  )
+  const [sessionTableHorizontalScrollState, setSessionTableHorizontalScrollState] = useState({
+    scrollLeft: 0,
+    viewportWidth: 0,
+    contentWidth: 0
+  })
+
+  const updateSessionTableHorizontalScrollState = useCallback(() => {
+    const el = sessionTableScrollRef.current
+    if (!el) {
+      setSessionTableHorizontalScrollState(prev => (
+        prev.scrollLeft === 0 && prev.viewportWidth === 0 && prev.contentWidth === 0
+          ? prev
+          : { scrollLeft: 0, viewportWidth: 0, contentWidth: 0 }
+      ))
+      return
+    }
+
+    const next = {
+      scrollLeft: el.scrollLeft,
+      viewportWidth: el.clientWidth,
+      contentWidth: el.scrollWidth
+    }
+
+    setSessionTableHorizontalScrollState(prev => (
+      prev.scrollLeft === next.scrollLeft &&
+      prev.viewportWidth === next.viewportWidth &&
+      prev.contentWidth === next.contentWidth
+        ? prev
+        : next
+    ))
+
+    const bar = sessionTableScrollbarRef.current
+    if (bar && Math.abs(bar.scrollLeft - next.scrollLeft) > 1) {
+      sessionTableScrollSyncSourceRef.current = 'main'
+      bar.scrollLeft = next.scrollLeft
+    }
+  }, [])
+
+  useEffect(() => {
+    if (isLoading || filteredSessions.length === 0) {
+      setSessionTableHorizontalScrollState(prev => (
+        prev.scrollLeft === 0 && prev.viewportWidth === 0 && prev.contentWidth === 0
+          ? prev
+          : { scrollLeft: 0, viewportWidth: 0, contentWidth: 0 }
+      ))
+      return
+    }
+
+    let rafId = 0
+    const scheduleUpdate = () => {
+      if (rafId) cancelAnimationFrame(rafId)
+      rafId = requestAnimationFrame(() => {
+        rafId = 0
+        updateSessionTableHorizontalScrollState()
+      })
+    }
+
+    scheduleUpdate()
+
+    const el = sessionTableScrollRef.current
+    const resizeObserver = (typeof ResizeObserver !== 'undefined' && el)
+      ? new ResizeObserver(() => scheduleUpdate())
+      : null
+
+    if (resizeObserver && el) {
+      resizeObserver.observe(el)
+    }
+
+    window.addEventListener('resize', scheduleUpdate)
+
+    return () => {
+      if (rafId) cancelAnimationFrame(rafId)
+      resizeObserver?.disconnect()
+      window.removeEventListener('resize', scheduleUpdate)
+    }
+  }, [filteredSessions.length, isLoading, sessionTypeFilter, updateSessionTableHorizontalScrollState])
+
+  const sessionTableHasHorizontalOverflow = sessionTableHorizontalScrollState.contentWidth > (sessionTableHorizontalScrollState.viewportWidth + 1)
+  const sessionTableCanScrollLeft = sessionTableHasHorizontalOverflow && sessionTableHorizontalScrollState.scrollLeft > 1
+  const sessionTableCanScrollRight = sessionTableHasHorizontalOverflow && (
+    sessionTableHorizontalScrollState.scrollLeft < (sessionTableHorizontalScrollState.contentWidth - sessionTableHorizontalScrollState.viewportWidth - 1)
   )
 
   useEffect(() => {
@@ -3000,7 +3085,14 @@ function ExportPage() {
               )}
             </div>
 
-            <div className="session-table-layer">
+            <div
+              className={[
+                'session-table-layer',
+                sessionTableHasHorizontalOverflow ? 'has-x-overflow' : '',
+                sessionTableCanScrollLeft ? 'can-scroll-left' : '',
+                sessionTableCanScrollRight ? 'can-scroll-right' : ''
+              ].filter(Boolean).join(' ')}
+            >
               {isLoading ? (
                 <div className="loading-state">
                   <Loader2 size={24} className="spin" />
@@ -3011,7 +3103,36 @@ function ExportPage() {
                   <span>暂无会话</span>
                 </div>
               ) : (
-                <div className="export-session-list">
+                <>
+                  <div
+                    className="export-session-list"
+                    ref={sessionTableScrollRef}
+                    onScroll={(e) => {
+                      if (sessionTableScrollSyncSourceRef.current === 'bar') {
+                        sessionTableScrollSyncSourceRef.current = null
+                      }
+
+                      const current = e.currentTarget
+                      setSessionTableHorizontalScrollState(prev => {
+                        const next = {
+                          scrollLeft: current.scrollLeft,
+                          viewportWidth: current.clientWidth,
+                          contentWidth: current.scrollWidth
+                        }
+                        return (
+                          prev.scrollLeft === next.scrollLeft &&
+                          prev.viewportWidth === next.viewportWidth &&
+                          prev.contentWidth === next.contentWidth
+                        ) ? prev : next
+                      })
+
+                      const bar = sessionTableScrollbarRef.current
+                      if (bar && Math.abs(bar.scrollLeft - current.scrollLeft) > 1) {
+                        sessionTableScrollSyncSourceRef.current = 'main'
+                        bar.scrollLeft = current.scrollLeft
+                      }
+                    }}
+                  >
                   <div className={`export-session-table-header ${sessionListGridClass}`}>
                     {sessionListHeaderColumns.map(label => (
                       <div
@@ -3050,7 +3171,32 @@ function ExportPage() {
                     rowComponent={ExportSessionRow}
                   />
                   </div>
-                </div>
+                  </div>
+                  {sessionTableHasHorizontalOverflow && (
+                    <div
+                      className="export-session-horizontal-scrollbar"
+                      ref={sessionTableScrollbarRef}
+                      onScroll={(e) => {
+                        if (sessionTableScrollSyncSourceRef.current === 'main') {
+                          sessionTableScrollSyncSourceRef.current = null
+                          return
+                        }
+
+                        const main = sessionTableScrollRef.current
+                        if (!main) return
+                        if (Math.abs(main.scrollLeft - e.currentTarget.scrollLeft) <= 1) return
+                        sessionTableScrollSyncSourceRef.current = 'bar'
+                        main.scrollLeft = e.currentTarget.scrollLeft
+                      }}
+                      aria-hidden="true"
+                    >
+                      <div
+                        className="export-session-horizontal-scrollbar-inner"
+                        style={{ width: Math.max(sessionTableHorizontalScrollState.contentWidth, sessionTableHorizontalScrollState.viewportWidth) }}
+                      />
+                    </div>
+                  )}
+                </>
               )}
             </div>
           </div>

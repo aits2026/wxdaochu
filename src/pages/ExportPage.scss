@@ -45,6 +45,7 @@
   }
 
   .session-table-layer {
+    position: relative;
     flex: 1;
     min-height: 0;
     margin: 8px 12px 14px;
@@ -60,6 +61,37 @@
       margin: 0;
       border-radius: 0;
       background: transparent;
+    }
+
+    &::before,
+    &::after {
+      content: '';
+      position: absolute;
+      top: 10px;
+      bottom: 28px;
+      width: 14px;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.15s ease;
+      z-index: 2;
+    }
+
+    &::before {
+      left: 10px;
+      background: linear-gradient(to right, var(--bg-secondary), transparent);
+    }
+
+    &::after {
+      right: 10px;
+      background: linear-gradient(to left, var(--bg-secondary), transparent);
+    }
+
+    &.can-scroll-left::before {
+      opacity: 1;
+    }
+
+    &.can-scroll-right::after {
+      opacity: 1;
     }
   }
 
@@ -702,6 +734,11 @@
 
     .session-table-layer {
       margin: 8px 12px 12px;
+
+      &::before,
+      &::after {
+        top: 8px;
+      }
     }
 
     .session-filter-row {
@@ -888,11 +925,18 @@
   .export-session-list {
     flex: 1;
     min-height: 0;
-    overflow: hidden;
+    overflow-x: auto;
+    overflow-y: hidden;
     padding: 10px 10px 10px;
     display: flex;
     flex-direction: column;
     gap: 0;
+    scrollbar-width: none;
+
+    &::-webkit-scrollbar {
+      width: 0;
+      height: 0;
+    }
   }
 
   .export-session-list-body {
@@ -904,6 +948,43 @@
     border-top: none;
     border-radius: 0 0 10px 10px;
     background: var(--bg-primary);
+  }
+
+  .export-session-horizontal-scrollbar {
+    flex-shrink: 0;
+    margin: 0 10px 10px;
+    height: 12px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    border-radius: 999px;
+    background: rgba(127, 127, 127, 0.08);
+    scrollbar-width: thin;
+    scrollbar-color: rgba(127, 127, 127, 0.42) transparent;
+
+    &::-webkit-scrollbar {
+      height: 12px;
+    }
+
+    &::-webkit-scrollbar-track {
+      background: transparent;
+      border-radius: 999px;
+    }
+
+    &::-webkit-scrollbar-thumb {
+      background: rgba(127, 127, 127, 0.42);
+      border-radius: 999px;
+      border: 2px solid transparent;
+      background-clip: padding-box;
+    }
+
+    &:hover::-webkit-scrollbar-thumb {
+      background: rgba(127, 127, 127, 0.56);
+      background-clip: padding-box;
+    }
+  }
+
+  .export-session-horizontal-scrollbar-inner {
+    height: 1px;
   }
 
   .export-session-table-header,
