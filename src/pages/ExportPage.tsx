@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useDeferredValue, useMemo, useRef, startTransition } from 'react'
-import { Search, Download, FolderOpen, RefreshCw, Check, FileJson, FileText, Table, Loader2, X, FileSpreadsheet, Database, FileCode, CheckCircle, XCircle, ExternalLink, MessageSquare, Users, User, Filter, Image, Video, CircleUserRound, Smile, Mic, Newspaper, ChevronDown, MoreHorizontal, ArrowLeft, Eye, Aperture, CircleHelp, Copy } from 'lucide-react'
+import { Search, Download, FolderOpen, RefreshCw, Check, FileJson, FileText, Table, Loader2, X, FileSpreadsheet, Database, FileCode, CheckCircle, XCircle, ExternalLink, MessageSquare, Users, User, Filter, Image, Video, CircleUserRound, Smile, Mic, Newspaper, ChevronDown, MoreHorizontal, ArrowLeft, Eye, Aperture, CircleHelp, Copy, Clock3 } from 'lucide-react'
 import { List, RowComponentProps } from 'react-window'
 import DateRangePicker from '../components/DateRangePicker'
 import { useTitleBarStore } from '../stores/titleBarStore'
@@ -162,12 +162,24 @@ interface ExportSessionRowData {
   sessionMessageCounts: SessionMessageCountMap
   sessionCardStatsMap: Record<string, SessionCardStats>
   sessionLatestExportTimeMap: Record<string, number | null>
+  exportingSessionId: string | null
+  queuedExportSessionIds: Set<string>
   onSelect: (username: string) => void
   onEnsureCardStats: (session: ChatSession) => void
   onOpenChatWindow: (session: ChatSession) => void
   onOpenCommonGroups: (session: ChatSession) => void
   onOpenExportSettings: (session: ChatSession) => void | Promise<void>
   onOpenImageAssets: (session: ChatSession) => void | Promise<void>
+}
+
+interface QueuedChatExportJob {
+  taskId: string
+  sessionId: string
+  sessionName: string
+  messageCount: number
+  outputDir: string
+  options: ExportOptions
+  queuedAt: number
 }
 
 interface SessionCardGroupInfo {
@@ -305,6 +317,8 @@ const ExportSessionRow = (props: RowComponentProps<ExportSessionRowData>) => {
     sessionMessageCounts,
     sessionCardStatsMap,
     sessionLatestExportTimeMap,
+    exportingSessionId,
+    queuedExportSessionIds,
     onSelect,
     onEnsureCardStats,
     onOpenChatWindow,
@@ -334,6 +348,8 @@ const ExportSessionRow = (props: RowComponentProps<ExportSessionRowData>) => {
   const openChatLabel = isGroup ? '打开群聊' : isPrivate ? '打开私聊' : '打开公众号'
   const infoIdLine = cardStats?.alias ? `${session.username} · ${cardStats.alias}` : session.username
   const recentExportTimeLabel = formatRecentExportTime(sessionLatestExportTimeMap[session.username])
+  const isExportingThisSession = exportingSessionId === session.username
+  const isQueuedThisSession = !isExportingThisSession && queuedExportSessionIds.has(session.username)
 
   useEffect(() => {
     onEnsureCardStats(session)
@@ -462,17 +478,26 @@ const ExportSessionRow = (props: RowComponentProps<ExportSessionRowData>) => {
               <button
                 type="button"
                 className="session-table-export-btn"
+                disabled={isExportingThisSession || isQueuedThisSession}
                 onClick={async (e) => {
                   e.stopPropagation()
+                  if (isExportingThisSession || isQueuedThisSession) return
                   await onOpenExportSettings(session)
                 }}
               >
-                <Download size={12} />
-                <span>导出</span>
+                {isExportingThisSession ? <Loader2 size={12} className="spin" /> : isQueuedThisSession ? <Clock3 size={12} /> : <Download size={12} />}
+                <span>{isExportingThisSession ? '导出中' : isQueuedThisSession ? '排队中' : '导出'}</span>
               </button>
-              {recentExportTimeLabel && (
-                <div className="session-export-time-meta" title={`最近导出：${recentExportTimeLabel}`}>
-                  {recentExportTimeLabel}
+              {(recentExportTimeLabel || isExportingThisSession || isQueuedThisSession) && (
+                <div
+                  className="session-export-time-meta"
+                  title={
+                    recentExportTimeLabel
+                      ? `最近导出：${recentExportTimeLabel}`
+                      : (isExportingThisSession ? '正在导出中' : '等待执行中')
+                  }
+                >
+                  {recentExportTimeLabel || (isExportingThisSession ? '正在导出...' : '等待执行...')}
                 </div>
               )}
             </div>
@@ -498,9 +523,28 @@ function ExportPage() {
   const taskCenterSetActiveExportTaskId = useTaskCenterStore(state => state.setActiveExportTaskId)
   const taskCenterOpen = useTaskCenterStore(state => state.openTaskCenter)
   const taskCenterHighlightTask = useTaskCenterStore(state => state.highlightTask)
-  const hasRunningGlobalChatExportTask = useTaskCenterStore(state => state.tasks.some(
+  const chatExportTasks = useTaskCenterStore(state => state.tasks.filter(
     task => task.kind === 'chat-export' && (task.status === 'pending' || task.status === 'running')
   ))
+  const runningChatExportSessionId = useMemo(
+    () => chatExportTasks.find(task => task.status === 'running')?.sessionId || null,
+    [chatExportTasks]
+  )
+  const queuedChatExportSessionIds = useMemo(() => {
+    const set = new Set<string>()
+    for (const task of chatExportTasks) {
+      if (task.status === 'pending' && task.sessionId) set.add(task.sessionId)
+    }
+    return set
+  }, [chatExportTasks])
+  const hasRunningChatExportTask = useMemo(
+    () => chatExportTasks.some(task => task.status === 'running'),
+    [chatExportTasks]
+  )
+  const hasPendingChatExportTask = useMemo(
+    () => chatExportTasks.some(task => task.status === 'pending'),
+    [chatExportTasks]
+  )
   const [exportAccountInfo, setExportAccountInfo] = useState<{
     connected: boolean
     wxid: string
@@ -526,7 +570,7 @@ function ExportPage() {
   const [searchKeyword, setSearchKeyword] = useState('')
   const [sessionTypeFilter, setSessionTypeFilter] = useState<SessionTypeFilter>('private')
   const [exportFolder, setExportFolder] = useState<string>('')
-  const [isExporting, setIsExporting] = useState(false)
+  const [isContactExporting, setIsContactExporting] = useState(false)
   const [exportResult, setExportResult] = useState<ExportResult | null>(null)
   const [isSessionImageDecrypting, setIsSessionImageDecrypting] = useState(false)
   const [showSessionImageDecryptConfirm, setShowSessionImageDecryptConfirm] = useState(false)
@@ -652,6 +696,8 @@ function ExportPage() {
   const identityChipCopyResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const sessionDetailDiagRunIdRef = useRef(0)
   const sessionLatestExportTimesRequestIdRef = useRef(0)
+  const chatExportQueueRef = useRef<QueuedChatExportJob[]>([])
+  const chatExportWorkerRunningRef = useRef(false)
 
   useEffect(() => {
     sessionTypeFilterRef.current = sessionTypeFilter
@@ -1303,6 +1349,12 @@ function ExportPage() {
     () => (selectedSession ? sessionByUsername.get(selectedSession) : undefined),
     [selectedSession, sessionByUsername]
   )
+  const selectedSessionChatExportState = useMemo<'idle' | 'queued' | 'running'>(() => {
+    if (!selectedSession) return 'idle'
+    if (runningChatExportSessionId === selectedSession) return 'running'
+    if (queuedChatExportSessionIds.has(selectedSession)) return 'queued'
+    return 'idle'
+  }, [queuedChatExportSessionIds, runningChatExportSessionId, selectedSession])
 
   useEffect(() => {
     if (sessions.length === 0) {
@@ -2846,68 +2898,31 @@ function ExportPage() {
     }
   }
 
-  // 导出聊天记录
-  const startExport = async () => {
-    if (!selectedSession || !exportFolder || hasRunningGlobalChatExportTask) return
-
-    const targetSessionId = selectedSession
-    const targetSessionName =
-      (sessionDetail?.wxid === targetSessionId ? (sessionDetail?.remark || sessionDetail?.nickName || sessionDetail?.alias) : undefined) ||
-      sessionByUsername.get(targetSessionId)?.displayName ||
-      targetSessionId
-    const targetMessageCount =
-      (sessionDetail?.wxid === targetSessionId ? sessionDetail.messageCount : undefined) ??
-      sessionMessageCounts[targetSessionId] ??
-      0
-    const exportTaskId = `chat-export:${targetSessionId}:${Date.now()}`
-    const formatLabel = options.format.toUpperCase()
-
-    setIsExporting(true)
-    setExportResult(null)
-    taskCenterUpsertTask({
-      id: exportTaskId,
-      kind: 'chat-export',
-      typeLabel: '聊天导出',
-      sessionId: targetSessionId,
-      sessionName: targetSessionName,
-      status: 'running',
-      progressCurrent: 0,
-      progressTotal: 1,
-      unitLabel: '个会话',
-      format: formatLabel,
-      outputDir: exportFolder,
-      phase: '正在准备...',
-      detail: '可继续操作页面',
-      createdAt: Date.now(),
-      updatedAt: Date.now()
-    })
-    taskCenterSetActiveExportTaskId(exportTaskId)
+  const executeQueuedChatExportJob = useCallback(async (job: QueuedChatExportJob) => {
+    const formatLabel = job.options.format.toUpperCase()
+    const exportOptions = {
+      format: job.options.format,
+      dateRange: (job.options.startDate && job.options.endDate) ? {
+        start: Math.floor(new Date(job.options.startDate + 'T00:00:00').getTime() / 1000),
+        end: Math.floor(new Date(job.options.endDate + 'T23:59:59').getTime() / 1000)
+      } : null,
+      exportAvatars: job.options.exportAvatars,
+      exportImages: job.options.exportImages,
+      exportVideos: job.options.exportVideos,
+      exportEmojis: job.options.exportEmojis,
+      exportVoices: job.options.exportVoices
+    }
 
     try {
-      const sessionList = [targetSessionId]
-      const exportOptions = {
-        format: options.format,
-        dateRange: (options.startDate && options.endDate) ? {
-          start: Math.floor(new Date(options.startDate + 'T00:00:00').getTime() / 1000),
-          end: Math.floor(new Date(options.endDate + 'T23:59:59').getTime() / 1000)
-        } : null,
-        exportAvatars: options.exportAvatars,
-        exportImages: options.exportImages,
-        exportVideos: options.exportVideos,
-        exportEmojis: options.exportEmojis,
-        exportVoices: options.exportVoices
-      }
-
-      if (options.format === 'chatlab' || options.format === 'chatlab-jsonl' || options.format === 'json' || options.format === 'excel' || options.format === 'html') {
+      if (job.options.format === 'chatlab' || job.options.format === 'chatlab-jsonl' || job.options.format === 'json' || job.options.format === 'excel' || job.options.format === 'html') {
         const result = await window.electronAPI.export.exportSessions(
-          sessionList,
-          exportFolder,
+          [job.sessionId],
+          job.outputDir,
           exportOptions
         )
         setExportResult(result)
-        // 导出成功后保存记录并刷新
         if (result.success) {
-          taskCenterPatchTask(exportTaskId, {
+          taskCenterPatchTask(job.taskId, {
             status: 'success',
             progressCurrent: 1,
             progressTotal: 1,
@@ -2915,15 +2930,18 @@ function ExportPage() {
             failCount: result.failCount ?? 0,
             phase: '导出完成',
             detail: '',
-            outputDir: exportFolder
+            outputDir: job.outputDir,
+            format: formatLabel
           })
 
-          await window.electronAPI.export.saveExportRecord(targetSessionId, options.format, targetMessageCount)
-          const records = await window.electronAPI.export.getExportRecords(targetSessionId)
-          setExportRecords(records)
-          setSessionLatestExportTimeMap(prev => ({ ...prev, [targetSessionId]: Date.now() }))
+          await window.electronAPI.export.saveExportRecord(job.sessionId, job.options.format, job.messageCount)
+          const records = await window.electronAPI.export.getExportRecords(job.sessionId)
+          if (selectedSession === job.sessionId) {
+            setExportRecords(records)
+          }
+          setSessionLatestExportTimeMap(prev => ({ ...prev, [job.sessionId]: Date.now() }))
         } else {
-          taskCenterPatchTask(exportTaskId, {
+          taskCenterPatchTask(job.taskId, {
             status: 'error',
             progressCurrent: 1,
             progressTotal: 1,
@@ -2935,9 +2953,9 @@ function ExportPage() {
           })
         }
       } else {
-        const errorMessage = `${options.format.toUpperCase()} 格式导出功能开发中...`
+        const errorMessage = `${job.options.format.toUpperCase()} 格式导出功能开发中...`
         setExportResult({ success: false, error: errorMessage })
-        taskCenterPatchTask(exportTaskId, {
+        taskCenterPatchTask(job.taskId, {
           status: 'error',
           progressCurrent: 1,
           progressTotal: 1,
@@ -2950,7 +2968,7 @@ function ExportPage() {
       console.error('导出失败:', e)
       const errorMessage = e instanceof Error ? e.message : String(e)
       setExportResult({ success: false, error: errorMessage })
-      taskCenterPatchTask(exportTaskId, {
+      taskCenterPatchTask(job.taskId, {
         status: 'error',
         progressCurrent: 1,
         progressTotal: 1,
@@ -2958,17 +2976,105 @@ function ExportPage() {
         detail: '导出失败',
         error: errorMessage
       })
-    } finally {
-      setIsExporting(false)
-      taskCenterSetActiveExportTaskId(null)
     }
-  }
+  }, [selectedSession, taskCenterPatchTask])
+
+  const processNextQueuedChatExport = useCallback(async () => {
+    if (chatExportWorkerRunningRef.current) return
+    const nextJob = chatExportQueueRef.current[0]
+    if (!nextJob) return
+
+    chatExportWorkerRunningRef.current = true
+    taskCenterPatchTask(nextJob.taskId, {
+      status: 'running',
+      progressCurrent: 0,
+      progressTotal: 1,
+      phase: '正在准备...',
+      detail: '可继续操作页面'
+    })
+    taskCenterSetActiveExportTaskId(nextJob.taskId)
+
+    try {
+      await executeQueuedChatExportJob(nextJob)
+    } finally {
+      chatExportQueueRef.current = chatExportQueueRef.current.filter(job => job.taskId !== nextJob.taskId)
+      chatExportWorkerRunningRef.current = false
+      taskCenterSetActiveExportTaskId(null)
+      window.setTimeout(() => { void processNextQueuedChatExport() }, 0)
+    }
+  }, [executeQueuedChatExportJob, taskCenterPatchTask, taskCenterSetActiveExportTaskId])
+
+  // 导出聊天记录（支持排队）
+  const startExport = useCallback(async () => {
+    if (!selectedSession || !exportFolder) return
+
+    const targetSessionId = selectedSession
+    const targetSessionName =
+      (sessionDetail?.wxid === targetSessionId ? (sessionDetail?.remark || sessionDetail?.nickName || sessionDetail?.alias) : undefined) ||
+      sessionByUsername.get(targetSessionId)?.displayName ||
+      targetSessionId
+    const targetMessageCount =
+      (sessionDetail?.wxid === targetSessionId ? sessionDetail.messageCount : undefined) ??
+      sessionMessageCounts[targetSessionId] ??
+      0
+    const formatLabel = options.format.toUpperCase()
+    const exportTaskId = `chat-export:${targetSessionId}:${Date.now()}`
+    const now = Date.now()
+    const hasRunningOrQueuedBeforeEnqueue = chatExportWorkerRunningRef.current || chatExportQueueRef.current.length > 0
+
+    const job: QueuedChatExportJob = {
+      taskId: exportTaskId,
+      sessionId: targetSessionId,
+      sessionName: targetSessionName,
+      messageCount: targetMessageCount,
+      outputDir: exportFolder,
+      options: { ...options },
+      queuedAt: now
+    }
+
+    setExportResult(null)
+    taskCenterUpsertTask({
+      id: exportTaskId,
+      kind: 'chat-export',
+      typeLabel: '聊天导出',
+      sessionId: targetSessionId,
+      sessionName: targetSessionName,
+      status: 'pending',
+      progressCurrent: 0,
+      progressTotal: 1,
+      unitLabel: '个会话',
+      format: formatLabel,
+      outputDir: exportFolder,
+      phase: hasRunningOrQueuedBeforeEnqueue ? '等待执行' : '准备执行',
+      detail: hasRunningOrQueuedBeforeEnqueue ? '已加入队列，等待前序任务完成' : '等待执行',
+      createdAt: now,
+      updatedAt: now
+    })
+
+    chatExportQueueRef.current = [...chatExportQueueRef.current, job]
+    taskCenterHighlightTask(exportTaskId)
+    void processNextQueuedChatExport()
+  }, [
+    exportFolder,
+    options,
+    processNextQueuedChatExport,
+    selectedSession,
+    sessionDetail?.alias,
+    sessionDetail?.messageCount,
+    sessionDetail?.nickName,
+    sessionDetail?.remark,
+    sessionDetail?.wxid,
+    sessionByUsername,
+    sessionMessageCounts,
+    taskCenterHighlightTask,
+    taskCenterUpsertTask
+  ])
 
   // 导出通讯录
   const startContactExport = async () => {
     if (!exportFolder) return
 
-    setIsExporting(true)
+    setIsContactExporting(true)
     setExportResult(null)
 
     try {
@@ -2986,7 +3092,7 @@ function ExportPage() {
       console.error('导出通讯录失败:', e)
       setExportResult({ success: false, error: String(e) })
     } finally {
-      setIsExporting(false)
+      setIsContactExporting(false)
     }
   }
 
@@ -3337,6 +3443,8 @@ function ExportPage() {
                       sessionMessageCounts,
                       sessionCardStatsMap,
                       sessionLatestExportTimeMap,
+                      exportingSessionId: runningChatExportSessionId,
+                      queuedExportSessionIds: queuedChatExportSessionIds,
                       onSelect: selectSession,
                       onEnsureCardStats: ensureSessionCardStats,
                       onOpenChatWindow: handleOpenChatWindowFromList,
@@ -3427,6 +3535,8 @@ function ExportPage() {
                     const diagLatestTs = diag?.finishedAt || diag?.startedAt
                     const latestExportRecord = exportRecords[0]
                     const latestExportTimeLabel = latestExportRecord ? formatRecentExportTime(latestExportRecord.exportTime) : null
+                    const isSelectedSessionExporting = Boolean(selectedSession && runningChatExportSessionId === selectedSession)
+                    const isSelectedSessionQueued = Boolean(selectedSession && !isSelectedSessionExporting && queuedChatExportSessionIds.has(selectedSession))
                     const diagStepSummary = diag ? SESSION_DETAIL_DIAG_STEP_ORDER.reduce((acc, stepKey) => {
                       const status = diag.steps[stepKey].status
                       acc[status] = (acc[status] || 0) + 1
@@ -3524,8 +3634,14 @@ function ExportPage() {
                             <button
                               type="button"
                               onClick={() => setShowExportSettings(true)}
-                              disabled={!sessionDetail || sessionDetail.messageCount === 0}
-                              title={!sessionDetail || sessionDetail.messageCount === 0 ? '当前会话暂无可导出消息' : '打开当前会话导出设置'}
+                              disabled={!sessionDetail || sessionDetail.messageCount === 0 || isSelectedSessionExporting || isSelectedSessionQueued}
+                              title={
+                                isSelectedSessionExporting
+                                  ? '当前会话正在导出中'
+                                  : isSelectedSessionQueued
+                                    ? '当前会话已在导出队列中等待执行'
+                                    : (!sessionDetail || sessionDetail.messageCount === 0 ? '当前会话暂无可导出消息' : '打开当前会话导出设置')
+                              }
                               style={{
                                 alignSelf: 'flex-start',
                                 display: 'inline-flex',
@@ -3535,15 +3651,21 @@ function ExportPage() {
                                 padding: '0 12px',
                                 borderRadius: 10,
                                 border: '1px solid rgba(var(--primary-rgb), 0.22)',
-                                background: (!sessionDetail || sessionDetail.messageCount === 0) ? 'var(--bg-primary)' : 'rgba(var(--primary-rgb), 0.06)',
-                                color: (!sessionDetail || sessionDetail.messageCount === 0) ? 'var(--text-tertiary)' : 'var(--primary)',
-                                cursor: (!sessionDetail || sessionDetail.messageCount === 0) ? 'not-allowed' : 'pointer',
-                                opacity: (!sessionDetail || sessionDetail.messageCount === 0) ? 0.65 : 1,
+                                background: (!sessionDetail || sessionDetail.messageCount === 0)
+                                  ? 'var(--bg-primary)'
+                                  : ((isSelectedSessionExporting || isSelectedSessionQueued) ? 'rgba(var(--primary-rgb), 0.08)' : 'rgba(var(--primary-rgb), 0.06)'),
+                                color: (!sessionDetail || sessionDetail.messageCount === 0)
+                                  ? 'var(--text-tertiary)'
+                                  : 'var(--primary)',
+                                cursor: (!sessionDetail || sessionDetail.messageCount === 0 || isSelectedSessionExporting || isSelectedSessionQueued) ? 'not-allowed' : 'pointer',
+                                opacity: (!sessionDetail || sessionDetail.messageCount === 0 || isSelectedSessionExporting || isSelectedSessionQueued) ? 0.65 : 1,
                                 flexShrink: 0
                               }}
                             >
-                              <Download size={14} />
-                              <span style={{ fontSize: 12, fontWeight: 600 }}>导出此会话</span>
+                              {isSelectedSessionExporting ? <Loader2 size={14} className="spin" /> : isSelectedSessionQueued ? <Clock3 size={14} /> : <Download size={14} />}
+                              <span style={{ fontSize: 12, fontWeight: 600 }}>
+                                {isSelectedSessionExporting ? '导出中' : isSelectedSessionQueued ? '排队中' : '导出此会话'}
+                              </span>
                             </button>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: 2, paddingLeft: 2, minWidth: 0 }}>
                               <div style={{ fontSize: 11, color: 'var(--text-tertiary)', whiteSpace: 'nowrap' }}>
@@ -4438,17 +4560,22 @@ function ExportPage() {
                   <button
                     className="export-btn"
                     onClick={startExport}
-                    disabled={!selectedSession || !exportFolder || isExporting || hasRunningGlobalChatExportTask}
+                    disabled={!selectedSession || !exportFolder || selectedSessionChatExportState === 'running' || selectedSessionChatExportState === 'queued'}
                   >
-                    {(isExporting || hasRunningGlobalChatExportTask) ? (
+                    {selectedSessionChatExportState === 'running' ? (
                       <>
                         <Loader2 size={18} className="spin" />
                         <span>导出中...</span>
                       </>
+                    ) : selectedSessionChatExportState === 'queued' ? (
+                      <>
+                        <Clock3 size={18} />
+                        <span>排队中...</span>
+                      </>
                     ) : (
                       <>
                         <Download size={18} />
-                        <span>开始导出</span>
+                        <span>{hasRunningChatExportTask || hasPendingChatExportTask ? '加入队列' : '开始导出'}</span>
                       </>
                     )}
                   </button>
@@ -4647,9 +4774,9 @@ function ExportPage() {
               <button
                 className="export-btn"
                 onClick={startContactExport}
-                disabled={!exportFolder || isExporting || hasRunningGlobalChatExportTask}
+                disabled={!exportFolder || isContactExporting || hasRunningChatExportTask}
               >
-                {(isExporting || hasRunningGlobalChatExportTask) ? (
+                {(isContactExporting || hasRunningChatExportTask) ? (
                   <>
                     <Loader2 size={18} className="spin" />
                     <span>导出中...</span>
