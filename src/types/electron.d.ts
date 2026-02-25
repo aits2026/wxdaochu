@@ -561,6 +561,7 @@ export interface ElectronAPI {
       format: string
       messageCount: number
     }[]>
+    getLatestExportTimes: (sessionUsernames: string[]) => Promise<Record<string, number>>
     saveExportRecord: (sessionUsername: string, format: string, messageCount: number) => Promise<void>
   }
   activation: {

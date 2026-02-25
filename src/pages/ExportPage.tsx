@@ -161,6 +161,7 @@ interface ExportSessionRowData {
   sessionTypeFilter: SessionTypeFilter
   sessionMessageCounts: SessionMessageCountMap
   sessionCardStatsMap: Record<string, SessionCardStats>
+  sessionLatestExportTimeMap: Record<string, number | null>
   onSelect: (username: string) => void
   onEnsureCardStats: (session: ChatSession) => void
   onOpenChatWindow: (session: ChatSession) => void
@@ -202,6 +203,25 @@ const getAvatarLetter = (name: string) => {
 const formatSessionCardDate = (timestamp?: number) => (
   timestamp ? new Date(timestamp * 1000).toLocaleDateString('zh-CN') : '--'
 )
+
+const formatRecentExportTime = (exportTime?: number | null, nowMs: number = Date.now()) => {
+  if (!exportTime || !Number.isFinite(exportTime)) return null
+
+  const diffMs = Math.max(0, nowMs - exportTime)
+  const minuteMs = 60 * 1000
+  const hourMs = 60 * minuteMs
+  const dayMs = 24 * hourMs
+
+  if (diffMs < minuteMs) return '刚刚'
+  if (diffMs < hourMs) return `${Math.floor(diffMs / minuteMs)}分钟前`
+  if (diffMs < dayMs) return `${Math.floor(diffMs / hourMs)}小时前`
+
+  const d = new Date(exportTime)
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
 
 const SESSION_TABLE_HEADER_MEDIA_ICONS: Record<string, JSX.Element> = {
   图片: <Image size={11} />,
@@ -284,6 +304,7 @@ const ExportSessionRow = (props: RowComponentProps<ExportSessionRowData>) => {
     sessionTypeFilter,
     sessionMessageCounts,
     sessionCardStatsMap,
+    sessionLatestExportTimeMap,
     onSelect,
     onEnsureCardStats,
     onOpenChatWindow,
@@ -312,6 +333,7 @@ const ExportSessionRow = (props: RowComponentProps<ExportSessionRowData>) => {
     .filter((v, i, arr) => v !== primaryName && arr.indexOf(v) === i)
   const openChatLabel = isGroup ? '打开群聊' : isPrivate ? '打开私聊' : '打开公众号'
   const infoIdLine = cardStats?.alias ? `${session.username} · ${cardStats.alias}` : session.username
+  const recentExportTimeLabel = formatRecentExportTime(sessionLatestExportTimeMap[session.username])
 
   useEffect(() => {
     onEnsureCardStats(session)
@@ -436,17 +458,24 @@ const ExportSessionRow = (props: RowComponentProps<ExportSessionRowData>) => {
           ))}
 
           <div className="session-table-cell session-cell-action session-cell-sticky-right">
-            <button
-              type="button"
-              className="session-table-export-btn"
-              onClick={async (e) => {
-                e.stopPropagation()
-                await onOpenExportSettings(session)
-              }}
-            >
-              <Download size={12} />
-              <span>导出</span>
-            </button>
+            <div className="session-cell-action-stack">
+              <button
+                type="button"
+                className="session-table-export-btn"
+                onClick={async (e) => {
+                  e.stopPropagation()
+                  await onOpenExportSettings(session)
+                }}
+              >
+                <Download size={12} />
+                <span>导出</span>
+              </button>
+              {recentExportTimeLabel && (
+                <div className="session-export-time-meta" title={`最近导出：${recentExportTimeLabel}`}>
+                  {recentExportTimeLabel}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -493,6 +522,7 @@ function ExportPage() {
   const [isRefreshingSessions, setIsRefreshingSessions] = useState(false)
   const [isLoadingSessionCounts, setIsLoadingSessionCounts] = useState(false)
   const [loadedSessionCountUsernames, setLoadedSessionCountUsernames] = useState<Set<string>>(new Set())
+  const [sessionLatestExportTimeMap, setSessionLatestExportTimeMap] = useState<Record<string, number | null>>({})
   const [searchKeyword, setSearchKeyword] = useState('')
   const [sessionTypeFilter, setSessionTypeFilter] = useState<SessionTypeFilter>('private')
   const [exportFolder, setExportFolder] = useState<string>('')
@@ -621,6 +651,7 @@ function ExportPage() {
   const pendingCachedSelectedSessionRef = useRef<string | null>(null)
   const identityChipCopyResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const sessionDetailDiagRunIdRef = useRef(0)
+  const sessionLatestExportTimesRequestIdRef = useRef(0)
 
   useEffect(() => {
     sessionTypeFilterRef.current = sessionTypeFilter
@@ -1201,6 +1232,64 @@ function ExportPage() {
     if (sessions.some(session => session.username === selectedSession)) return
     setSelectedSession(null)
   }, [selectedSession, sessions])
+
+  useEffect(() => {
+    if (sessions.length === 0) {
+      setSessionLatestExportTimeMap({})
+      return
+    }
+
+    const currentUsernames = new Set(sessions.map(session => session.username))
+    setSessionLatestExportTimeMap(prev => {
+      let changed = false
+      const next: Record<string, number | null> = {}
+      for (const [username, value] of Object.entries(prev)) {
+        if (currentUsernames.has(username)) {
+          next[username] = value
+        } else {
+          changed = true
+        }
+      }
+      return changed ? next : prev
+    })
+  }, [sessions])
+
+  useEffect(() => {
+    if (activeTab !== 'chat' || filteredSessions.length === 0) return
+
+    const missingUsernames = filteredSessions
+      .map(session => session.username)
+      .filter(username => !(username in sessionLatestExportTimeMap))
+
+    if (missingUsernames.length === 0) return
+
+    const requestId = ++sessionLatestExportTimesRequestIdRef.current
+
+    void (async () => {
+      try {
+        const latestMap = await window.electronAPI.export.getLatestExportTimes(missingUsernames)
+        if (requestId !== sessionLatestExportTimesRequestIdRef.current) return
+
+        setSessionLatestExportTimeMap(prev => {
+          const next = { ...prev }
+          for (const username of missingUsernames) {
+            next[username] = typeof latestMap?.[username] === 'number' ? latestMap[username] : null
+          }
+          return next
+        })
+      } catch (e) {
+        console.error('加载会话最近导出时间失败:', e)
+        if (requestId !== sessionLatestExportTimesRequestIdRef.current) return
+        setSessionLatestExportTimeMap(prev => {
+          const next = { ...prev }
+          for (const username of missingUsernames) {
+            if (!(username in next)) next[username] = null
+          }
+          return next
+        })
+      }
+    })()
+  }, [activeTab, filteredSessions, sessionLatestExportTimeMap])
 
   const sessionByUsername = useMemo(() => {
     const map = new Map<string, ChatSession>()
@@ -2832,6 +2921,7 @@ function ExportPage() {
           await window.electronAPI.export.saveExportRecord(targetSessionId, options.format, targetMessageCount)
           const records = await window.electronAPI.export.getExportRecords(targetSessionId)
           setExportRecords(records)
+          setSessionLatestExportTimeMap(prev => ({ ...prev, [targetSessionId]: Date.now() }))
         } else {
           taskCenterPatchTask(exportTaskId, {
             status: 'error',
@@ -3246,6 +3336,7 @@ function ExportPage() {
                       sessionTypeFilter,
                       sessionMessageCounts,
                       sessionCardStatsMap,
+                      sessionLatestExportTimeMap,
                       onSelect: selectSession,
                       onEnsureCardStats: ensureSessionCardStats,
                       onOpenChatWindow: handleOpenChatWindowFromList,
@@ -3334,6 +3425,8 @@ function ExportPage() {
                       ? (diag.status === 'running' ? '#2563eb' : diag.status === 'success' ? '#059669' : diag.status === 'error' ? '#dc2626' : 'var(--text-tertiary)')
                       : 'var(--text-tertiary)'
                     const diagLatestTs = diag?.finishedAt || diag?.startedAt
+                    const latestExportRecord = exportRecords[0]
+                    const latestExportTimeLabel = latestExportRecord ? formatRecentExportTime(latestExportRecord.exportTime) : null
                     const diagStepSummary = diag ? SESSION_DETAIL_DIAG_STEP_ORDER.reduce((acc, stepKey) => {
                       const status = diag.steps[stepKey].status
                       acc[status] = (acc[status] || 0) + 1
@@ -3427,30 +3520,42 @@ function ExportPage() {
                               )}
                             </div>
                           </div>
-                          <button
-                            type="button"
-                            onClick={() => setShowExportSettings(true)}
-                            disabled={!sessionDetail || sessionDetail.messageCount === 0}
-                            title={!sessionDetail || sessionDetail.messageCount === 0 ? '当前会话暂无可导出消息' : '打开当前会话导出设置'}
-                            style={{
-                              alignSelf: 'flex-start',
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: 6,
-                              height: 38,
-                              padding: '0 12px',
-                              borderRadius: 10,
-                              border: '1px solid rgba(var(--primary-rgb), 0.22)',
-                              background: (!sessionDetail || sessionDetail.messageCount === 0) ? 'var(--bg-primary)' : 'rgba(var(--primary-rgb), 0.06)',
-                              color: (!sessionDetail || sessionDetail.messageCount === 0) ? 'var(--text-tertiary)' : 'var(--primary)',
-                              cursor: (!sessionDetail || sessionDetail.messageCount === 0) ? 'not-allowed' : 'pointer',
-                              opacity: (!sessionDetail || sessionDetail.messageCount === 0) ? 0.65 : 1,
-                              flexShrink: 0
-                            }}
-                          >
-                            <Download size={14} />
-                            <span style={{ fontSize: 12, fontWeight: 600 }}>导出此会话</span>
-                          </button>
+                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 4, minWidth: 0 }}>
+                            <button
+                              type="button"
+                              onClick={() => setShowExportSettings(true)}
+                              disabled={!sessionDetail || sessionDetail.messageCount === 0}
+                              title={!sessionDetail || sessionDetail.messageCount === 0 ? '当前会话暂无可导出消息' : '打开当前会话导出设置'}
+                              style={{
+                                alignSelf: 'flex-start',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: 6,
+                                height: 38,
+                                padding: '0 12px',
+                                borderRadius: 10,
+                                border: '1px solid rgba(var(--primary-rgb), 0.22)',
+                                background: (!sessionDetail || sessionDetail.messageCount === 0) ? 'var(--bg-primary)' : 'rgba(var(--primary-rgb), 0.06)',
+                                color: (!sessionDetail || sessionDetail.messageCount === 0) ? 'var(--text-tertiary)' : 'var(--primary)',
+                                cursor: (!sessionDetail || sessionDetail.messageCount === 0) ? 'not-allowed' : 'pointer',
+                                opacity: (!sessionDetail || sessionDetail.messageCount === 0) ? 0.65 : 1,
+                                flexShrink: 0
+                              }}
+                            >
+                              <Download size={14} />
+                              <span style={{ fontSize: 12, fontWeight: 600 }}>导出此会话</span>
+                            </button>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 2, paddingLeft: 2, minWidth: 0 }}>
+                              <div style={{ fontSize: 11, color: 'var(--text-tertiary)', whiteSpace: 'nowrap' }}>
+                                导出记录 {exportRecords.length.toLocaleString()} 条
+                              </div>
+                              {latestExportTimeLabel && (
+                                <div style={{ fontSize: 11, color: 'var(--text-tertiary)', whiteSpace: 'nowrap' }}>
+                                  最近导出：{latestExportTimeLabel}
+                                </div>
+                              )}
+                            </div>
+                          </div>
                           <button
                             type="button"
                             onClick={handleRefreshSelectedSessionDetail}
@@ -4044,28 +4149,6 @@ function ExportPage() {
                                 )})}
                               </div>
                             )}
-                            <div style={{ marginTop: 8 }}>
-                              <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginBottom: 6 }}>数据库分布</div>
-                              {sessionDetail.messageTables.length === 0 ? (
-                                <div style={{ fontSize: 13, color: 'var(--text-tertiary)', padding: '4px 0' }}>暂无数据库分布信息</div>
-                              ) : (
-                                sessionDetail.messageTables.map((t, i) => (
-                                  <div key={`${t.dbName}:${t.tableName}:${i}`} style={{
-                                    padding: '8px 10px',
-                                    marginBottom: 6,
-                                    background: 'var(--bg-secondary)',
-                                    borderRadius: 8,
-                                    fontSize: 12,
-                                    display: 'flex',
-                                    justifyContent: 'space-between',
-                                    gap: 8,
-                                  }}>
-                                    <span style={{ color: 'var(--text-secondary)' }}>{t.dbName}</span>
-                                    <span style={{ color: 'var(--primary)', fontWeight: 500 }}>{t.count.toLocaleString()} 条</span>
-                                  </div>
-                                ))
-                              )}
-                            </div>
                             {/* 导出记录 */}
                             <div style={{ marginTop: 8 }}>
                               <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginBottom: 6 }}>导出记录</div>
@@ -4097,6 +4180,28 @@ function ExportPage() {
                                   </div>
                                 )
                               })}
+                            </div>
+                            <div style={{ marginTop: 8 }}>
+                              <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginBottom: 6 }}>数据库分布</div>
+                              {sessionDetail.messageTables.length === 0 ? (
+                                <div style={{ fontSize: 13, color: 'var(--text-tertiary)', padding: '4px 0' }}>暂无数据库分布信息</div>
+                              ) : (
+                                sessionDetail.messageTables.map((t, i) => (
+                                  <div key={`${t.dbName}:${t.tableName}:${i}`} style={{
+                                    padding: '8px 10px',
+                                    marginBottom: 6,
+                                    background: 'var(--bg-secondary)',
+                                    borderRadius: 8,
+                                    fontSize: 12,
+                                    display: 'flex',
+                                    justifyContent: 'space-between',
+                                    gap: 8,
+                                  }}>
+                                    <span style={{ color: 'var(--text-secondary)' }}>{t.dbName}</span>
+                                    <span style={{ color: 'var(--primary)', fontWeight: 500 }}>{t.count.toLocaleString()} 条</span>
+                                  </div>
+                                ))
+                              )}
                             </div>
                           </div>
                         ) : null}

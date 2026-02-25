@@ -2120,6 +2120,10 @@ function registerIpcHandlers() {
     return exportRecordService.getRecords(sessionUsername)
   })
 
+  ipcMain.handle('export:getLatestExportTimes', (_, sessionUsernames: string[]) => {
+    return exportRecordService.getLatestRecordTimes(Array.isArray(sessionUsernames) ? sessionUsernames : [])
+  })
+
   ipcMain.handle('export:saveExportRecord', (_, sessionUsername: string, format: string, messageCount: number) => {
     exportRecordService.saveRecord(sessionUsername, format, messageCount)
   })

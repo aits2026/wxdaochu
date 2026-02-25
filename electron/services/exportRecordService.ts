@@ -40,6 +40,19 @@ export class ExportRecordService {
     return (this.store[sessionUsername] || []).slice().reverse() // 最新在前
   }
 
+  getLatestRecordTimes(sessionUsernames: string[]): Record<string, number> {
+    const result: Record<string, number> = {}
+    for (const sessionUsername of sessionUsernames) {
+      const records = this.store[sessionUsername]
+      if (!records || records.length === 0) continue
+      const latest = records[records.length - 1]
+      if (latest?.exportTime) {
+        result[sessionUsername] = latest.exportTime
+      }
+    }
+    return result
+  }
+
   saveRecord(sessionUsername: string, format: string, messageCount: number) {
     if (!this.store[sessionUsername]) {
       this.store[sessionUsername] = []
