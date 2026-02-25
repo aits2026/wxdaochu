@@ -166,6 +166,7 @@ interface ExportSessionRowData {
   onOpenChatWindow: (session: ChatSession) => void
   onOpenCommonGroups: (session: ChatSession) => void
   onOpenExportSettings: (session: ChatSession) => void | Promise<void>
+  onOpenImageAssets: (session: ChatSession) => void | Promise<void>
 }
 
 interface SessionCardGroupInfo {
@@ -287,7 +288,8 @@ const ExportSessionRow = (props: RowComponentProps<ExportSessionRowData>) => {
     onEnsureCardStats,
     onOpenChatWindow,
     onOpenCommonGroups,
-    onOpenExportSettings
+    onOpenExportSettings,
+    onOpenImageAssets
   } = props
   const session = sessions[index]
   const cardStats = sessionCardStatsMap[session.username]
@@ -414,7 +416,22 @@ const ExportSessionRow = (props: RowComponentProps<ExportSessionRowData>) => {
 
           {mediaStats.map(item => (
             <div key={item.label} className="session-table-cell session-cell-metric session-cell-media" title={item.label}>
-              <span className="media-value">{item.count !== undefined ? item.count.toLocaleString() : '--'}</span>
+              {item.label === '图片' ? (
+                <button
+                  type="button"
+                  className={`session-media-count-link ${item.count && item.count > 0 ? '' : 'is-disabled'}`}
+                  disabled={!item.count}
+                  onClick={async (e) => {
+                    e.stopPropagation()
+                    if (!item.count) return
+                    await onOpenImageAssets(session)
+                  }}
+                >
+                  <span className="media-value">{item.count !== undefined ? item.count.toLocaleString() : '--'}</span>
+                </button>
+              ) : (
+                <span className="media-value">{item.count !== undefined ? item.count.toLocaleString() : '--'}</span>
+              )}
             </div>
           ))}
 
@@ -1821,10 +1838,10 @@ function ExportPage() {
     }
   }, [inspectSessionVideoAssets])
 
-  const openSessionImageAssetsModal = useCallback(async () => {
-    if (!selectedSession) return
+  const openSessionImageAssetsModal = useCallback(async (targetSessionId?: string) => {
+    const sessionId = targetSessionId || selectedSession
+    if (!sessionId) return
 
-    const sessionId = selectedSession
     const requestId = ++sessionImageAssetsRequestIdRef.current
     setShowSessionImageAssetsModal(true)
     setSessionImageAssetsLoading(true)
@@ -2516,6 +2533,11 @@ function ExportPage() {
     await selectSession(session.username)
     setShowExportSettings(true)
   }, [selectSession])
+
+  const handleOpenImageAssetsFromList = useCallback(async (session: ChatSession) => {
+    await selectSession(session.username)
+    await openSessionImageAssetsModal(session.username)
+  }, [openSessionImageAssetsModal, selectSession])
 
   useEffect(() => {
     const cachedSelectedSession = pendingCachedSelectedSessionRef.current
@@ -3231,7 +3253,8 @@ function ExportPage() {
                       onEnsureCardStats: ensureSessionCardStats,
                       onOpenChatWindow: handleOpenChatWindowFromList,
                       onOpenCommonGroups: handleOpenCommonGroupsFromList,
-                      onOpenExportSettings: handleOpenExportSettingsFromList
+                      onOpenExportSettings: handleOpenExportSettingsFromList,
+                      onOpenImageAssets: handleOpenImageAssetsFromList
                     }}
                     rowComponent={ExportSessionRow}
                   />

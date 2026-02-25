@@ -1247,6 +1247,34 @@
           min-width: 0;
           text-align: center;
         }
+
+        .session-media-count-link {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          min-width: 0;
+          padding: 0;
+          border: none;
+          background: transparent;
+          color: var(--primary);
+          cursor: pointer;
+          font: inherit;
+          line-height: inherit;
+          border-radius: 4px;
+          transition: color 0.15s ease;
+
+          &:hover {
+            color: var(--primary-hover);
+            text-decoration: underline;
+            text-underline-offset: 2px;
+          }
+
+          &.is-disabled {
+            color: var(--text-tertiary);
+            cursor: default;
+            text-decoration: none;
+          }
+        }
       }
     }
 
