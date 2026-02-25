@@ -1,6 +1,7 @@
 import { NavLink, useLocation } from 'react-router-dom'
 import { Database, Settings, Download, Aperture, Sun, Moon, Monitor } from 'lucide-react'
 import { useThemeStore } from '../stores/themeStore'
+import GlobalTaskCenter from './GlobalTaskCenter'
 import './Sidebar.scss'
 
 function Sidebar() {
@@ -47,6 +48,8 @@ function Sidebar() {
           <span className="nav-icon"><Database size={20} /></span>
           <span className="nav-label">DB</span>
         </NavLink>
+
+        <GlobalTaskCenter variant="sidebar" label="任务" />
       </nav>
       
       <div className="sidebar-footer">

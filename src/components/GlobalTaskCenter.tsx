@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CheckCircle, ExternalLink, ListTodo, Loader2, Trash2, XCircle } from 'lucide-react'
 import { GlobalTaskRecord, useTaskCenterStore } from '../stores/taskCenterStore'
 import './GlobalTaskCenter.scss'
@@ -106,8 +106,15 @@ function TaskCard({
   )
 }
 
-function GlobalTaskCenter() {
+interface GlobalTaskCenterProps {
+  variant?: 'titlebar' | 'sidebar'
+  label?: string
+}
+
+function GlobalTaskCenter({ variant = 'titlebar', label = '任务中心' }: GlobalTaskCenterProps) {
   const [open, setOpen] = useState(false)
+  const [popoverStyle, setPopoverStyle] = useState<CSSProperties | undefined>(undefined)
+  const triggerRef = useRef<HTMLButtonElement | null>(null)
   const tasks = useTaskCenterStore(state => state.tasks)
   const removeTask = useTaskCenterStore(state => state.removeTask)
   const clearFinishedTasks = useTaskCenterStore(state => state.clearFinishedTasks)
@@ -120,16 +127,60 @@ function GlobalTaskCenter() {
   const runningTasks = sortedTasks.filter(task => task.status === 'running')
   const finishedTasks = sortedTasks.filter(task => task.status === 'success' || task.status === 'error')
   const activeCount = pendingTasks.length + runningTasks.length
+  const isSidebar = variant === 'sidebar'
+
+  const updatePopoverPosition = useCallback(() => {
+    if (!isSidebar) {
+      setPopoverStyle(undefined)
+      return
+    }
+    const rect = triggerRef.current?.getBoundingClientRect()
+    if (!rect) return
+    const popoverWidth = Math.min(400, window.innerWidth - 24)
+    const maxPopoverHeight = Math.min(window.innerHeight * 0.75, 680)
+    const left = Math.max(12, Math.min(rect.right + 8, window.innerWidth - popoverWidth - 12))
+    const top = Math.max(12, Math.min(rect.top, window.innerHeight - maxPopoverHeight - 12))
+    setPopoverStyle({ left, top })
+  }, [isSidebar])
+
+  useEffect(() => {
+    if (!open) return
+    updatePopoverPosition()
+    window.addEventListener('resize', updatePopoverPosition)
+    return () => {
+      window.removeEventListener('resize', updatePopoverPosition)
+    }
+  }, [open, updatePopoverPosition])
+
+  const toggleOpen = () => {
+    setOpen(prev => {
+      const next = !prev
+      if (next) {
+        requestAnimationFrame(() => {
+          updatePopoverPosition()
+        })
+      }
+      return next
+    })
+  }
 
   return (
-    <div className="global-task-center-wrap">
+    <div className={`global-task-center-wrap ${variant}`}>
       <button
+        ref={triggerRef}
         type="button"
-        className={`global-task-center-trigger ${open ? 'active' : ''}`}
-        onClick={() => setOpen(v => !v)}
-        title="任务中心"
+        className={`global-task-center-trigger ${isSidebar ? 'sidebar-trigger nav-item' : 'titlebar-trigger'} ${open ? 'active' : ''}`}
+        onClick={toggleOpen}
+        title={label}
       >
-        <ListTodo size={15} />
+        {isSidebar ? (
+          <>
+            <span className="nav-icon"><ListTodo size={20} /></span>
+            <span className="nav-label">{label}</span>
+          </>
+        ) : (
+          <ListTodo size={15} />
+        )}
         {activeCount > 0 && (
           <span className="task-badge">{activeCount}</span>
         )}
@@ -138,7 +189,10 @@ function GlobalTaskCenter() {
       {open && (
         <>
           <div className="global-task-center-overlay" onClick={() => setOpen(false)} />
-          <div className="global-task-center-popover">
+          <div
+            className={`global-task-center-popover ${isSidebar ? 'anchor-sidebar' : 'anchor-titlebar'}`}
+            style={isSidebar ? popoverStyle : undefined}
+          >
             <div className="global-task-center-header">
               <div className="title">任务中心</div>
               <div className="header-actions">
@@ -192,4 +246,3 @@ function GlobalTaskCenter() {
 }
 
 export default GlobalTaskCenter
-
