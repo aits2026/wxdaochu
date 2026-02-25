@@ -123,6 +123,16 @@ interface SessionVideoAssetItem {
 
 // 会话类型筛选
 type SessionTypeFilter = 'group' | 'private' | 'official'
+type SessionListSortKey =
+  | 'messageCount'
+  | 'commonGroupCount'
+  | 'imageCount'
+  | 'videoCount'
+  | 'voiceCount'
+  | 'emojiCount'
+  | 'groupMemberCount'
+  | 'groupFriendMemberCount'
+  | 'groupSelfMessageCount'
 
 type SessionDetailDiagStepKey = 'init' | 'reconnect' | 'exportRecords' | 'sessionDetail' | 'groupInfo' | 'finish'
 type SessionDetailDiagStepStatus = 'pending' | 'loading' | 'success' | 'error' | 'skipped'
@@ -277,6 +287,30 @@ const getSessionTableHeaderColumns = (filter: SessionTypeFilter) => {
     return ['会话信息', '总消息', '群人数', '群内好友数', '我发消息', '最早时间', '最新时间', '图片', '视频', '表情包', '语音', '导出']
   }
   return ['会话信息', '总消息', '最早时间', '最新时间', '图片', '视频', '表情包', '语音', '导出']
+}
+
+const SESSION_TABLE_HEADER_SORT_KEY_MAP: Partial<Record<string, SessionListSortKey>> = {
+  总消息: 'messageCount',
+  共同群聊: 'commonGroupCount',
+  群人数: 'groupMemberCount',
+  群内好友数: 'groupFriendMemberCount',
+  我发消息: 'groupSelfMessageCount',
+  图片: 'imageCount',
+  视频: 'videoCount',
+  语音: 'voiceCount',
+  表情包: 'emojiCount'
+}
+
+const SESSION_TABLE_SORT_KEYS_BY_FILTER: Record<SessionTypeFilter, SessionListSortKey[]> = {
+  private: ['messageCount', 'commonGroupCount', 'imageCount', 'videoCount', 'voiceCount', 'emojiCount'],
+  group: ['messageCount', 'groupMemberCount', 'groupFriendMemberCount', 'groupSelfMessageCount', 'imageCount', 'videoCount', 'voiceCount', 'emojiCount'],
+  official: ['messageCount', 'imageCount', 'videoCount', 'voiceCount', 'emojiCount']
+}
+
+const getSessionTableHeaderSortKey = (filter: SessionTypeFilter, label: string): SessionListSortKey | null => {
+  const key = SESSION_TABLE_HEADER_SORT_KEY_MAP[label]
+  if (!key) return null
+  return SESSION_TABLE_SORT_KEYS_BY_FILTER[filter].includes(key) ? key : null
 }
 
 const SESSION_DETAIL_DIAG_STEP_LABELS: Record<SessionDetailDiagStepKey, string> = {
@@ -612,6 +646,7 @@ function ExportPage() {
   const [sessionLatestExportTimeMap, setSessionLatestExportTimeMap] = useState<Record<string, number | null>>({})
   const [searchKeyword, setSearchKeyword] = useState('')
   const [sessionTypeFilter, setSessionTypeFilter] = useState<SessionTypeFilter>('private')
+  const [sessionListSortKey, setSessionListSortKey] = useState<SessionListSortKey>('messageCount')
   const [exportFolder, setExportFolder] = useState<string>('')
   const [isContactExporting, setIsContactExporting] = useState(false)
   const [exportResult, setExportResult] = useState<ExportResult | null>(null)
@@ -726,6 +761,7 @@ function ExportPage() {
   const sessionVideoOverviewRequestIdRef = useRef<Record<string, number>>({})
   const sessionVideoAssetsRequestIdRef = useRef(0)
   const sessionTypeFilterRef = useRef<SessionTypeFilter>('private')
+  const sessionSortStatsWarmupRunIdRef = useRef(0)
   const sessionTableHeaderScrollRef = useRef<HTMLDivElement | null>(null)
   const sessionTableScrollRef = useRef<HTMLDivElement | null>(null)
   const sessionTableScrollbarRef = useRef<HTMLDivElement | null>(null)
@@ -1181,7 +1217,18 @@ function ExportPage() {
     isSessionTypeCountsPending ? '计算中' : count.toLocaleString()
   )
 
-  const filteredSessions = useMemo(() => {
+  const effectiveSessionListSortKey = useMemo<SessionListSortKey>(() => {
+    const allowed = SESSION_TABLE_SORT_KEYS_BY_FILTER[sessionTypeFilter]
+    return allowed.includes(sessionListSortKey) ? sessionListSortKey : 'messageCount'
+  }, [sessionListSortKey, sessionTypeFilter])
+
+  useEffect(() => {
+    if (sessionListSortKey !== effectiveSessionListSortKey) {
+      setSessionListSortKey(effectiveSessionListSortKey)
+    }
+  }, [effectiveSessionListSortKey, sessionListSortKey])
+
+  const filteredSessionCandidates = useMemo(() => {
     let filtered = sessions
 
     if (sessionTypeFilter === 'group') {
@@ -1200,18 +1247,66 @@ function ExportPage() {
       )
     }
 
-    const hasCountsForCurrentFiltered = filtered.length > 0 && filtered.every(s => loadedSessionCountUsernames.has(s.username))
+    return filtered
+  }, [sessions, sessionTypeFilter, deferredSearchKeyword])
 
-    if (hasCountsForCurrentFiltered) {
-      filtered = [...filtered].sort((a, b) => {
-        const countDiff = (deferredSessionMessageCounts[b.username] || 0) - (deferredSessionMessageCounts[a.username] || 0)
-        if (countDiff !== 0) return countDiff
-        return (b.lastTimestamp || 0) - (a.lastTimestamp || 0)
-      })
+  const filteredSessions = useMemo(() => {
+    const compareMetricDesc = (a: number | undefined, b: number | undefined) => {
+      const aValid = typeof a === 'number' && Number.isFinite(a)
+      const bValid = typeof b === 'number' && Number.isFinite(b)
+      if (aValid && !bValid) return -1
+      if (!aValid && bValid) return 1
+      if (!aValid && !bValid) return 0
+      return (b as number) - (a as number)
     }
 
-    return filtered
-  }, [sessions, sessionTypeFilter, deferredSearchKeyword, deferredSessionMessageCounts, loadedSessionCountUsernames])
+    const getMessageCount = (session: ChatSession) => {
+      const statCount = sessionCardStatsMap[session.username]?.messageCount
+      return deferredSessionMessageCounts[session.username] ?? statCount
+    }
+
+    const getSortMetricValue = (session: ChatSession, sortKey: SessionListSortKey) => {
+      const stats = sessionCardStatsMap[session.username]
+      switch (sortKey) {
+        case 'messageCount':
+          return getMessageCount(session)
+        case 'commonGroupCount':
+          return stats?.commonGroupCount
+        case 'imageCount':
+          return stats?.imageCount
+        case 'videoCount':
+          return stats?.videoCount
+        case 'voiceCount':
+          return stats?.voiceCount
+        case 'emojiCount':
+          return stats?.emojiCount
+        case 'groupMemberCount':
+          return stats?.groupInfo?.memberCount
+        case 'groupFriendMemberCount':
+          return stats?.groupInfo?.friendMemberCount
+        case 'groupSelfMessageCount':
+          return stats?.groupInfo?.selfMessageCount
+        default:
+          return undefined
+      }
+    }
+
+    return [...filteredSessionCandidates].sort((a, b) => {
+      const selectedMetricDiff = compareMetricDesc(
+        getSortMetricValue(a, effectiveSessionListSortKey),
+        getSortMetricValue(b, effectiveSessionListSortKey)
+      )
+      if (selectedMetricDiff !== 0) return selectedMetricDiff
+
+      const messageCountDiff = compareMetricDesc(getMessageCount(a), getMessageCount(b))
+      if (messageCountDiff !== 0) return messageCountDiff
+
+      const lastTimestampDiff = (b.lastTimestamp || 0) - (a.lastTimestamp || 0)
+      if (lastTimestampDiff !== 0) return lastTimestampDiff
+
+      return a.username.localeCompare(b.username, 'zh-CN')
+    })
+  }, [deferredSessionMessageCounts, effectiveSessionListSortKey, filteredSessionCandidates, sessionCardStatsMap])
 
   const sessionListHeaderColumns = useMemo(
     () => getSessionTableHeaderColumns(sessionTypeFilter),
@@ -1537,6 +1632,34 @@ function ExportPage() {
       delete sessionCardStatsLoadingRef.current[username]
     }
   }, [patchSessionCardStats])
+
+  useEffect(() => {
+    if (activeTab !== 'chat') return
+    if (effectiveSessionListSortKey === 'messageCount') return
+    if (filteredSessionCandidates.length === 0) return
+
+    const runId = ++sessionSortStatsWarmupRunIdRef.current
+    let cancelled = false
+    const targets = [...filteredSessionCandidates]
+
+    void (async () => {
+      let cursor = 0
+      const workerCount = Math.min(2, targets.length)
+      const runWorker = async () => {
+        while (!cancelled && runId === sessionSortStatsWarmupRunIdRef.current) {
+          const nextIndex = cursor++
+          if (nextIndex >= targets.length) return
+          await ensureSessionCardStats(targets[nextIndex])
+        }
+      }
+
+      await Promise.all(Array.from({ length: workerCount }, () => runWorker()))
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [activeTab, effectiveSessionListSortKey, ensureSessionCardStats, filteredSessionCandidates])
 
   const closeSessionDrawer = useCallback(() => {
     setShowExportSettings(false)
@@ -3466,27 +3589,48 @@ function ExportPage() {
                     }}
                   >
                     <div className={`export-session-table-header ${sessionListGridClass}`}>
-                      {sessionListHeaderColumns.map(label => (
-                        <div
-                          key={label}
-                          className={[
-                            'export-session-table-header-cell',
-                            SESSION_TABLE_HEADER_MEDIA_ICONS[label] ? 'is-media-header' : '',
-                            (label === '最早时间' || label === '最新时间') ? 'is-time-header' : '',
-                            label === '导出' ? 'is-sticky-right is-action-header' : ''
-                          ].filter(Boolean).join(' ')}
-                          title={label}
-                        >
-                          {SESSION_TABLE_HEADER_MEDIA_ICONS[label] ? (
-                            <>
-                              <span className="header-media-icon">{SESSION_TABLE_HEADER_MEDIA_ICONS[label]}</span>
-                              <span>{label}</span>
-                            </>
-                          ) : (
-                            <span>{label}</span>
-                          )}
-                        </div>
-                      ))}
+                      {sessionListHeaderColumns.map(label => {
+                        const headerSortKey = getSessionTableHeaderSortKey(sessionTypeFilter, label)
+                        const isSortableHeader = Boolean(headerSortKey)
+                        const isSortedHeader = Boolean(headerSortKey && headerSortKey === effectiveSessionListSortKey)
+
+                        return (
+                          <div
+                            key={label}
+                            className={[
+                              'export-session-table-header-cell',
+                              SESSION_TABLE_HEADER_MEDIA_ICONS[label] ? 'is-media-header' : '',
+                              (label === '最早时间' || label === '最新时间') ? 'is-time-header' : '',
+                              isSortableHeader ? 'is-sortable' : '',
+                              isSortedHeader ? 'is-sorted' : '',
+                              label === '导出' ? 'is-sticky-right is-action-header' : ''
+                            ].filter(Boolean).join(' ')}
+                            title={isSortableHeader ? `${label}（点击按数量降序排序）` : label}
+                            onClick={isSortableHeader && headerSortKey ? () => setSessionListSortKey(headerSortKey) : undefined}
+                            onKeyDown={isSortableHeader && headerSortKey ? (e) => {
+                              if (e.key !== 'Enter' && e.key !== ' ') return
+                              e.preventDefault()
+                              setSessionListSortKey(headerSortKey)
+                            } : undefined}
+                            role={isSortableHeader ? 'button' : undefined}
+                            tabIndex={isSortableHeader ? 0 : undefined}
+                            aria-sort={isSortedHeader ? 'descending' : undefined}
+                          >
+                            {SESSION_TABLE_HEADER_MEDIA_ICONS[label] ? (
+                              <>
+                                <span className="header-media-icon">{SESSION_TABLE_HEADER_MEDIA_ICONS[label]}</span>
+                                <span>{label}</span>
+                                {isSortedHeader && <ChevronDown size={12} className="header-sort-indicator" aria-hidden="true" />}
+                              </>
+                            ) : (
+                              <>
+                                <span>{label}</span>
+                                {isSortedHeader && <ChevronDown size={12} className="header-sort-indicator" aria-hidden="true" />}
+                              </>
+                            )}
+                          </div>
+                        )
+                      })}
                     </div>
                   </div>
                   <div
