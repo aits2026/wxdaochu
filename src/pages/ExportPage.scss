@@ -849,22 +849,27 @@
     flex: 1;
     min-height: 0;
     overflow: hidden;
-    padding: 2px 12px 14px;
+    padding: 0 12px 14px;
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 0;
   }
 
   .export-session-list-body {
     flex: 1;
     min-height: 0;
     overflow: hidden;
+    box-sizing: border-box;
+    border: 1px solid var(--border-color);
+    border-top: none;
+    border-radius: 0 0 10px 10px;
+    background: var(--bg-primary);
   }
 
   .export-session-table-header,
   .export-session-table-row {
     display: grid;
-    gap: 10px;
+    gap: 0;
 
     &.session-grid-private {
       grid-template-columns: minmax(280px, 1.9fr) minmax(132px, 0.9fr) minmax(116px, 0.9fr) minmax(110px, 0.8fr) minmax(110px, 0.8fr) 72px 72px 86px 72px;
@@ -880,22 +885,27 @@
   }
 
   .export-session-table-header {
-    padding: 0 2px;
+    padding: 0;
+    box-sizing: border-box;
+    border: 1px solid var(--border-color);
+    border-bottom: none;
+    border-radius: 10px 10px 0 0;
+    background: var(--bg-secondary);
   }
 
   .export-session-table-header-cell {
-    height: 28px;
-    border-radius: 8px;
+    height: 34px;
+    border-radius: 0;
     background: transparent;
     display: flex;
     align-items: center;
     justify-content: flex-start;
     gap: 4px;
     color: var(--text-secondary);
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 600;
     white-space: nowrap;
-    padding: 0 4px;
+    padding: 0 8px;
 
     &.is-media-header {
       justify-content: center;
@@ -913,39 +923,34 @@
   }
 
   .export-session-item {
+    position: relative;
     display: flex;
     flex-direction: column;
     gap: 0;
-    padding: 8px 10px;
-    border-radius: 12px;
+    padding: 0;
+    border-radius: 0;
     cursor: pointer;
-    transition: all 0.2s;
-    border: 1px solid rgba(127, 127, 127, 0.08);
-    background:
-      radial-gradient(circle at top right, rgba(var(--primary-rgb), 0.03), transparent 58%),
-      var(--card-bg);
+    transition: background-color 0.15s ease;
+    border: none;
+    border-bottom: 1px solid rgba(127, 127, 127, 0.08);
+    background: transparent;
 
     &:hover {
-      border-color: rgba(var(--primary-rgb), 0.16);
-      box-shadow: 0 6px 14px rgba(15, 23, 42, 0.04);
+      background: rgba(127, 127, 127, 0.035);
     }
 
     &.selected {
-      border-color: rgba(var(--primary-rgb), 0.26);
-      background:
-        radial-gradient(circle at top right, rgba(var(--primary-rgb), 0.08), transparent 58%),
-        rgba(var(--primary-rgb), 0.025);
-      box-shadow: 0 8px 18px rgba(var(--primary-rgb), 0.06);
+      background: rgba(var(--primary-rgb), 0.08);
     }
 
     .export-session-table-row {
-      align-items: stretch;
+      align-items: center;
     }
 
     .export-avatar {
       width: 36px;
       height: 36px;
-      border-radius: 10px;
+      border-radius: 8px;
       background: linear-gradient(135deg, var(--primary), var(--primary-hover));
       display: flex;
       align-items: center;
@@ -957,7 +962,7 @@
         width: 100%;
         height: 100%;
         object-fit: cover;
-        border-radius: 10px;
+        border-radius: 8px;
       }
 
       span {
@@ -972,7 +977,7 @@
           display: flex;
           align-items: center;
           justify-content: center;
-          border-radius: 10px;
+          border-radius: 8px;
           font-size: 12px;
         }
       }
@@ -983,7 +988,9 @@
       align-items: center;
       justify-content: flex-start;
       min-width: 0;
-      padding: 2px 4px;
+      min-height: 64px;
+      padding: 6px 8px;
+      box-sizing: border-box;
       border-radius: 0;
       background: transparent;
       border: none;
@@ -992,10 +999,10 @@
     .session-cell-info {
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 8px;
       justify-content: flex-start;
       padding-right: 8px;
-      border-right: 1px solid rgba(127, 127, 127, 0.08);
+      border-right: none;
 
       .session-cell-info-main {
         min-width: 0;
@@ -1045,14 +1052,14 @@
 
     .session-cell-kpi {
       flex-direction: column;
-      gap: 4px;
+      gap: 3px;
       align-items: flex-start;
       justify-content: center;
       padding-right: 8px;
-      border-right: 1px solid rgba(127, 127, 127, 0.08);
+      border-right: none;
 
       .export-session-count-value {
-        font-size: 16px;
+        font-size: 14px;
         line-height: 1;
         font-weight: 700;
         color: var(--text-primary);
@@ -1082,21 +1089,24 @@
     .session-table-inline-btn {
       display: inline-flex;
       align-items: center;
-      justify-content: center;
+      justify-content: flex-start;
       gap: 4px;
-      height: 22px;
-      padding: 0 8px;
-      border-radius: 999px;
+      height: auto;
+      padding: 0;
+      border-radius: 0;
       border: none;
-      background: rgba(var(--primary-rgb), 0.1);
+      background: transparent;
       color: var(--primary);
-      font-size: 10px;
-      font-weight: 600;
+      font-size: 11px;
+      font-weight: 500;
       cursor: pointer;
-      transition: all 0.15s ease;
+      transition: color 0.15s ease;
 
       &:hover {
-        background: rgba(var(--primary-rgb), 0.14);
+        background: transparent;
+        color: var(--primary-hover);
+        text-decoration: underline;
+        text-underline-offset: 2px;
       }
     }
 
@@ -1118,20 +1128,22 @@
       display: inline-flex;
       align-items: center;
       gap: 3px;
-      height: 20px;
-      padding: 0 6px;
+      height: auto;
+      padding: 0;
       border: none;
-      border-radius: 999px;
-      background: rgba(127, 127, 127, 0.08);
+      border-radius: 0;
+      background: transparent;
       color: var(--text-secondary);
       cursor: pointer;
-      font-size: 10px;
+      font-size: 11px;
       line-height: 1;
-      transition: all 0.15s ease;
+      transition: color 0.15s ease;
 
       &:hover {
-        background: rgba(var(--primary-rgb), 0.1);
+        background: transparent;
         color: var(--primary);
+        text-decoration: underline;
+        text-underline-offset: 2px;
       }
     }
 
@@ -1169,8 +1181,8 @@
     }
 
     .export-session-item {
-      border-radius: 10px;
-      padding: 7px 8px;
+      border-radius: 0;
+      padding: 0;
     }
   }
 
