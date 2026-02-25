@@ -77,6 +77,9 @@ type SelectSessionOptions = {
 const EXPORT_CHAT_CACHE_TTL_MS = 60 * 1000
 const OVERVIEW_CHECKING_TIMEOUT_MS = 20 * 1000
 const IMAGE_CACHE_RESOLVE_TIMEOUT_MS = 3000
+const SESSION_SORT_STATS_WARMUP_LIMIT = 80
+const SESSION_SORT_STATS_WARMUP_START_DELAY_MS = 160
+const SESSION_SORT_STATS_WARMUP_YIELD_EVERY = 6
 
 interface SessionImageDecryptOverview {
   total: number
@@ -1640,24 +1643,55 @@ function ExportPage() {
 
     const runId = ++sessionSortStatsWarmupRunIdRef.current
     let cancelled = false
-    const targets = [...filteredSessionCandidates]
+    const hasSortMetric = (session: ChatSession) => {
+      const stats = sessionCardStatsMapRef.current[session.username]
+      switch (effectiveSessionListSortKey) {
+        case 'commonGroupCount':
+          return typeof stats?.commonGroupCount === 'number'
+        case 'imageCount':
+          return typeof stats?.imageCount === 'number'
+        case 'videoCount':
+          return typeof stats?.videoCount === 'number'
+        case 'voiceCount':
+          return typeof stats?.voiceCount === 'number'
+        case 'emojiCount':
+          return typeof stats?.emojiCount === 'number'
+        case 'groupMemberCount':
+          return typeof stats?.groupInfo?.memberCount === 'number'
+        case 'groupFriendMemberCount':
+          return typeof stats?.groupInfo?.friendMemberCount === 'number'
+        case 'groupSelfMessageCount':
+          return typeof stats?.groupInfo?.selfMessageCount === 'number'
+        default:
+          return true
+      }
+    }
 
-    void (async () => {
-      let cursor = 0
-      const workerCount = Math.min(2, targets.length)
-      const runWorker = async () => {
+    const targets = filteredSessionCandidates
+      .filter(session => !hasSortMetric(session))
+      .slice(0, SESSION_SORT_STATS_WARMUP_LIMIT)
+
+    if (targets.length === 0) return
+
+    const delayTimer = setTimeout(() => {
+      void (async () => {
+        let cursor = 0
         while (!cancelled && runId === sessionSortStatsWarmupRunIdRef.current) {
           const nextIndex = cursor++
           if (nextIndex >= targets.length) return
           await ensureSessionCardStats(targets[nextIndex])
-        }
-      }
 
-      await Promise.all(Array.from({ length: workerCount }, () => runWorker()))
-    })()
+          // Give the renderer a chance to paint between batches.
+          if (cursor % SESSION_SORT_STATS_WARMUP_YIELD_EVERY === 0) {
+            await new Promise(resolve => setTimeout(resolve, 0))
+          }
+        }
+      })()
+    }, SESSION_SORT_STATS_WARMUP_START_DELAY_MS)
 
     return () => {
       cancelled = true
+      clearTimeout(delayTimer)
     }
   }, [activeTab, effectiveSessionListSortKey, ensureSessionCardStats, filteredSessionCandidates])
 
