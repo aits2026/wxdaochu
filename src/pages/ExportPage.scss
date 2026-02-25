@@ -244,6 +244,15 @@
     min-width: 0;
   }
 
+  .session-account-status-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    flex: 1;
+    flex-wrap: wrap;
+  }
+
   .session-account-status-actions {
     display: inline-flex;
     align-items: center;
@@ -256,6 +265,39 @@
     display: flex;
     align-items: center;
     flex-shrink: 0;
+  }
+
+  .session-account-status-btn {
+    border: 1px solid transparent;
+    border-radius: 999px;
+    background: transparent;
+    padding: 2px 8px;
+    font: inherit;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    flex-shrink: 0;
+
+    &:hover {
+      background: var(--bg-secondary);
+      border-color: var(--border-color);
+    }
+
+    .status-progress {
+      opacity: 0.78;
+      font-variant-numeric: tabular-nums;
+    }
+
+    &.image-decrypt-running {
+      color: #2563eb;
+      background: rgba(37, 99, 235, 0.08);
+      border-color: rgba(37, 99, 235, 0.18);
+
+      &:hover {
+        background: rgba(37, 99, 235, 0.12);
+        border-color: rgba(37, 99, 235, 0.24);
+      }
+    }
   }
 
   .session-account-task-wrap {

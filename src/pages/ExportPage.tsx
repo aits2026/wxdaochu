@@ -560,6 +560,16 @@ function ExportPage() {
     () => chatExportTasks.some(task => task.status === 'pending'),
     [chatExportTasks]
   )
+  const runningImageDecryptTask = useMemo(() => {
+    let latest: typeof taskCenterTasks[number] | null = null
+    for (const task of taskCenterTasks) {
+      if (task.kind !== 'image-decrypt' || task.status !== 'running') continue
+      if (!latest || task.updatedAt > latest.updatedAt) {
+        latest = task
+      }
+    }
+    return latest
+  }, [taskCenterTasks])
   const [exportAccountInfo, setExportAccountInfo] = useState<{
     connected: boolean
     wxid: string
@@ -3213,9 +3223,30 @@ function ExportPage() {
                     : '请先配置并连接数据源'}
                 </div>
                 <div className="session-account-status-row">
-                  <div className={`session-account-status ${exportAccountInfo.connected ? 'connected' : 'disconnected'}`}>
-                    <span className="status-dot" />
-                    <span>{exportAccountInfo.connected ? '已连接数据库' : '未连接'}</span>
+                  <div className="session-account-status-group">
+                    <div className={`session-account-status ${exportAccountInfo.connected ? 'connected' : 'disconnected'}`}>
+                      <span className="status-dot" />
+                      <span>{exportAccountInfo.connected ? '已连接数据库' : '未连接'}</span>
+                    </div>
+                    {runningImageDecryptTask && (
+                      <button
+                        type="button"
+                        className="session-account-status session-account-status-btn image-decrypt-running"
+                        onClick={() => {
+                          taskCenterHighlightTask(runningImageDecryptTask.id)
+                          taskCenterOpen()
+                        }}
+                        title="图片解密任务进行中，点击查看任务中心"
+                      >
+                        <Loader2 size={12} className="spin" />
+                        <span>图片解密中</span>
+                        {runningImageDecryptTask.progressTotal > 0 && (
+                          <span className="status-progress">
+                            {runningImageDecryptTask.progressCurrent}/{runningImageDecryptTask.progressTotal}
+                          </span>
+                        )}
+                      </button>
+                    )}
                   </div>
                   <div className="session-account-status-actions">
                     <div className="session-account-tips-wrap">
