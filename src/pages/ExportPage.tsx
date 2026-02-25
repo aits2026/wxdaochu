@@ -4201,17 +4201,17 @@ function ExportPage() {
                     })()}
                   </div>
 
-                  <div className="setting-section">
-                    <h3>时间范围</h3>
-                    <div className="time-options">
-                      <DateRangePicker
-                        startDate={options.startDate}
-                        endDate={options.endDate}
-                        onStartDateChange={(date) => setOptions(prev => ({ ...prev, startDate: date }))}
-                        onEndDateChange={(date) => setOptions(prev => ({ ...prev, endDate: date }))}
-                      />
-                      <p className="time-hint">不选择时间范围则导出全部消息</p>
-                    </div>
+                  <div className="setting-section time-setting-inline">
+                    <DateRangePicker
+                      variant="setting-row"
+                      label="时间范围"
+                      emptyText="全部导出"
+                      showClearButton={false}
+                      startDate={options.startDate}
+                      endDate={options.endDate}
+                      onStartDateChange={(date) => setOptions(prev => ({ ...prev, startDate: date }))}
+                      onEndDateChange={(date) => setOptions(prev => ({ ...prev, endDate: date }))}
+                    />
                   </div>
 
                   <div className="setting-section">

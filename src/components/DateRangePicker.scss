@@ -27,6 +27,10 @@
       font-size: 13px;
       color: var(--text-primary);
       white-space: nowrap;
+
+      &.is-placeholder {
+        color: var(--text-secondary);
+      }
     }
 
     .clear-btn {
@@ -48,6 +52,59 @@
         color: var(--text-primary);
       }
     }
+
+    &.setting-row {
+      width: 100%;
+      height: 40px;
+      padding: 0 2px;
+      background: transparent;
+      border-radius: 0;
+      justify-content: space-between;
+      gap: 12px;
+
+      &:hover {
+        background: transparent;
+      }
+
+      .picker-row-label {
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--text-primary);
+        flex-shrink: 0;
+      }
+
+      .picker-row-value-wrap {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        min-width: 0;
+        justify-content: flex-end;
+      }
+
+      .picker-text {
+        color: var(--text-secondary);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: min(260px, 50vw);
+      }
+
+      .picker-chevron {
+        color: var(--text-tertiary);
+        transition: color 0.15s ease;
+      }
+
+      &:hover .picker-text {
+        color: var(--text-primary);
+      }
+
+      &:hover .picker-chevron {
+        color: var(--text-secondary);
+      }
+    }
+  }
+
+  &.is-setting-row {
+    width: 100%;
   }
 
   .picker-dropdown {

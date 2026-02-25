@@ -8,6 +8,10 @@ interface DateRangePickerProps {
   onStartDateChange: (date: string) => void
   onEndDateChange: (date: string) => void
   onRangeComplete?: () => void
+  variant?: 'default' | 'setting-row'
+  label?: string
+  emptyText?: string
+  showClearButton?: boolean
 }
 
 const MONTH_NAMES = ['一月', '二月', '三月', '四月', '五月', '六月', '七月', '八月', '九月', '十月', '十一月', '十二月']
@@ -23,7 +27,17 @@ const QUICK_OPTIONS = [
   { label: '全部时间', days: 0 },
 ]
 
-function DateRangePicker({ startDate, endDate, onStartDateChange, onEndDateChange, onRangeComplete }: DateRangePickerProps) {
+function DateRangePicker({
+  startDate,
+  endDate,
+  onStartDateChange,
+  onEndDateChange,
+  onRangeComplete,
+  variant = 'default',
+  label,
+  emptyText = '选择时间范围',
+  showClearButton = true,
+}: DateRangePickerProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [currentMonth, setCurrentMonth] = useState(new Date())
   const [selectingStart, setSelectingStart] = useState(true)
@@ -51,7 +65,7 @@ function DateRangePicker({ startDate, endDate, onStartDateChange, onEndDateChang
   }
 
   const getDisplayText = () => {
-    if (!startDate && !endDate) return '选择时间范围'
+    if (!startDate && !endDate) return emptyText
     if (startDate && endDate) return `${formatDisplayDate(startDate)} - ${formatDisplayDate(endDate)}`
     if (startDate) return `${formatDisplayDate(startDate)} - ?`
     return `? - ${formatDisplayDate(endDate)}`
@@ -96,6 +110,20 @@ function DateRangePicker({ startDate, endDate, onStartDateChange, onEndDateChang
     e.stopPropagation()
     onStartDateChange('')
     onEndDateChange('')
+  }
+
+  const handleTriggerClick = () => {
+    if (!isOpen && triggerRef.current) {
+      const rect = triggerRef.current.getBoundingClientRect()
+      const dropdownH = 360 // 预估下拉面板高度
+      const spaceBelow = window.innerHeight - rect.bottom - 12
+      const openUp = spaceBelow < dropdownH && rect.top > dropdownH
+      setDropdownStyle(openUp
+        ? { position: 'fixed', left: rect.left, bottom: window.innerHeight - rect.top + 8, zIndex: 99999 }
+        : { position: 'fixed', left: rect.left, top: rect.bottom + 8, zIndex: 99999 }
+      )
+    }
+    setIsOpen(!isOpen)
   }
 
 
@@ -183,26 +211,31 @@ function DateRangePicker({ startDate, endDate, onStartDateChange, onEndDateChang
   }
 
   return (
-    <div className="date-range-picker" ref={containerRef}>
-      <button className="picker-trigger" ref={triggerRef} onClick={() => {
-        if (!isOpen && triggerRef.current) {
-          const rect = triggerRef.current.getBoundingClientRect()
-          const dropdownH = 360 // 预估下拉面板高度
-          const spaceBelow = window.innerHeight - rect.bottom - 12
-          const openUp = spaceBelow < dropdownH && rect.top > dropdownH
-          setDropdownStyle(openUp
-            ? { position: 'fixed', left: rect.left, bottom: window.innerHeight - rect.top + 8, zIndex: 99999 }
-            : { position: 'fixed', left: rect.left, top: rect.bottom + 8, zIndex: 99999 }
-          )
-        }
-        setIsOpen(!isOpen)
-      }}>
-        <Calendar size={14} />
-        <span className="picker-text">{getDisplayText()}</span>
-        {(startDate || endDate) && (
-          <button className="clear-btn" onClick={handleClear}>
-            <X size={12} />
-          </button>
+    <div className={`date-range-picker ${variant === 'setting-row' ? 'is-setting-row' : ''}`} ref={containerRef}>
+      <button
+        type="button"
+        className={`picker-trigger ${variant === 'setting-row' ? 'setting-row' : ''}`}
+        ref={triggerRef}
+        onClick={handleTriggerClick}
+      >
+        {variant === 'setting-row' ? (
+          <>
+            <span className="picker-row-label">{label ?? '时间范围'}</span>
+            <span className="picker-row-value-wrap">
+              <span className={`picker-text ${!(startDate || endDate) ? 'is-placeholder' : ''}`}>{getDisplayText()}</span>
+              <ChevronRight size={14} className={`picker-chevron ${isOpen ? 'is-open' : ''}`} />
+            </span>
+          </>
+        ) : (
+          <>
+            <Calendar size={14} />
+            <span className="picker-text">{getDisplayText()}</span>
+            {showClearButton && (startDate || endDate) && (
+              <button type="button" className="clear-btn" onClick={handleClear}>
+                <X size={12} />
+              </button>
+            )}
+          </>
         )}
       </button>
 

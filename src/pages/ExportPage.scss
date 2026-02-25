@@ -1825,6 +1825,17 @@
     }
   }
 
+  .time-setting-inline {
+    margin-bottom: 22px;
+    padding: 0 2px;
+    border-bottom: 1px solid var(--border-color);
+
+    .date-range-picker .picker-dropdown {
+      right: auto;
+      left: 0;
+    }
+  }
+
   .export-options {
     display: flex;
     flex-wrap: wrap;
