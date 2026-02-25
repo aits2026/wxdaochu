@@ -115,6 +115,20 @@ export interface ExportProgress {
   currentSession: string
   phase: 'preparing' | 'exporting' | 'writing' | 'complete'
   detail?: string
+  // 会话级进度（批量导出时）
+  sessionCurrent?: number
+  sessionTotal?: number
+  // 当前阶段进度（媒体处理/写文件等）
+  stepCurrent?: number
+  stepTotal?: number
+  stepUnit?: string
+}
+
+interface ExportMediaProgress {
+  detail: string
+  current?: number
+  total?: number
+  unit?: string
 }
 
 class ExportService {
@@ -1789,7 +1803,8 @@ class ExportService {
   async exportSessionToExcel(
     sessionId: string,
     outputPath: string,
-    options: ExportOptions
+    options: ExportOptions,
+    onProgress?: (progress: ExportProgress) => void
   ): Promise<{ success: boolean; error?: string }> {
     try {
       if (!this.dbDir) {
@@ -1799,6 +1814,14 @@ class ExportService {
       const sessionInfo = await this.getContactInfo(sessionId)
       const cleanedMyWxid = (this.configService.get('myWxid') || '').replace(/^wxid_/, '')
       const fullMyWxid = `wxid_${cleanedMyWxid}`
+
+      onProgress?.({
+        current: 0,
+        total: 100,
+        currentSession: sessionInfo.displayName,
+        phase: 'preparing',
+        detail: '正在准备导出...'
+      })
 
       // 查找消息数据库和表
       const dbTablePairs = this.findSessionTables(sessionId)
@@ -1908,6 +1931,14 @@ class ExportService {
 
       // 按时间排序
       allMessages.sort((a, b) => a.createTime - b.createTime)
+
+      onProgress?.({
+        current: 50,
+        total: 100,
+        currentSession: sessionInfo.displayName,
+        phase: 'exporting',
+        detail: `正在整理 ${allMessages.length} 条消息...`
+      })
 
       // 准备 Excel 数据
       const excelData: any[] = []
@@ -2021,12 +2052,27 @@ class ExportService {
 
       // 写入文件（使用 buffer 方式，避免 xlsx 直接写文件的问题）
       try {
+        onProgress?.({
+          current: 85,
+          total: 100,
+          currentSession: sessionInfo.displayName,
+          phase: 'writing',
+          detail: '正在写入 Excel 文件...'
+        })
         const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'buffer' })
         fs.writeFileSync(outputPath, wbout)
       } catch (writeError) {
         console.error('写入文件失败:', writeError)
         return { success: false, error: `文件写入失败: ${String(writeError)}` }
       }
+
+      onProgress?.({
+        current: 100,
+        total: 100,
+        currentSession: sessionInfo.displayName,
+        phase: 'complete',
+        detail: '导出完成'
+      })
 
       return { success: true }
     } catch (e) {
@@ -2041,7 +2087,8 @@ class ExportService {
   async exportSessionToHtml(
     sessionId: string,
     outputPath: string,
-    options: ExportOptions
+    options: ExportOptions,
+    onProgress?: (progress: ExportProgress) => void
   ): Promise<{ success: boolean; error?: string }> {
     try {
       if (!this.dbDir) {
@@ -2052,6 +2099,14 @@ class ExportService {
       const myWxid = this.configService.get('myWxid') || ''
       const cleanedMyWxid = this.cleanAccountDirName(myWxid)
       const isGroup = sessionId.includes('@chatroom')
+
+      onProgress?.({
+        current: 0,
+        total: 100,
+        currentSession: sessionInfo.displayName,
+        phase: 'preparing',
+        detail: '正在准备导出...'
+      })
 
       // 查找消息数据库和表
       const dbTablePairs = this.findSessionTables(sessionId)
@@ -2181,6 +2236,14 @@ class ExportService {
       // 按时间排序
       allMessages.sort((a, b) => a.timestamp - b.timestamp)
 
+      onProgress?.({
+        current: 55,
+        total: 100,
+        currentSession: sessionInfo.displayName,
+        phase: 'exporting',
+        detail: `正在整理 ${allMessages.length} 条消息...`
+      })
+
       // 准备导出数据
       const exportData = {
         meta: {
@@ -2204,7 +2267,22 @@ class ExportService {
         fs.mkdirSync(outputDir, { recursive: true })
       }
 
+      onProgress?.({
+        current: 85,
+        total: 100,
+        currentSession: sessionInfo.displayName,
+        phase: 'writing',
+        detail: '正在写入 HTML 文件...'
+      })
       fs.writeFileSync(outputPath, HtmlExportGenerator.generateHtmlWithData(exportData), 'utf-8')
+
+      onProgress?.({
+        current: 100,
+        total: 100,
+        currentSession: sessionInfo.displayName,
+        phase: 'complete',
+        detail: '导出完成'
+      })
 
       return { success: true }
     } catch (e) {
@@ -2280,10 +2358,24 @@ class ExportService {
       for (let i = 0; i < sessionIds.length; i++) {
         const sessionId = sessionIds[i]
         const sessionInfo = await this.getContactInfo(sessionId)
+        const sessionCurrent = i + 1
+        const sessionTotal = sessionIds.length
+        const emitProgress = (progress: ExportProgress) => {
+          onProgress?.({
+            ...progress,
+            sessionCurrent,
+            sessionTotal,
+            // 对任务中心保留“当前阶段进度”口径，避免单会话时 1/1 误导
+            stepCurrent: progress.stepCurrent ?? progress.current,
+            stepTotal: progress.stepTotal ?? progress.total,
+            stepUnit: progress.stepUnit ?? (progress.total === 100 ? '%' : undefined),
+            currentSession: progress.currentSession || sessionInfo.displayName
+          })
+        }
 
-        onProgress?.({
-          current: i + 1,
-          total: sessionIds.length,
+        emitProgress({
+          current: 5,
+          total: 100,
           currentSession: sessionInfo.displayName,
           phase: 'exporting',
           detail: '正在读取消息...'
@@ -2309,13 +2401,16 @@ class ExportService {
         let mediaPathMap: Map<string, string> | undefined
         if (hasMedia) {
           try {
-            mediaPathMap = await this.exportMediaFiles(sessionId, safeName, sessionOutputDir, options, (detail) => {
-              onProgress?.({
-                current: i + 1,
-                total: sessionIds.length,
+            mediaPathMap = await this.exportMediaFiles(sessionId, safeName, sessionOutputDir, options, (mediaProgress) => {
+              emitProgress({
+                current: mediaProgress.current ?? 0,
+                total: mediaProgress.total ?? 0,
                 currentSession: sessionInfo.displayName,
                 phase: 'writing',
-                detail
+                detail: mediaProgress.detail,
+                stepCurrent: mediaProgress.current,
+                stepTotal: mediaProgress.total,
+                stepUnit: mediaProgress.unit
               })
             })
           } catch (e) {
@@ -2330,13 +2425,13 @@ class ExportService {
 
         // 根据格式选择导出方法
         if (options.format === 'json') {
-          result = await this.exportSessionToDetailedJson(sessionId, outputPath, exportOpts)
+          result = await this.exportSessionToDetailedJson(sessionId, outputPath, exportOpts, emitProgress)
         } else if (options.format === 'chatlab' || options.format === 'chatlab-jsonl') {
-          result = await this.exportSessionToChatLab(sessionId, outputPath, exportOpts)
+          result = await this.exportSessionToChatLab(sessionId, outputPath, exportOpts, emitProgress)
         } else if (options.format === 'excel') {
-          result = await this.exportSessionToExcel(sessionId, outputPath, exportOpts)
+          result = await this.exportSessionToExcel(sessionId, outputPath, exportOpts, emitProgress)
         } else if (options.format === 'html') {
-          result = await this.exportSessionToHtml(sessionId, outputPath, exportOpts)
+          result = await this.exportSessionToHtml(sessionId, outputPath, exportOpts, emitProgress)
         } else {
           result = { success: false, error: `不支持的格式: ${options.format}` }
         }
@@ -2353,11 +2448,16 @@ class ExportService {
       }
 
       onProgress?.({
-        current: sessionIds.length,
-        total: sessionIds.length,
+        current: 100,
+        total: 100,
         currentSession: '',
         phase: 'complete',
-        detail: '导出完成'
+        detail: '导出完成',
+        sessionCurrent: sessionIds.length,
+        sessionTotal: sessionIds.length,
+        stepCurrent: 100,
+        stepTotal: 100,
+        stepUnit: '%'
       })
 
       return { success: true, successCount, failCount }
@@ -2374,7 +2474,7 @@ class ExportService {
     safeName: string,
     outputDir: string,
     options: ExportOptions,
-    onDetail?: (detail: string) => void
+    onDetail?: (progress: ExportMediaProgress) => void
   ): Promise<Map<string, string>> {
     // 返回 消息实例键 -> 相对路径 的映射表（兼容历史 createTime 键）
     const mediaPathMap = new Map<string, string>()
@@ -2400,10 +2500,143 @@ class ExportService {
     let imageCount = 0
     let videoCount = 0
     let emojiCount = 0
+    let imageTotal = 0
+    let videoTotal = 0
     let emojiTotal = 0
+    let imageProcessed = 0
+    let videoProcessed = 0
     let emojiProcessed = 0
+    let imageFailCount = 0
+    let videoFailCount = 0
+    let emojiFailCount = 0
+    let voiceFailCount = 0
+    const imageFailReasons: Record<string, number> = {
+      no_identifier: 0,
+      decrypt_failed: 0,
+      source_missing: 0,
+      copy_failed: 0,
+      unknown: 0
+    }
+    const videoFailReasons: Record<string, number> = {
+      no_md5: 0,
+      source_missing: 0,
+      copy_failed: 0,
+      unknown: 0
+    }
+    const emojiFailReasons: Record<string, number> = {
+      no_identifier: 0,
+      local_cache_miss: 0,
+      cdn_download_failed: 0,
+      encrypt_download_failed: 0,
+      source_missing: 0,
+      copy_failed: 0,
+      unknown: 0
+    }
+    const voiceFailReasons: Record<string, number> = {
+      media_db_missing: 0,
+      decoder_missing: 0,
+      source_missing: 0,
+      decode_timeout: 0,
+      decode_error: 0,
+      write_failed: 0,
+      unknown: 0
+    }
     const shouldDedupeVideoFiles = options.dedupeVideoFiles !== false
     const exportedVideoPathByMd5 = new Map<string, string>()
+    const emojiSourceResolutionCache = new Map<string, { sourceFile: string | null; failReason?: keyof typeof emojiFailReasons }>()
+    const shouldReportStep = (processed: number, total: number) => (
+      processed <= 3 || processed === total || processed % 10 === 0
+    )
+    let lastMediaProgress: ExportMediaProgress | null = null
+    let lastMediaProgressAt = 0
+    const emitMediaProgress = (detail: string, current?: number, total?: number, unit?: string) => {
+      const payload = { detail, current, total, unit }
+      lastMediaProgress = payload
+      lastMediaProgressAt = Date.now()
+      onDetail?.(payload)
+    }
+    const heartbeatTimer = onDetail ? setInterval(() => {
+      if (!lastMediaProgress || !lastMediaProgressAt) return
+      const elapsedMs = Date.now() - lastMediaProgressAt
+      if (elapsedMs < 4000) return
+      const elapsedSec = Math.floor(elapsedMs / 1000)
+      onDetail?.({
+        ...lastMediaProgress,
+        detail: `${lastMediaProgress.detail} · 处理中 ${elapsedSec}s`
+      })
+    }, 2000) : null
+    if (heartbeatTimer && typeof (heartbeatTimer as any).unref === 'function') {
+      ; (heartbeatTimer as any).unref()
+    }
+    try {
+    const bumpReason = (stats: Record<string, number>, key: string) => {
+      if (Object.prototype.hasOwnProperty.call(stats, key)) {
+        stats[key] += 1
+      } else {
+        stats.unknown = (stats.unknown || 0) + 1
+      }
+    }
+    const summarizeReasons = (stats: Record<string, number>, labels: Record<string, string>) => {
+      return Object.entries(stats)
+        .filter(([, count]) => count > 0)
+        .map(([key, count]) => `${labels[key] || key} ${count}`)
+        .join('、')
+    }
+    const resolveEmojiSource = async (
+      cacheKey: string,
+      cdnUrl: string,
+      encryptUrl: string,
+      aesKey: string
+    ): Promise<{ sourceFile: string | null; failReason?: keyof typeof emojiFailReasons }> => {
+      const cached = emojiSourceResolutionCache.get(cacheKey)
+      if (cached) return cached
+
+      let sourceFile = this.findLocalEmoji(cacheKey)
+      if (sourceFile) {
+        const result = { sourceFile }
+        emojiSourceResolutionCache.set(cacheKey, result)
+        return result
+      }
+
+      if (!cdnUrl && !(encryptUrl && aesKey)) {
+        const result = { sourceFile: null, failReason: 'no_identifier' as const }
+        emojiSourceResolutionCache.set(cacheKey, result)
+        return result
+      }
+
+      let hadCdnAttempt = false
+      let hadEncryptAttempt = false
+      let hadLocalCacheMiss = true
+
+      if (cdnUrl) {
+        hadCdnAttempt = true
+        sourceFile = await this.downloadEmojiFile(cdnUrl, cacheKey)
+        if (sourceFile && fs.existsSync(sourceFile)) {
+          const result = { sourceFile }
+          emojiSourceResolutionCache.set(cacheKey, result)
+          return result
+        }
+      }
+
+      if (encryptUrl && aesKey) {
+        hadEncryptAttempt = true
+        sourceFile = await this.downloadAndDecryptEmoji(encryptUrl, aesKey, cacheKey)
+        if (sourceFile && fs.existsSync(sourceFile)) {
+          const result = { sourceFile }
+          emojiSourceResolutionCache.set(cacheKey, result)
+          return result
+        }
+      }
+
+      const failReason: keyof typeof emojiFailReasons =
+        hadEncryptAttempt ? 'encrypt_download_failed'
+          : hadCdnAttempt ? 'cdn_download_failed'
+            : hadLocalCacheMiss ? 'local_cache_miss'
+              : 'source_missing'
+      const result = { sourceFile: null, failReason }
+      emojiSourceResolutionCache.set(cacheKey, result)
+      return result
+    }
 
     // 构建查询条件：只查需要的消息类型
     const typeConditions: string[] = []
@@ -2414,14 +2647,32 @@ class ExportService {
     // 图片/视频/表情循环（语音在后面独立处理）
     if (typeConditions.length > 0) {
       // 预先统计表情总数
-      if (options.exportEmojis) {
+      if (options.exportImages || options.exportVideos || options.exportEmojis) {
         for (const { db, tableName } of dbTablePairs) {
           try {
-            const cnt = db.prepare(`SELECT COUNT(*) as c FROM ${tableName} WHERE local_type = 47`).get() as any
-            emojiTotal += cnt?.c || 0
+            const whereParts: string[] = []
+            if (options.exportImages) whereParts.push('local_type = 3')
+            if (options.exportVideos) whereParts.push('local_type = 43')
+            if (options.exportEmojis) whereParts.push('local_type = 47')
+            if (whereParts.length === 0) continue
+            let countSql = `SELECT local_type, COUNT(*) as c FROM ${tableName} WHERE (${whereParts.join(' OR ')})`
+            if (options.dateRange) {
+              countSql += ` AND create_time >= ${options.dateRange.start} AND create_time <= ${options.dateRange.end}`
+            }
+            countSql += ' GROUP BY local_type'
+            const rows = db.prepare(countSql).all() as any[]
+            for (const countRow of rows) {
+              const localType = Number(countRow?.local_type || 0)
+              const count = Number(countRow?.c || 0)
+              if (localType === 3) imageTotal += count
+              if (localType === 43) videoTotal += count
+              if (localType === 47) emojiTotal += count
+            }
           } catch { }
         }
-        if (emojiTotal > 0) onDetail?.(`正在导出表情包 (共 ${emojiTotal} 个)...`)
+        if (imageTotal > 0) emitMediaProgress(`正在处理图片消息（共 ${imageTotal} 条）...`, 0, imageTotal, '条')
+        if (videoTotal > 0) emitMediaProgress(`正在处理视频消息（共 ${videoTotal} 条）...`, 0, videoTotal, '条')
+        if (emojiTotal > 0) emitMediaProgress(`正在处理表情消息（共 ${emojiTotal} 条）...`, 0, emojiTotal, '条')
       }
 
       for (const { db, tableName } of dbTablePairs) {
@@ -2467,7 +2718,12 @@ class ExportService {
 
             // 导出图片
             if (options.exportImages && localType === 3) {
+              imageProcessed++
+              if (imageTotal > 0 && shouldReportStep(imageProcessed, imageTotal)) {
+                emitMediaProgress(`图片处理: ${imageProcessed}/${imageTotal}（已导出 ${imageCount}）`, imageProcessed, imageTotal, '条')
+              }
               try {
+                let imageHandled = false
                 // 从 XML 提取 md5
                 const imageMd5 = this.extractXmlValue(content, 'md5') ||
                   (/\<img[^>]*\smd5\s*=\s*['"]([^'"]+)['"]/i.exec(content))?.[1] ||
@@ -2494,28 +2750,51 @@ class ExportService {
                       const ext = path.extname(filePath) || '.jpg'
                       const fileName = `${createTime}_${imageMd5 || imageDatName}${ext}`
                       const destPath = path.join(imageOutDir, fileName)
-                      if (!fs.existsSync(destPath)) {
-                        fs.copyFileSync(filePath, destPath)
-                        imageCount++
+                      try {
+                        if (!fs.existsSync(destPath)) {
+                          fs.copyFileSync(filePath, destPath)
+                          imageCount++
+                        }
+                        this.setMediaPathMapEntry(mediaPathMap, `images/${fileName}`, mediaMapKey, createTime)
+                        imageHandled = true
+                      } catch {
+                        bumpReason(imageFailReasons, 'copy_failed')
                       }
-                      this.setMediaPathMapEntry(mediaPathMap, `images/${fileName}`, mediaMapKey, createTime)
+                    } else {
+                      bumpReason(imageFailReasons, 'source_missing')
                     }
+                  } else {
+                    bumpReason(imageFailReasons, 'decrypt_failed')
                   }
                 }
+                if (!imageMd5 && !imageDatName) {
+                  bumpReason(imageFailReasons, 'no_identifier')
+                }
+                if (!imageHandled) {
+                  imageFailCount++
+                }
               } catch (e) {
+                imageFailCount++
+                bumpReason(imageFailReasons, 'unknown')
                 // 跳过单张图片的错误
               }
             }
 
             // 导出视频
             if (options.exportVideos && localType === 43) {
+              videoProcessed++
+              if (videoTotal > 0 && shouldReportStep(videoProcessed, videoTotal)) {
+                emitMediaProgress(`视频处理: ${videoProcessed}/${videoTotal}（已导出 ${videoCount}）`, videoProcessed, videoTotal, '条')
+              }
               try {
+                let videoHandled = false
                 const videoMd5 = videoService.parseVideoMd5(content)
                 if (videoMd5) {
                   if (shouldDedupeVideoFiles) {
                     const cachedExportPath = exportedVideoPathByMd5.get(videoMd5)
                     if (cachedExportPath) {
                       this.setMediaPathMapEntry(mediaPathMap, cachedExportPath, mediaMapKey, createTime)
+                      videoHandled = true
                       continue
                     }
                   }
@@ -2528,9 +2807,14 @@ class ExportService {
                       const destPath = path.join(videoOutDir, fileName)
                       const relativePath = `videos/${fileName}`
                       const existedBeforeCopy = fs.existsSync(destPath)
-                      if (!fs.existsSync(destPath)) {
-                        fs.copyFileSync(videoPath, destPath)
-                        videoCount++
+                      try {
+                        if (!fs.existsSync(destPath)) {
+                          fs.copyFileSync(videoPath, destPath)
+                          videoCount++
+                        }
+                      } catch {
+                        bumpReason(videoFailReasons, 'copy_failed')
+                        throw new Error('video_copy_failed')
                       }
                       if (shouldDedupeVideoFiles) {
                         exportedVideoPathByMd5.set(videoMd5, relativePath)
@@ -2538,10 +2822,26 @@ class ExportService {
                         // 非去重模式下，文件名冲突时仍保持消息引用不丢失
                       }
                       this.setMediaPathMapEntry(mediaPathMap, relativePath, mediaMapKey, createTime)
+                      videoHandled = true
+                    } else {
+                      bumpReason(videoFailReasons, 'source_missing')
                     }
+                  } else {
+                    bumpReason(videoFailReasons, 'source_missing')
                   }
                 }
+                if (!videoMd5) {
+                  bumpReason(videoFailReasons, 'no_md5')
+                }
+                if (!videoHandled) {
+                  videoFailCount++
+                }
               } catch (e) {
+                videoFailCount++
+                const errMsg = e instanceof Error ? e.message : String(e)
+                if (errMsg !== 'video_copy_failed') {
+                  bumpReason(videoFailReasons, 'unknown')
+                }
                 // 跳过单个视频的错误
               }
             }
@@ -2549,8 +2849,11 @@ class ExportService {
             // 导出表情包
             if (options.exportEmojis && localType === 47) {
               emojiProcessed++
-              onDetail?.(`表情导出: ${emojiProcessed}/${emojiTotal}`)
+              if (emojiTotal > 0 && shouldReportStep(emojiProcessed, emojiTotal)) {
+                emitMediaProgress(`表情处理: ${emojiProcessed}/${emojiTotal}（已导出 ${emojiCount}）`, emojiProcessed, emojiTotal, '条')
+              }
               try {
+                let emojiHandled = false
                 // 从 XML 提取 cdnUrl 和 md5
                 const cdnUrlMatch = /cdnurl\s*=\s*['"]([^'"]+)['"]/i.exec(content)
                 const thumbUrlMatch = /thumburl\s*=\s*['"]([^'"]+)['"]/i.exec(content)
@@ -2575,29 +2878,35 @@ class ExportService {
                   const destPath = path.join(emojiOutDir, fileName)
 
                   if (!fs.existsSync(destPath)) {
-                    // 1. 先检查本地缓存（cachePath/Emojis/）
-                    let sourceFile = this.findLocalEmoji(cacheKey)
-
-                    // 2. 找不到就从 CDN 下载
-                    if (!sourceFile && cdnUrl) {
-                      sourceFile = await this.downloadEmojiFile(cdnUrl, cacheKey)
-                    }
-
-                    // 3. CDN 失败，尝试 encryptUrl + AES 解密
-                    if (!sourceFile && encryptUrl && aesKey) {
-                      sourceFile = await this.downloadAndDecryptEmoji(encryptUrl, aesKey, cacheKey)
-                    }
-
+                    const { sourceFile, failReason } = await resolveEmojiSource(cacheKey, cdnUrl, encryptUrl, aesKey)
                     if (sourceFile && fs.existsSync(sourceFile)) {
-                      fs.copyFileSync(sourceFile, destPath)
-                      emojiCount++
-                      this.setMediaPathMapEntry(mediaPathMap, `emojis/${fileName}`, mediaMapKey, createTime)
+                      try {
+                        fs.copyFileSync(sourceFile, destPath)
+                        emojiCount++
+                        this.setMediaPathMapEntry(mediaPathMap, `emojis/${fileName}`, mediaMapKey, createTime)
+                        emojiHandled = true
+                      } catch {
+                        bumpReason(emojiFailReasons, 'copy_failed')
+                      }
+                    } else if (failReason) {
+                      bumpReason(emojiFailReasons, failReason)
+                    } else {
+                      bumpReason(emojiFailReasons, 'source_missing')
                     }
                   } else {
                     this.setMediaPathMapEntry(mediaPathMap, `emojis/${fileName}`, mediaMapKey, createTime)
+                    emojiHandled = true
                   }
                 }
+                if (!emojiMd5 && !cdnUrl) {
+                  bumpReason(emojiFailReasons, 'no_identifier')
+                }
+                if (!emojiHandled) {
+                  emojiFailCount++
+                }
               } catch (e) {
+                emojiFailCount++
+                bumpReason(emojiFailReasons, 'unknown')
                 // 跳过单个表情的错误
               }
             }
@@ -2616,7 +2925,7 @@ class ExportService {
         fs.mkdirSync(voiceOutDir, { recursive: true })
       }
 
-      onDetail?.('正在导出语音消息...')
+      emitMediaProgress('正在处理语音消息...', 0, 0, '条')
 
       // 1. 收集所有语音消息的 createTime
       const voiceCreateTimes: number[] = []
@@ -2689,6 +2998,9 @@ class ExportService {
             if (myWxid && myWxid !== sessionId) candidates.push(myWxid)
 
             const total = voiceCreateTimes.length
+            const shouldReportVoiceStep = (processed: number) => (
+              processed % 5 === 0 || processed === total || processed <= 3
+            )
             for (let idx = 0; idx < total; idx++) {
               const createTime = voiceCreateTimes[idx]
               const fileName = `${createTime}.wav`
@@ -2697,6 +3009,9 @@ class ExportService {
               // 已存在则跳过
               if (fs.existsSync(destPath)) {
                 this.setMediaPathMapEntry(mediaPathMap, `voices/${fileName}`, undefined, createTime)
+                if (shouldReportVoiceStep(idx + 1)) {
+                  emitMediaProgress(`语音处理: ${idx + 1}/${total}（已导出 ${voiceCount}）`, idx + 1, total, '条')
+                }
                 continue
               }
 
@@ -2728,23 +3043,60 @@ class ExportService {
                 } catch { }
               }
 
-              if (!silkData) continue
+              if (!silkData) {
+                voiceFailCount++
+                bumpReason(voiceFailReasons, 'source_missing')
+                if (shouldReportVoiceStep(idx + 1)) {
+                  emitMediaProgress(`语音处理: ${idx + 1}/${total}（已导出 ${voiceCount}，未成功 ${voiceFailCount}）`, idx + 1, total, '条')
+                }
+                continue
+              }
 
               try {
                 // SILK → PCM → WAV（串行，立即释放）
-                const result = await silkWasm.decode(silkData, 24000)
+                const result = await this.withTimeout(
+                  Promise.resolve(silkWasm.decode(silkData, 24000)),
+                  10000,
+                  '语音解码'
+                )
                 silkData = null // 释放 SILK 数据
-                if (!result?.data) continue
+                if (!result?.data) {
+                  voiceFailCount++
+                  bumpReason(voiceFailReasons, 'decode_error')
+                  if (shouldReportVoiceStep(idx + 1)) {
+                    emitMediaProgress(`语音处理: ${idx + 1}/${total}（已导出 ${voiceCount}，未成功 ${voiceFailCount}）`, idx + 1, total, '条')
+                  }
+                  continue
+                }
                 const pcmData = Buffer.from(result.data)
                 const wavData = this.createWavBuffer(pcmData, 24000)
-                fs.writeFileSync(destPath, wavData)
+                try {
+                  fs.writeFileSync(destPath, wavData)
+                } catch {
+                  voiceFailCount++
+                  bumpReason(voiceFailReasons, 'write_failed')
+                  if (shouldReportVoiceStep(idx + 1)) {
+                    emitMediaProgress(`语音处理: ${idx + 1}/${total}（已导出 ${voiceCount}，未成功 ${voiceFailCount}）`, idx + 1, total, '条')
+                  }
+                  continue
+                }
                 voiceCount++
                 this.setMediaPathMapEntry(mediaPathMap, `voices/${fileName}`, undefined, createTime)
-              } catch { }
+              } catch (e) {
+                voiceFailCount++
+                const errMsg = e instanceof Error ? e.message : String(e)
+                if (errMsg.includes('语音解码 超时')) {
+                  bumpReason(voiceFailReasons, 'decode_timeout')
+                  console.warn(`[Export] 语音解码超时: session=${sessionId}, createTime=${createTime}`)
+                } else {
+                  bumpReason(voiceFailReasons, 'decode_error')
+                }
+              }
 
               // 进度日志
-              if ((idx + 1) % 10 === 0 || idx === total - 1) {
-                onDetail?.(`语音导出: ${idx + 1}/${total}`)
+              if (shouldReportVoiceStep(idx + 1)) {
+                const failSuffix = voiceFailCount > 0 ? `，未成功 ${voiceFailCount}` : ''
+                emitMediaProgress(`语音处理: ${idx + 1}/${total}（已导出 ${voiceCount}${failSuffix}）`, idx + 1, total, '条')
               }
             }
 
@@ -2752,7 +3104,15 @@ class ExportService {
             for (const vdb of voiceDbs) {
               try { vdb.db.close() } catch { }
             }
+          } else {
+            voiceFailCount += voiceCreateTimes.length
+            voiceFailReasons.decoder_missing += voiceCreateTimes.length
+            emitMediaProgress(`语音处理失败：无法加载语音解码器（待处理 ${voiceCreateTimes.length} 条）`, 0, voiceCreateTimes.length, '条')
           }
+        } else {
+          voiceFailCount += voiceCreateTimes.length
+          voiceFailReasons.media_db_missing += voiceCreateTimes.length
+          emitMediaProgress(`语音处理失败：未找到 MediaDb（待处理 ${voiceCreateTimes.length} 条）`, 0, voiceCreateTimes.length, '条')
         }
       }
     }
@@ -2762,10 +3122,59 @@ class ExportService {
     if (videoCount > 0) parts.push(`${videoCount} 个视频`)
     if (emojiCount > 0) parts.push(`${emojiCount} 个表情`)
     if (voiceCount > 0) parts.push(`${voiceCount} 条语音`)
-    const summary = parts.length > 0 ? `媒体导出完成: ${parts.join(', ')}` : '无媒体文件'
-    onDetail?.(summary)
+    const failParts: string[] = []
+    if (imageFailCount > 0) failParts.push(`图片 ${imageFailCount}`)
+    if (videoFailCount > 0) failParts.push(`视频 ${videoFailCount}`)
+    if (emojiFailCount > 0) failParts.push(`表情 ${emojiFailCount}`)
+    if (voiceFailCount > 0) failParts.push(`语音 ${voiceFailCount}`)
+    const summaryBase = parts.length > 0 ? `媒体导出完成: ${parts.join(', ')}` : '无媒体文件'
+    const reasonBreakdowns: string[] = []
+    const imageReasonText = summarizeReasons(imageFailReasons, {
+      no_identifier: '无图片标识',
+      decrypt_failed: '图片解密失败',
+      source_missing: '图片源文件缺失',
+      copy_failed: '图片复制失败',
+      unknown: '图片未知错误'
+    })
+    if (imageReasonText) reasonBreakdowns.push(`图片(${imageReasonText})`)
+    const videoReasonText = summarizeReasons(videoFailReasons, {
+      no_md5: '无视频MD5',
+      source_missing: '视频源文件缺失',
+      copy_failed: '视频复制失败',
+      unknown: '视频未知错误'
+    })
+    if (videoReasonText) reasonBreakdowns.push(`视频(${videoReasonText})`)
+    const emojiReasonText = summarizeReasons(emojiFailReasons, {
+      no_identifier: '无表情标识',
+      local_cache_miss: '本地缓存缺失',
+      cdn_download_failed: 'CDN下载失败',
+      encrypt_download_failed: '加密URL下载失败',
+      source_missing: '表情源文件缺失',
+      copy_failed: '表情复制失败',
+      unknown: '表情未知错误'
+    })
+    if (emojiReasonText) reasonBreakdowns.push(`表情(${emojiReasonText})`)
+    const voiceReasonText = summarizeReasons(voiceFailReasons, {
+      media_db_missing: '未找到MediaDb',
+      decoder_missing: '缺少语音解码器',
+      source_missing: '语音源数据缺失',
+      decode_timeout: '语音解码超时',
+      decode_error: '语音解码失败',
+      write_failed: '语音写文件失败',
+      unknown: '语音未知错误'
+    })
+    if (voiceReasonText) reasonBreakdowns.push(`语音(${voiceReasonText})`)
+
+    let summary = failParts.length > 0 ? `${summaryBase}；未成功处理 ${failParts.join('、')}` : summaryBase
+    if (reasonBreakdowns.length > 0) {
+      summary += `；失败明细 ${reasonBreakdowns.join('；')}`
+    }
+    emitMediaProgress(summary)
     console.log(`[Export] ${sessionId} ${summary}`)
     return mediaPathMap
+    } finally {
+      if (heartbeatTimer) clearInterval(heartbeatTimer)
+    }
   }
 
   /**
@@ -2959,6 +3368,20 @@ class ExportService {
     })
     req.on('error', () => callback(null))
     req.setTimeout(15000, () => { req.destroy(); callback(null) })
+  }
+
+  private async withTimeout<T>(work: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+    let timeoutId: ReturnType<typeof setTimeout> | null = null
+    try {
+      return await Promise.race([
+        work,
+        new Promise<T>((_, reject) => {
+          timeoutId = setTimeout(() => reject(new Error(`${label} 超时(${timeoutMs}ms)`)), timeoutMs)
+        })
+      ])
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId)
+    }
   }
 
   private detectEmojiExt(buf: Buffer): string {

@@ -550,6 +550,11 @@ export interface ElectronAPI {
       currentSession?: string
       phase?: string
       detail?: string
+      sessionCurrent?: number
+      sessionTotal?: number
+      stepCurrent?: number
+      stepTotal?: number
+      stepUnit?: string
     }) => void) => () => void
     getExportRecords: (sessionUsername: string) => Promise<{
       exportTime: number

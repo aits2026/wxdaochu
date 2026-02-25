@@ -66,6 +66,7 @@ type LoadSessionsOptions = {
 }
 
 const EXPORT_CHAT_CACHE_TTL_MS = 60 * 1000
+const OVERVIEW_CHECKING_TIMEOUT_MS = 20 * 1000
 
 interface SessionImageDecryptOverview {
   total: number
@@ -73,6 +74,7 @@ interface SessionImageDecryptOverview {
   undecryptedCount: number
   status: 'idle' | 'checking' | 'complete' | 'partial' | 'error'
   checkedAt?: number
+  checkingStartedAt?: number
 }
 
 interface SessionImageAssetItem {
@@ -95,6 +97,7 @@ interface SessionVideoAvailabilityOverview {
   parseFailedCount?: number
   status: 'idle' | 'checking' | 'ready' | 'partial' | 'error'
   checkedAt?: number
+  checkingStartedAt?: number
 }
 
 interface SessionVideoAssetItem {
@@ -311,9 +314,9 @@ function ExportPage() {
   const sessionDetailRequestIdRef = useRef(0)
   const groupFriendMessageCountsRequestIdRef = useRef(0)
   const commonGroupMessageCountsRequestIdRef = useRef(0)
-  const sessionImageOverviewRequestIdRef = useRef(0)
+  const sessionImageOverviewRequestIdRef = useRef<Record<string, number>>({})
   const sessionImageAssetsRequestIdRef = useRef(0)
-  const sessionVideoOverviewRequestIdRef = useRef(0)
+  const sessionVideoOverviewRequestIdRef = useRef<Record<string, number>>({})
   const sessionVideoAssetsRequestIdRef = useRef(0)
   const sessionTypeFilterRef = useRef<SessionTypeFilter>('private')
   const hasBootstrappedChatCacheRef = useRef(false)
@@ -997,7 +1000,8 @@ function ExportPage() {
   }, [])
 
   const refreshSessionImageOverview = useCallback(async (sessionId: string) => {
-    const requestId = ++sessionImageOverviewRequestIdRef.current
+    const requestId = (sessionImageOverviewRequestIdRef.current[sessionId] || 0) + 1
+    sessionImageOverviewRequestIdRef.current[sessionId] = requestId
 
     setSessionImageOverviews(prev => ({
       ...prev,
@@ -1007,12 +1011,13 @@ function ExportPage() {
         undecryptedCount: prev[sessionId]?.undecryptedCount || 0,
         status: 'checking',
         checkedAt: prev[sessionId]?.checkedAt,
+        checkingStartedAt: Date.now(),
       }
     }))
 
     try {
       const result = await inspectSessionImageAssets(sessionId)
-      if (requestId !== sessionImageOverviewRequestIdRef.current) return
+      if (requestId !== sessionImageOverviewRequestIdRef.current[sessionId]) return
 
       setSessionImageOverviews(prev => ({
         ...prev,
@@ -1022,10 +1027,11 @@ function ExportPage() {
           undecryptedCount: result.undecryptedCount,
           status: result.total > 0 && result.undecryptedCount === 0 ? 'complete' : 'partial',
           checkedAt: Date.now(),
+          checkingStartedAt: undefined,
         }
       }))
     } catch {
-      if (requestId !== sessionImageOverviewRequestIdRef.current) return
+      if (requestId !== sessionImageOverviewRequestIdRef.current[sessionId]) return
       setSessionImageOverviews(prev => ({
         ...prev,
         [sessionId]: {
@@ -1034,13 +1040,15 @@ function ExportPage() {
           undecryptedCount: prev[sessionId]?.undecryptedCount || 0,
           status: 'error',
           checkedAt: Date.now(),
+          checkingStartedAt: undefined,
         }
       }))
     }
   }, [inspectSessionImageAssets])
 
   const refreshSessionVideoOverview = useCallback(async (sessionId: string) => {
-    const requestId = ++sessionVideoOverviewRequestIdRef.current
+    const requestId = (sessionVideoOverviewRequestIdRef.current[sessionId] || 0) + 1
+    sessionVideoOverviewRequestIdRef.current[sessionId] = requestId
 
     setSessionVideoOverviews(prev => ({
       ...prev,
@@ -1055,12 +1063,13 @@ function ExportPage() {
         parseFailedCount: prev[sessionId]?.parseFailedCount,
         status: 'checking',
         checkedAt: prev[sessionId]?.checkedAt,
+        checkingStartedAt: Date.now(),
       }
     }))
 
     try {
       const result = await inspectSessionVideoAssets(sessionId)
-      if (requestId !== sessionVideoOverviewRequestIdRef.current) return
+      if (requestId !== sessionVideoOverviewRequestIdRef.current[sessionId]) return
 
       setSessionVideoOverviews(prev => ({
         ...prev,
@@ -1075,10 +1084,11 @@ function ExportPage() {
           parseFailedCount: result.parseFailedCount,
           status: result.total > 0 && result.missingCount === 0 && result.thumbOnlyCount === 0 && result.parseFailedCount === 0 ? 'ready' : 'partial',
           checkedAt: Date.now(),
+          checkingStartedAt: undefined,
         }
       }))
     } catch {
-      if (requestId !== sessionVideoOverviewRequestIdRef.current) return
+      if (requestId !== sessionVideoOverviewRequestIdRef.current[sessionId]) return
       setSessionVideoOverviews(prev => ({
         ...prev,
         [sessionId]: {
@@ -1092,6 +1102,7 @@ function ExportPage() {
           parseFailedCount: prev[sessionId]?.parseFailedCount,
           status: 'error',
           checkedAt: Date.now(),
+          checkingStartedAt: undefined,
         }
       }))
     }
@@ -1121,6 +1132,7 @@ function ExportPage() {
           undecryptedCount: result.undecryptedCount,
           status: result.total > 0 && result.undecryptedCount === 0 ? 'complete' : 'partial',
           checkedAt: Date.now(),
+          checkingStartedAt: undefined,
         }
       }))
     } catch (e) {
@@ -1163,6 +1175,7 @@ function ExportPage() {
           parseFailedCount: result.parseFailedCount,
           status: result.total > 0 && result.missingCount === 0 && result.thumbOnlyCount === 0 && result.parseFailedCount === 0 ? 'ready' : 'partial',
           checkedAt: Date.now(),
+          checkingStartedAt: undefined,
         }
       }))
     } catch (e) {
@@ -1328,7 +1341,16 @@ function ExportPage() {
     if (isCurrentSessionImageTaskRunning) return
 
     const overview = sessionImageOverviews[selectedSession]
-    if (overview?.status === 'checking') return
+    if (overview?.status === 'checking') {
+      const checkingStartedAt = overview.checkingStartedAt || overview.checkedAt || 0
+      const elapsed = checkingStartedAt > 0 ? (Date.now() - checkingStartedAt) : OVERVIEW_CHECKING_TIMEOUT_MS
+      if (elapsed < OVERVIEW_CHECKING_TIMEOUT_MS) {
+        const timer = window.setTimeout(() => {
+          void refreshSessionImageOverview(selectedSession)
+        }, OVERVIEW_CHECKING_TIMEOUT_MS - elapsed + 50)
+        return () => window.clearTimeout(timer)
+      }
+    }
     const isFreshEnough = overview &&
       overview.total === sessionDetail.imageCount &&
       (overview.status === 'complete' || overview.status === 'partial')
@@ -1472,7 +1494,6 @@ function ExportPage() {
     commonGroupMessageCountsRequestIdRef.current++
     sessionImageAssetsRequestIdRef.current++
     sessionVideoAssetsRequestIdRef.current++
-    sessionVideoOverviewRequestIdRef.current++
     setSelectedSession(username)
     setShowExportSettings(false)
     setShowGroupFriendsPopup(false)
@@ -1584,7 +1605,16 @@ function ExportPage() {
     if ((sessionDetail.videoCount ?? 0) <= 0) return
 
     const overview = sessionVideoOverviews[selectedSession]
-    if (overview?.status === 'checking') return
+    if (overview?.status === 'checking') {
+      const checkingStartedAt = overview.checkingStartedAt || overview.checkedAt || 0
+      const elapsed = checkingStartedAt > 0 ? (Date.now() - checkingStartedAt) : OVERVIEW_CHECKING_TIMEOUT_MS
+      if (elapsed < OVERVIEW_CHECKING_TIMEOUT_MS) {
+        const timer = window.setTimeout(() => {
+          void refreshSessionVideoOverview(selectedSession)
+        }, OVERVIEW_CHECKING_TIMEOUT_MS - elapsed + 50)
+        return () => window.clearTimeout(timer)
+      }
+    }
 
     const rawCountChanged = overview?.rawMessageCount !== undefined && overview.rawMessageCount !== sessionDetail.videoCount
     const isStale = !overview?.checkedAt || (Date.now() - overview.checkedAt > EXPORT_CHAT_CACHE_TTL_MS)

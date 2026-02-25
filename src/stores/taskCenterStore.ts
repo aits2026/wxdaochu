@@ -35,6 +35,11 @@ interface ExportProgressPayload {
   currentSession?: string
   phase?: string
   detail?: string
+  sessionCurrent?: number
+  sessionTotal?: number
+  stepCurrent?: number
+  stepTotal?: number
+  stepUnit?: string
 }
 
 interface TaskCenterState {
@@ -113,13 +118,26 @@ export const useTaskCenterStore = create<TaskCenterState>((set, get) => ({
     if (!targetTaskId) return
 
     const phase = progress.phase ? (EXPORT_PHASE_LABEL_MAP[progress.phase] || progress.phase) : undefined
+    const targetTask = state.tasks.find(task => task.id === targetTaskId)
+    const hasProgressNumbers = (
+      progress.stepCurrent !== undefined ||
+      progress.stepTotal !== undefined ||
+      progress.current !== undefined ||
+      progress.total !== undefined
+    )
+    const progressCurrent = hasProgressNumbers
+      ? Number(progress.stepCurrent ?? progress.current ?? 0)
+      : (targetTask?.progressCurrent ?? 0)
+    const progressTotal = hasProgressNumbers
+      ? Number(progress.stepTotal ?? progress.total ?? 0)
+      : (targetTask?.progressTotal ?? 0)
     get().patchTask(targetTaskId, {
-      progressCurrent: Number(progress.current || 0),
-      progressTotal: Number(progress.total || 0),
+      progressCurrent,
+      progressTotal,
+      unitLabel: progress.stepUnit || (hasProgressNumbers ? (progressTotal === 100 ? '%' : undefined) : targetTask?.unitLabel),
       currentName: progress.currentSession || '',
       phase,
       detail: progress.detail || ''
     })
   }
 }))
-
