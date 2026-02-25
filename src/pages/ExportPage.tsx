@@ -356,6 +356,8 @@ function ExportPage() {
   const [exportRecords, setExportRecords] = useState<{ exportTime: number; format: string; messageCount: number }[]>([])
   const [sessionDetailDiagnostics, setSessionDetailDiagnostics] = useState<SessionDetailLoadDiagnostics | null>(null)
   const [showSessionDetailDiagnostics, setShowSessionDetailDiagnostics] = useState(false)
+  const [showSessionDetailDiagPayloads, setShowSessionDetailDiagPayloads] = useState(false)
+  const [showSessionDetailDiagEvents, setShowSessionDetailDiagEvents] = useState(false)
   const [isRefreshingSessionDetail, setIsRefreshingSessionDetail] = useState(false)
   const [showExportSettings, setShowExportSettings] = useState(false)
   const [showMoreMenu, setShowMoreMenu] = useState(false)
@@ -913,15 +915,39 @@ function ExportPage() {
     </span>
   )
 
-  const toDiagSummary = useCallback((value: unknown, maxLen = 1200) => {
+  const toDiagSummary = useCallback((value: unknown, maxLen = 720) => {
     if (value == null) return undefined
     try {
-      const text = JSON.stringify(value, (_key, v) => {
-        if (Array.isArray(v) && v.length > 20) {
-          return [...v.slice(0, 20), `...(${v.length - 20} more)`]
+      const compact = (input: unknown, depth = 0): unknown => {
+        if (input == null) return input
+        if (typeof input === 'string') {
+          if (input.length <= 160) return input
+          return `${input.slice(0, 160)}...<${input.length - 160} chars>`
         }
-        return v
-      })
+        if (typeof input !== 'object') return input
+        if (depth >= 2) {
+          if (Array.isArray(input)) return `[Array(${input.length})]`
+          return '[Object]'
+        }
+        if (Array.isArray(input)) {
+          const slice = input.slice(0, 5).map(item => compact(item, depth + 1))
+          if (input.length > 5) slice.push(`...(${input.length - 5} more)`)
+          return slice
+        }
+        const obj = input as Record<string, unknown>
+        const entries = Object.entries(obj)
+          .filter(([k]) => !/(raw|content|html|xml|buffer|blob)/i.test(k))
+          .slice(0, 12)
+          .map(([k, v]) => [k, compact(v, depth + 1)] as const)
+        const next: Record<string, unknown> = {}
+        entries.forEach(([k, v]) => { next[k] = v })
+        if (Object.keys(obj).length > 12) {
+          next.__truncatedKeys = Object.keys(obj).length - 12
+        }
+        return next
+      }
+
+      const text = JSON.stringify(compact(value))
       if (!text) return undefined
       return text.length > maxLen ? `${text.slice(0, maxLen)}...<truncated ${text.length - maxLen} chars>` : text
     } catch {
@@ -1772,53 +1798,70 @@ function ExportPage() {
     })
     if (source === 'refresh') {
       setIsRefreshingSessionDetail(true)
+      setShowSessionDetailDiagnostics(false)
+      setShowSessionDetailDiagPayloads(false)
+      setShowSessionDetailDiagEvents(false)
+    }
+    try {
+      groupFriendMessageCountsRequestIdRef.current++
+      commonGroupMessageCountsRequestIdRef.current++
+      sessionImageAssetsRequestIdRef.current++
+      sessionVideoAssetsRequestIdRef.current++
+      setSelectedSession(username)
+      setShowExportSettings(false)
+      setShowGroupFriendsPopup(false)
+      setShowCommonGroupsPopup(false)
+      setGroupFriendMessageCounts({})
+      setGroupFriendMessageCountsStatus('idle')
+      setGroupFriendMessageCountsSessionId(null)
+      setGroupFriendsSortOrder('desc')
+      setCommonGroupMessageCounts({})
+      setCommonGroupMessageCountsStatus('idle')
+      setCommonGroupMessageCountsSessionId(null)
+      setShowSessionImageAssetsModal(false)
+      setSessionImageAssets([])
+      setSessionImageAssetsError(null)
+      setSessionImageAssetsLoading(false)
+      setSessionImageAssetsSessionId(null)
+      setSessionImageAssetsSessionName('')
+      setShowSessionVideoAssetsModal(false)
+      setSessionVideoAssets([])
+      setSessionVideoAssetsError(null)
+      setSessionVideoAssetsLoading(false)
+      setSessionVideoAssetsSessionId(null)
+      setSessionVideoAssetsSessionName('')
+      setSessionDetail(null)
+      setShowSessionImageDecryptConfirm(false)
+      setSessionImageMessages(null)
+      setSessionImageDates([])
+      setSessionImageSelectedDates(new Set())
+      setExportRecords([])
+      setIsLoadingDetail(true)
+      setIsLoadingGroupInfo(false)
+      updateSessionDetailDiagStep(diagRunId, 'init', 'success', '详情区状态已重置', {
+        selectedSessionAfterReset: username
+      })
+      if (forceReconnect) {
+        updateSessionDetailDiagStep(diagRunId, 'reconnect', 'loading', '准备重连聊天服务')
+        appendSessionDetailDiagEvent(diagRunId, 'info', '准备调用 chat.connect')
+      } else {
+        updateSessionDetailDiagStep(diagRunId, 'reconnect', 'skipped', '普通会话切换不强制重连')
+      }
+      updateSessionDetailDiagStep(diagRunId, 'exportRecords', 'loading', '读取导出记录中')
+    } catch (e) {
+      const initError = `初始化异常: ${String(e)}`
+      updateSessionDetailDiagStep(diagRunId, 'init', 'error', initError, { error: String(e) })
+      updateSessionDetailDiagStep(diagRunId, 'finish', 'error', initError)
+      appendSessionDetailDiagEvent(diagRunId, 'error', '初始化阶段同步异常', { error: String(e) })
+      finishSessionDetailDiag(diagRunId, 'error', initError)
       setShowSessionDetailDiagnostics(true)
+      if (source === 'refresh') {
+        setIsRefreshingSessionDetail(false)
+      }
+      setIsLoadingDetail(false)
+      setIsLoadingGroupInfo(false)
+      return
     }
-    groupFriendMessageCountsRequestIdRef.current++
-    commonGroupMessageCountsRequestIdRef.current++
-    sessionImageAssetsRequestIdRef.current++
-    sessionVideoAssetsRequestIdRef.current++
-    setSelectedSession(username)
-    setShowExportSettings(false)
-    setShowGroupFriendsPopup(false)
-    setShowCommonGroupsPopup(false)
-    setGroupFriendMessageCounts({})
-    setGroupFriendMessageCountsStatus('idle')
-    setGroupFriendMessageCountsSessionId(null)
-    setGroupFriendsSortOrder('desc')
-    setCommonGroupMessageCounts({})
-    setCommonGroupMessageCountsStatus('idle')
-    setCommonGroupMessageCountsSessionId(null)
-    setShowSessionImageAssetsModal(false)
-    setSessionImageAssets([])
-    setSessionImageAssetsError(null)
-    setSessionImageAssetsLoading(false)
-    setSessionImageAssetsSessionId(null)
-    setSessionImageAssetsSessionName('')
-    setShowSessionVideoAssetsModal(false)
-    setSessionVideoAssets([])
-    setSessionVideoAssetsError(null)
-    setSessionVideoAssetsLoading(false)
-    setSessionVideoAssetsSessionId(null)
-    setSessionVideoAssetsSessionName('')
-    setSessionDetail(null)
-    setShowSessionImageDecryptConfirm(false)
-    setSessionImageMessages(null)
-    setSessionImageDates([])
-    setSessionImageSelectedDates(new Set())
-    setExportRecords([])
-    setIsLoadingDetail(true)
-    setIsLoadingGroupInfo(false)
-    updateSessionDetailDiagStep(diagRunId, 'init', 'success', '详情区状态已重置', {
-      selectedSessionAfterReset: username
-    })
-    if (forceReconnect) {
-      updateSessionDetailDiagStep(diagRunId, 'reconnect', 'loading', '准备重连聊天服务')
-      appendSessionDetailDiagEvent(diagRunId, 'info', '准备调用 chat.connect')
-    } else {
-      updateSessionDetailDiagStep(diagRunId, 'reconnect', 'skipped', '普通会话切换不强制重连')
-    }
-    updateSessionDetailDiagStep(diagRunId, 'exportRecords', 'loading', '读取导出记录中')
 
     const isRequestActive = () => requestId === sessionDetailRequestIdRef.current
     const markSupersededIfNeeded = () => {
@@ -1998,7 +2041,6 @@ function ExportPage() {
 
   const handleRefreshSelectedSessionDetail = useCallback(() => {
     if (!selectedSession) return
-    setShowSessionDetailDiagnostics(true)
     void selectSession(selectedSession, {
       source: 'refresh',
       forceReconnect: true
@@ -2656,6 +2698,11 @@ function ExportPage() {
                       ? (diag.status === 'running' ? '#2563eb' : diag.status === 'success' ? '#059669' : diag.status === 'error' ? '#dc2626' : 'var(--text-tertiary)')
                       : 'var(--text-tertiary)'
                     const diagLatestTs = diag?.finishedAt || diag?.startedAt
+                    const diagStepSummary = diag ? SESSION_DETAIL_DIAG_STEP_ORDER.reduce((acc, stepKey) => {
+                      const status = diag.steps[stepKey].status
+                      acc[status] = (acc[status] || 0) + 1
+                      return acc
+                    }, {} as Record<SessionDetailDiagStepStatus, number>) : null
                     const renderDiagStepStatus = (status: SessionDetailDiagStepStatus) => {
                       if (status === 'loading') {
                         return (
@@ -2788,6 +2835,15 @@ function ExportPage() {
                                 最近一次: {diagLatestTs ? formatDiagTime(diagLatestTs) : '--'}
                                 {diag ? ` · ${diag.source === 'refresh' ? '手动刷新' : '选择会话'}` : ''}
                               </div>
+                              {diagStepSummary && (
+                                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 2 }}>
+                                  {diagStepSummary.loading ? <span style={{ fontSize: 10, color: '#2563eb' }}>进行中 {diagStepSummary.loading}</span> : null}
+                                  {diagStepSummary.success ? <span style={{ fontSize: 10, color: '#059669' }}>成功 {diagStepSummary.success}</span> : null}
+                                  {diagStepSummary.error ? <span style={{ fontSize: 10, color: '#dc2626' }}>失败 {diagStepSummary.error}</span> : null}
+                                  {diagStepSummary.pending ? <span style={{ fontSize: 10, color: 'var(--text-tertiary)' }}>待执行 {diagStepSummary.pending}</span> : null}
+                                  {diagStepSummary.skipped ? <span style={{ fontSize: 10, color: 'var(--text-tertiary)' }}>跳过 {diagStepSummary.skipped}</span> : null}
+                                </div>
+                              )}
                             </div>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                               <button
@@ -2836,6 +2892,46 @@ function ExportPage() {
                             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                               {diag ? (
                                 <>
+                                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 2 }}>
+                                    <button
+                                      type="button"
+                                      onClick={() => setShowSessionDetailDiagPayloads(prev => !prev)}
+                                      style={{
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: 4,
+                                        height: 24,
+                                        padding: '0 8px',
+                                        borderRadius: 999,
+                                        border: '1px solid var(--border-color)',
+                                        background: showSessionDetailDiagPayloads ? 'rgba(var(--primary-rgb), 0.08)' : 'var(--bg-primary)',
+                                        color: showSessionDetailDiagPayloads ? 'var(--primary)' : 'var(--text-secondary)',
+                                        cursor: 'pointer',
+                                        fontSize: 11
+                                      }}
+                                    >
+                                      {showSessionDetailDiagPayloads ? '隐藏' : '显示'} Payload
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setShowSessionDetailDiagEvents(prev => !prev)}
+                                      style={{
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: 4,
+                                        height: 24,
+                                        padding: '0 8px',
+                                        borderRadius: 999,
+                                        border: '1px solid var(--border-color)',
+                                        background: showSessionDetailDiagEvents ? 'rgba(var(--primary-rgb), 0.08)' : 'var(--bg-primary)',
+                                        color: showSessionDetailDiagEvents ? 'var(--primary)' : 'var(--text-secondary)',
+                                        cursor: 'pointer',
+                                        fontSize: 11
+                                      }}
+                                    >
+                                      {showSessionDetailDiagEvents ? '隐藏' : '显示'} 时间线
+                                    </button>
+                                  </div>
                                   {SESSION_DETAIL_DIAG_STEP_ORDER.map(stepKey => {
                                     const step = diag.steps[stepKey]
                                     return (
@@ -2861,7 +2957,7 @@ function ExportPage() {
                                             {step.durationMs != null ? ` · ${step.durationMs}ms` : ''}
                                             {step.updatedAt ? ` · ${formatDiagTime(step.updatedAt)}` : ''}
                                           </div>
-                                          {step.payloadSummary && (
+                                          {showSessionDetailDiagPayloads && step.payloadSummary && (
                                             <div style={{
                                               marginTop: 5,
                                               padding: '5px 6px',
@@ -2881,7 +2977,7 @@ function ExportPage() {
                                       </div>
                                     )
                                   })}
-                                  {diag.events.length > 0 && (
+                                  {showSessionDetailDiagEvents && diag.events.length > 0 && (
                                     <div style={{
                                       marginTop: 2,
                                       padding: '8px',
