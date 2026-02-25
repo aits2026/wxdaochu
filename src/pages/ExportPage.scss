@@ -1274,43 +1274,6 @@
       }
     }
 
-    .session-metric-inline-combo {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: 6px;
-      min-width: 0;
-      width: 100%;
-
-      .metric-inline-value {
-        font-variant-numeric: tabular-nums;
-        white-space: nowrap;
-      }
-    }
-
-    .metric-inline-link {
-      display: inline-flex;
-      align-items: center;
-      gap: 3px;
-      height: auto;
-      padding: 0;
-      border: none;
-      border-radius: 0;
-      background: transparent;
-      color: var(--text-secondary);
-      cursor: pointer;
-      font-size: 11px;
-      line-height: 1;
-      transition: color 0.15s ease;
-
-      &:hover {
-        background: transparent;
-        color: var(--primary);
-        text-decoration: underline;
-        text-underline-offset: 2px;
-      }
-    }
-
     .session-card-inline-status {
       display: inline-flex;
       align-items: center;

@@ -369,23 +369,20 @@ const ExportSessionRow = (props: RowComponentProps<ExportSessionRowData>) => {
 
           {isPrivate && (
             <>
-              <div className="session-table-cell session-cell-metric">
-                <div className="session-metric-inline-combo">
-                  <span className="metric-inline-value">
-                    {cardStats?.commonGroupCount !== undefined ? `${cardStats.commonGroupCount.toLocaleString()} 个` : '--'}
-                  </span>
-                  <button
-                    type="button"
-                    className="metric-inline-link"
-                    onClick={async (e) => {
-                      e.stopPropagation()
-                      onOpenCommonGroups(session)
-                    }}
-                  >
-                    <Eye size={11} />
-                    <span>查看</span>
-                  </button>
+              <div className="session-table-cell session-cell-kpi">
+                <div className="export-session-count-value">
+                  {cardStats?.commonGroupCount !== undefined ? `${cardStats.commonGroupCount.toLocaleString()} 个` : '--'}
                 </div>
+                <button
+                  type="button"
+                  className="session-table-inline-btn"
+                  onClick={async (e) => {
+                    e.stopPropagation()
+                    onOpenCommonGroups(session)
+                  }}
+                >
+                  查看
+                </button>
               </div>
               <div className="session-table-cell session-cell-metric">{formatSessionCardDate(cardStats?.firstMessageTime)}</div>
               <div className="session-table-cell session-cell-metric">{formatSessionCardDate(cardStats?.latestMessageTime)}</div>
