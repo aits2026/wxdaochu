@@ -812,7 +812,7 @@
     padding: 2px 12px 14px;
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 6px;
   }
 
   .export-session-list-body {
@@ -824,7 +824,7 @@
   .export-session-table-header,
   .export-session-table-row {
     display: grid;
-    gap: 3px;
+    gap: 10px;
 
     &.session-grid-private {
       grid-template-columns: minmax(280px, 1.9fr) minmax(132px, 0.9fr) minmax(116px, 0.9fr) minmax(110px, 0.8fr) minmax(110px, 0.8fr) 72px 72px 86px 72px;
@@ -844,35 +844,50 @@
   }
 
   .export-session-table-header-cell {
-    height: 24px;
-    border-radius: 7px;
-    background: rgba(127, 127, 127, 0.06);
+    height: 28px;
+    border-radius: 8px;
+    background: transparent;
     display: flex;
     align-items: center;
-    justify-content: center;
+    justify-content: flex-start;
+    gap: 4px;
     color: var(--text-secondary);
-    font-size: 9px;
+    font-size: 10px;
     font-weight: 600;
     white-space: nowrap;
-    padding: 0 5px;
+    padding: 0 4px;
+
+    &.is-media-header {
+      justify-content: center;
+      gap: 3px;
+      text-align: center;
+    }
+
+    .header-media-icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-tertiary);
+      line-height: 1;
+    }
   }
 
   .export-session-item {
     display: flex;
     flex-direction: column;
-    gap: 2px;
-    padding: 5px;
-    border-radius: 8px;
+    gap: 0;
+    padding: 8px 10px;
+    border-radius: 12px;
     cursor: pointer;
     transition: all 0.2s;
-    border: 1px solid rgba(127, 127, 127, 0.06);
+    border: 1px solid rgba(127, 127, 127, 0.08);
     background:
-      radial-gradient(circle at top right, rgba(var(--primary-rgb), 0.025), transparent 55%),
+      radial-gradient(circle at top right, rgba(var(--primary-rgb), 0.03), transparent 58%),
       var(--card-bg);
 
     &:hover {
-      border-color: rgba(var(--primary-rgb), 0.14);
-      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.02);
+      border-color: rgba(var(--primary-rgb), 0.16);
+      box-shadow: 0 6px 14px rgba(15, 23, 42, 0.04);
     }
 
     &.selected {
@@ -880,7 +895,7 @@
       background:
         radial-gradient(circle at top right, rgba(var(--primary-rgb), 0.08), transparent 58%),
         rgba(var(--primary-rgb), 0.025);
-      box-shadow: 0 3px 10px rgba(var(--primary-rgb), 0.04);
+      box-shadow: 0 8px 18px rgba(var(--primary-rgb), 0.06);
     }
 
     .export-session-table-row {
@@ -888,9 +903,9 @@
     }
 
     .export-avatar {
-      width: 34px;
-      height: 34px;
-      border-radius: 8px;
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
       background: linear-gradient(135deg, var(--primary), var(--primary-hover));
       display: flex;
       align-items: center;
@@ -902,12 +917,12 @@
         width: 100%;
         height: 100%;
         object-fit: cover;
-        border-radius: 8px;
+        border-radius: 10px;
       }
 
       span {
         color: #fff;
-        font-size: 13px;
+        font-size: 14px;
         font-weight: 600;
 
         &.group-placeholder {
@@ -917,7 +932,7 @@
           display: flex;
           align-items: center;
           justify-content: center;
-          border-radius: 8px;
+          border-radius: 10px;
           font-size: 12px;
         }
       }
@@ -926,36 +941,39 @@
     .session-table-cell {
       display: flex;
       align-items: center;
-      justify-content: center;
+      justify-content: flex-start;
       min-width: 0;
-      padding: 4px 6px;
-      border-radius: 7px;
-      background: rgba(127, 127, 127, 0.06);
+      padding: 2px 4px;
+      border-radius: 0;
+      background: transparent;
+      border: none;
     }
 
     .session-cell-info {
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: 10px;
       justify-content: flex-start;
+      padding-right: 8px;
+      border-right: 1px solid rgba(127, 127, 127, 0.08);
 
       .session-cell-info-main {
         min-width: 0;
         flex: 1;
         display: flex;
         flex-direction: column;
-        gap: 1px;
+        gap: 2px;
       }
 
       .session-cell-title-row {
         display: flex;
         align-items: center;
-        gap: 4px;
+        gap: 6px;
         min-width: 0;
       }
 
       .export-session-name {
-        font-size: 11px;
+        font-size: 13px;
         font-weight: 600;
         color: var(--text-primary);
         white-space: nowrap;
@@ -964,7 +982,7 @@
       }
 
       .session-cell-subtitle {
-        font-size: 9px;
+        font-size: 10px;
         color: var(--text-secondary);
         white-space: nowrap;
         overflow: hidden;
@@ -972,7 +990,7 @@
       }
 
       .session-cell-weak {
-        font-size: 8px;
+        font-size: 9px;
         color: var(--text-tertiary);
         white-space: nowrap;
         overflow: hidden;
@@ -981,18 +999,20 @@
 
       .session-card-inline-status {
         margin-left: auto;
-        padding-left: 2px;
+        padding-left: 6px;
       }
     }
 
     .session-cell-kpi {
       flex-direction: column;
-      gap: 3px;
-      align-items: center;
+      gap: 4px;
+      align-items: flex-start;
       justify-content: center;
+      padding-right: 8px;
+      border-right: 1px solid rgba(127, 127, 127, 0.08);
 
       .export-session-count-value {
-        font-size: 14px;
+        font-size: 16px;
         line-height: 1;
         font-weight: 700;
         color: var(--text-primary);
@@ -1001,22 +1021,16 @@
     }
 
     .session-cell-metric {
-      font-size: 10px;
+      font-size: 11px;
       font-weight: 600;
       color: var(--text-primary);
       white-space: nowrap;
+      justify-content: center;
+      text-align: center;
+      font-variant-numeric: tabular-nums;
 
       &.session-cell-media {
-        gap: 3px;
-        font-weight: 600;
-
-        .media-icon {
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          color: var(--text-secondary);
-          line-height: 1;
-        }
+        justify-content: center;
 
         .media-value {
           min-width: 0;
@@ -1029,14 +1043,14 @@
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      gap: 3px;
-      height: 18px;
-      padding: 0 5px;
+      gap: 4px;
+      height: 22px;
+      padding: 0 8px;
       border-radius: 999px;
       border: none;
       background: rgba(var(--primary-rgb), 0.1);
       color: var(--primary);
-      font-size: 9px;
+      font-size: 10px;
       font-weight: 600;
       cursor: pointer;
       transition: all 0.15s ease;
@@ -1046,18 +1060,38 @@
       }
     }
 
-    .metric-link-btn {
-      max-width: 100%;
+    .session-metric-inline-combo {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
       min-width: 0;
-      background: transparent;
-      border: none;
-      color: var(--text-primary);
-      background: rgba(127, 127, 127, 0.08);
+      width: 100%;
 
-      span {
+      .metric-inline-value {
+        font-variant-numeric: tabular-nums;
         white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
+      }
+    }
+
+    .metric-inline-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      height: 20px;
+      padding: 0 6px;
+      border: none;
+      border-radius: 999px;
+      background: rgba(127, 127, 127, 0.08);
+      color: var(--text-secondary);
+      cursor: pointer;
+      font-size: 10px;
+      line-height: 1;
+      transition: all 0.15s ease;
+
+      &:hover {
+        background: rgba(var(--primary-rgb), 0.1);
+        color: var(--primary);
       }
     }
 
@@ -1065,7 +1099,7 @@
       display: inline-flex;
       align-items: center;
       gap: 4px;
-      font-size: 9px;
+      font-size: 10px;
       color: var(--text-tertiary);
       white-space: nowrap;
 
@@ -1092,6 +1126,11 @@
     .export-session-list-body {
       min-width: max-content;
       width: 100%;
+    }
+
+    .export-session-item {
+      border-radius: 10px;
+      padding: 7px 8px;
     }
   }
 

@@ -201,6 +201,13 @@ const formatSessionCardDate = (timestamp?: number) => (
   timestamp ? new Date(timestamp * 1000).toLocaleDateString('zh-CN') : '--'
 )
 
+const SESSION_TABLE_HEADER_MEDIA_ICONS: Record<string, JSX.Element> = {
+  图片: <Image size={11} />,
+  视频: <Video size={11} />,
+  表情包: <Smile size={11} />,
+  语音: <Mic size={11} />
+}
+
 const getSessionTableLayoutClass = (filter: SessionTypeFilter) => {
   if (filter === 'private') return 'session-grid-private'
   if (filter === 'group') return 'session-grid-group'
@@ -288,10 +295,10 @@ const ExportSessionRow = (props: RowComponentProps<ExportSessionRowData>) => {
   const isOfficial = session.accountType === 'official'
   const statsLoading = cardStats?.status === 'loading' || (isGroup && cardStats?.groupInfoLoading)
   const mediaStats = [
-    { label: '图片', icon: <Image size={12} />, count: cardStats?.imageCount },
-    { label: '视频', icon: <Video size={12} />, count: cardStats?.videoCount },
-    { label: '表情包', icon: <Smile size={12} />, count: cardStats?.emojiCount },
-    { label: '语音', icon: <Mic size={12} />, count: cardStats?.voiceCount }
+    { label: '图片', count: cardStats?.imageCount },
+    { label: '视频', count: cardStats?.videoCount },
+    { label: '表情包', count: cardStats?.emojiCount },
+    { label: '语音', count: cardStats?.voiceCount }
   ] as const
   const gridClass = getSessionTableLayoutClass(sessionTypeFilter)
   const primaryName = (cardStats?.remark || cardStats?.nickName || session.displayName || session.username || '').trim()
@@ -307,7 +314,7 @@ const ExportSessionRow = (props: RowComponentProps<ExportSessionRowData>) => {
   }, [onEnsureCardStats, session])
 
   return (
-    <div style={{ ...style, padding: '2px 12px', boxSizing: 'border-box' }}>
+    <div style={{ ...style, padding: '4px 12px', boxSizing: 'border-box' }}>
       <div
         className={`export-session-item ${selectedSession === session.username ? 'selected' : ''}`}
         onClick={() => onSelect(session.username)}
@@ -359,17 +366,22 @@ const ExportSessionRow = (props: RowComponentProps<ExportSessionRowData>) => {
           {isPrivate && (
             <>
               <div className="session-table-cell session-cell-metric">
-                <button
-                  type="button"
-                  className="session-table-inline-btn metric-link-btn"
-                  onClick={async (e) => {
-                    e.stopPropagation()
-                    onOpenCommonGroups(session)
-                  }}
-                >
-                  <span>{cardStats?.commonGroupCount !== undefined ? `${cardStats.commonGroupCount.toLocaleString()} 个` : '--'}</span>
-                  <Eye size={12} />
-                </button>
+                <div className="session-metric-inline-combo">
+                  <span className="metric-inline-value">
+                    {cardStats?.commonGroupCount !== undefined ? `${cardStats.commonGroupCount.toLocaleString()} 个` : '--'}
+                  </span>
+                  <button
+                    type="button"
+                    className="metric-inline-link"
+                    onClick={async (e) => {
+                      e.stopPropagation()
+                      onOpenCommonGroups(session)
+                    }}
+                  >
+                    <Eye size={11} />
+                    <span>查看</span>
+                  </button>
+                </div>
               </div>
               <div className="session-table-cell session-cell-metric">{formatSessionCardDate(cardStats?.firstMessageTime)}</div>
               <div className="session-table-cell session-cell-metric">{formatSessionCardDate(cardStats?.latestMessageTime)}</div>
@@ -401,7 +413,6 @@ const ExportSessionRow = (props: RowComponentProps<ExportSessionRowData>) => {
 
           {mediaStats.map(item => (
             <div key={item.label} className="session-table-cell session-cell-metric session-cell-media" title={item.label}>
-              <span className="media-icon">{item.icon}</span>
               <span className="media-value">{item.count !== undefined ? item.count.toLocaleString() : '--'}</span>
             </div>
           ))}
@@ -1057,7 +1068,7 @@ function ExportPage() {
     [sessionTypeFilter]
   )
   const sessionListRowHeight = useMemo(
-    () => (sessionTypeFilter === 'group' ? 88 : 84),
+    () => (sessionTypeFilter === 'group' ? 106 : 102),
     [sessionTypeFilter]
   )
 
@@ -2999,7 +3010,20 @@ function ExportPage() {
               <div className="export-session-list">
                 <div className={`export-session-table-header ${sessionListGridClass}`}>
                   {sessionListHeaderColumns.map(label => (
-                    <div key={label} className="export-session-table-header-cell" title={label}>{label}</div>
+                    <div
+                      key={label}
+                      className={`export-session-table-header-cell ${SESSION_TABLE_HEADER_MEDIA_ICONS[label] ? 'is-media-header' : ''}`}
+                      title={label}
+                    >
+                      {SESSION_TABLE_HEADER_MEDIA_ICONS[label] ? (
+                        <>
+                          <span className="header-media-icon">{SESSION_TABLE_HEADER_MEDIA_ICONS[label]}</span>
+                          <span>{label}</span>
+                        </>
+                      ) : (
+                        <span>{label}</span>
+                      )}
+                    </div>
                   ))}
                 </div>
                 <div className="export-session-list-body">
