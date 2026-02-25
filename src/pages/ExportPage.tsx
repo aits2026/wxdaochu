@@ -165,6 +165,7 @@ interface ExportSessionRowData {
   onEnsureCardStats: (session: ChatSession) => void
   onOpenChatWindow: (session: ChatSession) => void
   onOpenCommonGroups: (session: ChatSession) => void
+  onOpenExportSettings: (session: ChatSession) => void | Promise<void>
 }
 
 interface SessionCardGroupInfo {
@@ -216,12 +217,12 @@ const getSessionTableLayoutClass = (filter: SessionTypeFilter) => {
 
 const getSessionTableHeaderColumns = (filter: SessionTypeFilter) => {
   if (filter === 'private') {
-    return ['会话信息', '总消息', '共同群聊', '最早时间', '最新时间', '图片', '视频', '表情包', '语音']
+    return ['会话信息', '总消息', '共同群聊', '最早时间', '最新时间', '图片', '视频', '表情包', '语音', '导出']
   }
   if (filter === 'group') {
-    return ['会话信息', '总消息', '群人数', '群内好友数', '我发消息', '最早时间', '最新时间', '图片', '视频', '表情包', '语音']
+    return ['会话信息', '总消息', '群人数', '群内好友数', '我发消息', '最早时间', '最新时间', '图片', '视频', '表情包', '语音', '导出']
   }
-  return ['会话信息', '总消息', '最早时间', '最新时间', '图片', '视频', '表情包', '语音']
+  return ['会话信息', '总消息', '最早时间', '最新时间', '图片', '视频', '表情包', '语音', '导出']
 }
 
 const SESSION_DETAIL_DIAG_STEP_LABELS: Record<SessionDetailDiagStepKey, string> = {
@@ -285,7 +286,8 @@ const ExportSessionRow = (props: RowComponentProps<ExportSessionRowData>) => {
     onSelect,
     onEnsureCardStats,
     onOpenChatWindow,
-    onOpenCommonGroups
+    onOpenCommonGroups,
+    onOpenExportSettings
   } = props
   const session = sessions[index]
   const cardStats = sessionCardStatsMap[session.username]
@@ -418,6 +420,20 @@ const ExportSessionRow = (props: RowComponentProps<ExportSessionRowData>) => {
               <span className="media-value">{item.count !== undefined ? item.count.toLocaleString() : '--'}</span>
             </div>
           ))}
+
+          <div className="session-table-cell session-cell-action session-cell-sticky-right">
+            <button
+              type="button"
+              className="session-table-export-btn"
+              onClick={async (e) => {
+                e.stopPropagation()
+                await onOpenExportSettings(session)
+              }}
+            >
+              <Download size={12} />
+              <span>导出</span>
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -2499,6 +2515,11 @@ function ExportPage() {
     setShowCommonGroupsPopup(true)
   }, [selectSession, selectedSession, sessionDetail?.wxid])
 
+  const handleOpenExportSettingsFromList = useCallback(async (session: ChatSession) => {
+    await selectSession(session.username)
+    setShowExportSettings(true)
+  }, [selectSession])
+
   useEffect(() => {
     const cachedSelectedSession = pendingCachedSelectedSessionRef.current
     if (!cachedSelectedSession) return
@@ -3141,7 +3162,11 @@ function ExportPage() {
                       {sessionListHeaderColumns.map(label => (
                         <div
                           key={label}
-                          className={`export-session-table-header-cell ${SESSION_TABLE_HEADER_MEDIA_ICONS[label] ? 'is-media-header' : ''}`}
+                          className={[
+                            'export-session-table-header-cell',
+                            SESSION_TABLE_HEADER_MEDIA_ICONS[label] ? 'is-media-header' : '',
+                            label === '导出' ? 'is-sticky-right is-action-header' : ''
+                          ].filter(Boolean).join(' ')}
                           title={label}
                         >
                           {SESSION_TABLE_HEADER_MEDIA_ICONS[label] ? (
@@ -3208,7 +3233,8 @@ function ExportPage() {
                       onSelect: selectSession,
                       onEnsureCardStats: ensureSessionCardStats,
                       onOpenChatWindow: handleOpenChatWindowFromList,
-                      onOpenCommonGroups: handleOpenCommonGroupsFromList
+                      onOpenCommonGroups: handleOpenCommonGroupsFromList,
+                      onOpenExportSettings: handleOpenExportSettingsFromList
                     }}
                     rowComponent={ExportSessionRow}
                   />
