@@ -1806,9 +1806,6 @@ function ExportPage() {
     setSessionImageMessages(null)
     setSessionImageDates([])
     setSessionImageSelectedDates(new Set())
-    if (!isSessionImageDecrypting) {
-      setSessionImageDecryptTaskExpanded(true)
-    }
     setExportRecords([])
     setIsLoadingDetail(true)
     setIsLoadingGroupInfo(false)
