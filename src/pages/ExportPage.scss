@@ -705,11 +705,11 @@
     flex-wrap: wrap;
 
     .type-filter-btn {
-      flex: 1;
+      flex: 0 0 auto;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      min-width: 0;
+      min-width: 92px;
       gap: 6px;
       height: 36px;
       padding: 0 10px;
@@ -722,6 +722,7 @@
       color: var(--text-secondary);
       font-size: 12px;
       font-weight: 500;
+      line-height: 1;
     }
 
     .type-filter-btn {
@@ -730,20 +731,24 @@
         align-items: center;
         gap: 4px;
         min-width: 0;
+        line-height: 1.2;
 
         span {
-          overflow: hidden;
-          text-overflow: ellipsis;
+          display: block;
+          line-height: 1.2;
         }
       }
 
       .type-filter-count {
+        display: inline-flex;
+        align-items: center;
         margin-left: auto;
         font-size: 12px;
         font-weight: 600;
         color: var(--text-primary);
-        line-height: 1.1;
+        line-height: 1.2;
         flex-shrink: 0;
+        font-variant-numeric: tabular-nums;
       }
 
       &:hover {
@@ -790,6 +795,11 @@
 
     .session-type-filter {
       width: 100%;
+
+      .type-filter-btn {
+        min-width: 84px;
+        padding: 0 8px;
+      }
     }
 
     .session-filter-search {
@@ -1095,6 +1105,12 @@
       justify-content: center;
     }
 
+    &.is-time-header {
+      justify-content: flex-start;
+      text-align: left;
+      font-variant-numeric: tabular-nums;
+    }
+
     &.is-sticky-right {
       position: sticky;
       right: 0;
@@ -1282,8 +1298,40 @@
       text-align: center;
       font-variant-numeric: tabular-nums;
 
+      &.session-cell-time {
+        justify-content: flex-start;
+        text-align: left;
+        overflow: hidden;
+      }
+
       &.session-cell-media {
         justify-content: center;
+
+        .session-media-metric-inline {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 4px;
+          min-width: 0;
+          line-height: 1;
+
+          &.is-empty {
+            color: var(--text-tertiary);
+          }
+        }
+
+        .session-media-metric-icon {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          flex-shrink: 0;
+          line-height: 1;
+          color: var(--text-secondary);
+        }
+
+        .session-media-metric-inline.is-empty .session-media-metric-icon {
+          color: currentColor;
+        }
 
         .media-value {
           min-width: 0;
@@ -1315,6 +1363,10 @@
             color: var(--text-tertiary);
             cursor: default;
             text-decoration: none;
+          }
+
+          .session-media-metric-icon {
+            color: currentColor;
           }
         }
       }

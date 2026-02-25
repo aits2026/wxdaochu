@@ -256,6 +256,13 @@ const SESSION_TABLE_HEADER_MEDIA_ICONS: Record<string, JSX.Element> = {
   语音: <Mic size={11} />
 }
 
+const SESSION_TABLE_ROW_MEDIA_ICONS: Record<string, JSX.Element> = {
+  图片: <Image size={12} />,
+  视频: <Video size={12} />,
+  表情包: <Smile size={12} />,
+  语音: <Mic size={12} />
+}
+
 const getSessionTableLayoutClass = (filter: SessionTypeFilter) => {
   if (filter === 'private') return 'session-grid-private'
   if (filter === 'group') return 'session-grid-group'
@@ -438,8 +445,8 @@ const ExportSessionRow = (props: RowComponentProps<ExportSessionRowData>) => {
                   查看
                 </button>
               </div>
-              <div className="session-table-cell session-cell-metric">{formatSessionCardDate(cardStats?.firstMessageTime)}</div>
-              <div className="session-table-cell session-cell-metric">{formatSessionCardDate(cardStats?.latestMessageTime)}</div>
+              <div className="session-table-cell session-cell-metric session-cell-time">{formatSessionCardDate(cardStats?.firstMessageTime)}</div>
+              <div className="session-table-cell session-cell-metric session-cell-time">{formatSessionCardDate(cardStats?.latestMessageTime)}</div>
             </>
           )}
 
@@ -454,38 +461,49 @@ const ExportSessionRow = (props: RowComponentProps<ExportSessionRowData>) => {
               <div className="session-table-cell session-cell-metric">
                 {cardStats?.groupInfo?.selfMessageCount !== undefined ? cardStats.groupInfo.selfMessageCount.toLocaleString() : '--'}
               </div>
-              <div className="session-table-cell session-cell-metric">{formatSessionCardDate(cardStats?.firstMessageTime)}</div>
-              <div className="session-table-cell session-cell-metric">{formatSessionCardDate(cardStats?.latestMessageTime)}</div>
+              <div className="session-table-cell session-cell-metric session-cell-time">{formatSessionCardDate(cardStats?.firstMessageTime)}</div>
+              <div className="session-table-cell session-cell-metric session-cell-time">{formatSessionCardDate(cardStats?.latestMessageTime)}</div>
             </>
           )}
 
           {isOfficial && (
             <>
-              <div className="session-table-cell session-cell-metric">{formatSessionCardDate(cardStats?.firstMessageTime)}</div>
-              <div className="session-table-cell session-cell-metric">{formatSessionCardDate((cardStats?.latestMessageTime ?? session.lastTimestamp) || undefined)}</div>
+              <div className="session-table-cell session-cell-metric session-cell-time">{formatSessionCardDate(cardStats?.firstMessageTime)}</div>
+              <div className="session-table-cell session-cell-metric session-cell-time">{formatSessionCardDate((cardStats?.latestMessageTime ?? session.lastTimestamp) || undefined)}</div>
             </>
           )}
 
-          {mediaStats.map(item => (
-            <div key={item.label} className="session-table-cell session-cell-metric session-cell-media" title={item.label}>
-              {item.label === '图片' ? (
-                <button
-                  type="button"
-                  className={`session-media-count-link ${item.count && item.count > 0 ? '' : 'is-disabled'}`}
-                  disabled={!item.count}
-                  onClick={async (e) => {
-                    e.stopPropagation()
-                    if (!item.count) return
-                    await onOpenImageAssets(session)
-                  }}
-                >
-                  <span className="media-value">{item.count !== undefined ? item.count.toLocaleString() : '--'}</span>
-                </button>
-              ) : (
-                <span className="media-value">{item.count !== undefined ? item.count.toLocaleString() : '--'}</span>
-              )}
-            </div>
-          ))}
+          {mediaStats.map(item => {
+            const hasMediaCount = typeof item.count === 'number' && item.count > 0
+            const mediaValueText = item.count !== undefined ? item.count.toLocaleString() : '--'
+            const mediaContent = (
+              <span className={`session-media-metric-inline ${hasMediaCount ? '' : 'is-empty'}`}>
+                <span className="session-media-metric-icon" aria-hidden="true">
+                  {SESSION_TABLE_ROW_MEDIA_ICONS[item.label]}
+                </span>
+                <span className="media-value">{mediaValueText}</span>
+              </span>
+            )
+
+            return (
+              <div key={item.label} className="session-table-cell session-cell-metric session-cell-media" title={item.label}>
+                {item.label === '图片' ? (
+                  <button
+                    type="button"
+                    className={`session-media-count-link ${hasMediaCount ? '' : 'is-disabled'}`}
+                    disabled={!hasMediaCount}
+                    onClick={async (e) => {
+                      e.stopPropagation()
+                      if (!hasMediaCount) return
+                      await onOpenImageAssets(session)
+                    }}
+                  >
+                    {mediaContent}
+                  </button>
+                ) : mediaContent}
+              </div>
+            )
+          })}
 
           <div className="session-table-cell session-cell-action session-cell-sticky-right">
             <div className="session-cell-action-stack">
@@ -3454,6 +3472,7 @@ function ExportPage() {
                           className={[
                             'export-session-table-header-cell',
                             SESSION_TABLE_HEADER_MEDIA_ICONS[label] ? 'is-media-header' : '',
+                            (label === '最早时间' || label === '最新时间') ? 'is-time-header' : '',
                             label === '导出' ? 'is-sticky-right is-action-header' : ''
                           ].filter(Boolean).join(' ')}
                           title={label}
