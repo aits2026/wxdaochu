@@ -1616,8 +1616,16 @@ function ExportPage() {
             }
           })()
         }
+      } else {
+        console.error('加载会话详情失败:', {
+          username,
+          error: detailResult.error || 'unknown error',
+          note: '若会话列表来自缓存且未触发 chat.connect()，这里会失败'
+        })
       }
-    } catch { }
+    } catch (e) {
+      console.error('加载会话详情异常:', e)
+    }
     finally {
       if (requestId === sessionDetailRequestIdRef.current) {
         setIsLoadingDetail(false)

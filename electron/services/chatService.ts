@@ -4059,7 +4059,10 @@ class ChatService extends EventEmitter {
   }> {
     try {
       if (!this.dbDir) {
-        return { success: false, error: '数据库未连接' }
+        const connectResult = await this.connect()
+        if (!connectResult.success) {
+          return { success: false, error: connectResult.error || '数据库未连接' }
+        }
       }
 
       // 获取联系人信息
