@@ -318,8 +318,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('export:getExportRecords', sessionUsername),
     getLatestExportTimes: (sessionUsernames: string[]) =>
       ipcRenderer.invoke('export:getLatestExportTimes', sessionUsernames),
-    saveExportRecord: (sessionUsername: string, format: string, messageCount: number) =>
-      ipcRenderer.invoke('export:saveExportRecord', sessionUsername, format, messageCount),
+    saveExportRecord: (sessionUsername: string, format: string, messageCount: number, outputDir?: string) =>
+      ipcRenderer.invoke('export:saveExportRecord', sessionUsername, format, messageCount, outputDir),
   },
 
   // 激活

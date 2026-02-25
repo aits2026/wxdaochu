@@ -560,9 +560,10 @@ export interface ElectronAPI {
       exportTime: number
       format: string
       messageCount: number
+      outputDir?: string
     }[]>
     getLatestExportTimes: (sessionUsernames: string[]) => Promise<Record<string, number>>
-    saveExportRecord: (sessionUsername: string, format: string, messageCount: number) => Promise<void>
+    saveExportRecord: (sessionUsername: string, format: string, messageCount: number, outputDir?: string) => Promise<void>
   }
   activation: {
     getDeviceId: () => Promise<string>

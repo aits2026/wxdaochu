@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useDeferredValue, useMemo, useRef, startTransition } from 'react'
-import { Search, Download, FolderOpen, RefreshCw, Check, FileJson, FileText, Table, Loader2, X, FileSpreadsheet, Database, FileCode, CheckCircle, XCircle, ExternalLink, MessageSquare, Users, User, Filter, Image, Video, CircleUserRound, Smile, Mic, Newspaper, ChevronDown, MoreHorizontal, ArrowLeft, Eye, Aperture, CircleHelp, Copy, Clock3 } from 'lucide-react'
+import { Search, Download, FolderOpen, RefreshCw, Check, FileJson, FileText, Table, Loader2, X, FileSpreadsheet, Database, FileCode, CheckCircle, XCircle, ExternalLink, MessageSquare, Users, User, Filter, Image, Video, CircleUserRound, Smile, Mic, Newspaper, ChevronDown, MoreHorizontal, ArrowLeft, Eye, Aperture, CircleHelp, Copy } from 'lucide-react'
 import { List, RowComponentProps } from 'react-window'
 import DateRangePicker from '../components/DateRangePicker'
 import { useTitleBarStore } from '../stores/titleBarStore'
@@ -485,7 +485,7 @@ const ExportSessionRow = (props: RowComponentProps<ExportSessionRowData>) => {
                   await onOpenExportSettings(session)
                 }}
               >
-                {isExportingThisSession ? <Loader2 size={12} className="spin" /> : isQueuedThisSession ? <Clock3 size={12} /> : <Download size={12} />}
+                {isExportingThisSession ? <Loader2 size={12} className="spin" /> : isQueuedThisSession ? <MoreHorizontal size={12} /> : <Download size={12} />}
                 <span>{isExportingThisSession ? '导出中' : isQueuedThisSession ? '排队中' : '导出'}</span>
               </button>
               {(recentExportTimeLabel || isExportingThisSession || isQueuedThisSession) && (
@@ -631,7 +631,7 @@ function ExportPage() {
   const [commonGroupMessageCountsSessionId, setCommonGroupMessageCountsSessionId] = useState<string | null>(null)
   const [isLoadingDetail, setIsLoadingDetail] = useState(false)
   const [isLoadingGroupInfo, setIsLoadingGroupInfo] = useState(false)
-  const [exportRecords, setExportRecords] = useState<{ exportTime: number; format: string; messageCount: number }[]>([])
+  const [exportRecords, setExportRecords] = useState<{ exportTime: number; format: string; messageCount: number; outputDir?: string }[]>([])
   const [sessionDetailDiagnostics, setSessionDetailDiagnostics] = useState<SessionDetailLoadDiagnostics | null>(null)
   const [showSessionDetailDiagnostics, setShowSessionDetailDiagnostics] = useState(false)
   const [showSessionDetailDiagPayloads, setShowSessionDetailDiagPayloads] = useState(false)
@@ -2737,6 +2737,19 @@ function ExportPage() {
     }
   }
 
+  const openExportRecordFolder = useCallback(async (outputDir?: string) => {
+    if (!outputDir) return
+    try {
+      const result = await window.electronAPI.shell.openPath(outputDir)
+      if (result) {
+        alert('导出目录不存在或无法打开')
+      }
+    } catch (e) {
+      console.error('打开导出目录失败:', e)
+      alert('打开导出目录失败')
+    }
+  }, [])
+
   const handleExportImagesToggle = (checked: boolean) => {
     setOptions(prev => ({ ...prev, exportImages: checked }))
     setHideImageDecryptExportTip(false)
@@ -2934,7 +2947,7 @@ function ExportPage() {
             format: formatLabel
           })
 
-          await window.electronAPI.export.saveExportRecord(job.sessionId, job.options.format, job.messageCount)
+          await window.electronAPI.export.saveExportRecord(job.sessionId, job.options.format, job.messageCount, job.outputDir)
           const records = await window.electronAPI.export.getExportRecords(job.sessionId)
           if (selectedSession === job.sessionId) {
             setExportRecords(records)
@@ -3662,7 +3675,7 @@ function ExportPage() {
                                 flexShrink: 0
                               }}
                             >
-                              {isSelectedSessionExporting ? <Loader2 size={14} className="spin" /> : isSelectedSessionQueued ? <Clock3 size={14} /> : <Download size={14} />}
+                              {isSelectedSessionExporting ? <Loader2 size={14} className="spin" /> : isSelectedSessionQueued ? <MoreHorizontal size={14} /> : <Download size={14} />}
                               <span style={{ fontSize: 12, fontWeight: 600 }}>
                                 {isSelectedSessionExporting ? '导出中' : isSelectedSessionQueued ? '排队中' : '导出此会话'}
                               </span>
@@ -4280,6 +4293,7 @@ function ExportPage() {
                                 const diff = sessionDetail ? sessionDetail.messageCount - rec.messageCount : 0
                                 const date = new Date(rec.exportTime)
                                 const dateStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+                                const hasOutputDir = Boolean(rec.outputDir && rec.outputDir.trim())
                                 return (
                                   <div key={i} style={{
                                     padding: '8px 10px',
@@ -4288,9 +4302,39 @@ function ExportPage() {
                                     borderRadius: 8,
                                     fontSize: 12,
                                   }}>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 4 }}>
                                       <span style={{ color: 'var(--text-secondary)' }}>{dateStr}</span>
-                                      <span style={{ color: 'var(--text-tertiary)', textTransform: 'uppercase' }}>{rec.format}</span>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                                        <span style={{ color: 'var(--text-tertiary)', textTransform: 'uppercase' }}>{rec.format}</span>
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation()
+                                            if (!hasOutputDir) return
+                                            void openExportRecordFolder(rec.outputDir)
+                                          }}
+                                          disabled={!hasOutputDir}
+                                          title={hasOutputDir ? `打开导出文件夹${rec.outputDir ? `: ${rec.outputDir}` : ''}` : '旧记录未保存导出路径'}
+                                          style={{
+                                            height: 22,
+                                            padding: '0 8px',
+                                            borderRadius: 999,
+                                            border: '1px solid var(--border-color)',
+                                            background: hasOutputDir ? 'var(--bg-primary)' : 'var(--bg-secondary)',
+                                            color: hasOutputDir ? 'var(--primary)' : 'var(--text-tertiary)',
+                                            cursor: hasOutputDir ? 'pointer' : 'not-allowed',
+                                            fontSize: 11,
+                                            fontWeight: 500,
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            gap: 4,
+                                            opacity: hasOutputDir ? 1 : 0.75
+                                          }}
+                                        >
+                                          <FolderOpen size={11} />
+                                          <span>{hasOutputDir ? '打开文件夹' : '无路径'}</span>
+                                        </button>
+                                      </div>
                                     </div>
                                     <div style={{ color: 'var(--text-secondary)' }}>
                                       导出时 {rec.messageCount.toLocaleString()} 条，
@@ -4569,7 +4613,7 @@ function ExportPage() {
                       </>
                     ) : selectedSessionChatExportState === 'queued' ? (
                       <>
-                        <Clock3 size={18} />
+                        <MoreHorizontal size={18} />
                         <span>排队中...</span>
                       </>
                     ) : (

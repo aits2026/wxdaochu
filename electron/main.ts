@@ -2124,8 +2124,8 @@ function registerIpcHandlers() {
     return exportRecordService.getLatestRecordTimes(Array.isArray(sessionUsernames) ? sessionUsernames : [])
   })
 
-  ipcMain.handle('export:saveExportRecord', (_, sessionUsername: string, format: string, messageCount: number) => {
-    exportRecordService.saveRecord(sessionUsername, format, messageCount)
+  ipcMain.handle('export:saveExportRecord', (_, sessionUsername: string, format: string, messageCount: number, outputDir?: string) => {
+    exportRecordService.saveRecord(sessionUsername, format, messageCount, outputDir)
   })
 
   // 导出相关
