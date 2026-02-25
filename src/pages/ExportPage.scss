@@ -2711,6 +2711,186 @@
     max-height: min(60vh, 560px);
   }
 
+  .session-image-unified-content {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .session-image-decrypt-list-panel {
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    background: var(--bg-secondary);
+    overflow: hidden;
+  }
+
+  .session-image-decrypt-list-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border-color);
+    flex-wrap: wrap;
+  }
+
+  .session-image-decrypt-list-title {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 600;
+
+    .count-pill {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      line-height: 1.2;
+      font-weight: 500;
+      color: #d48806;
+      background: rgba(250, 173, 20, 0.12);
+      border: 1px solid rgba(250, 173, 20, 0.2);
+      white-space: nowrap;
+    }
+  }
+
+  .session-image-decrypt-list-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+
+    button {
+      border: 1px solid var(--border-color);
+      background: var(--bg-primary);
+      color: var(--text-secondary);
+      border-radius: 999px;
+      padding: 4px 10px;
+      font-size: 12px;
+      line-height: 1;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+
+      &:hover {
+        background: var(--bg-hover);
+        color: var(--text-primary);
+      }
+    }
+
+    .collapse-btn {
+      min-width: 56px;
+      justify-content: center;
+    }
+  }
+
+  .session-image-decrypt-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px;
+    max-height: 220px;
+    overflow: auto;
+  }
+
+  .session-image-decrypt-list-empty {
+    min-height: 88px;
+    border: 1px dashed var(--border-color);
+    border-radius: 10px;
+    background: var(--bg-primary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-tertiary);
+    font-size: 12px;
+  }
+
+  .session-image-decrypt-list-item {
+    border: 1px solid var(--border-color);
+    background: var(--bg-primary);
+    border-radius: 10px;
+    color: var(--text-primary);
+    padding: 8px 10px;
+    min-height: 38px;
+    width: 100%;
+    cursor: pointer;
+    display: grid;
+    grid-template-columns: 18px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px;
+    text-align: left;
+    transition: all 0.15s ease;
+
+    &:hover {
+      background: var(--bg-hover);
+      border-color: rgba(var(--primary-rgb), 0.2);
+    }
+
+    &.selected {
+      background: rgba(var(--primary-rgb), 0.08);
+      border-color: rgba(var(--primary-rgb), 0.28);
+
+      .date-count {
+        color: var(--primary);
+        border-color: rgba(var(--primary-rgb), 0.18);
+        background: rgba(var(--primary-rgb), 0.08);
+      }
+    }
+
+    .check-indicator {
+      width: 16px;
+      height: 16px;
+      border-radius: 5px;
+      border: 1.5px solid var(--border-color);
+      background: var(--bg-primary);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      flex-shrink: 0;
+
+      &.checked {
+        background: var(--primary);
+        border-color: var(--primary);
+      }
+    }
+
+    .date-label {
+      min-width: 0;
+      font-size: 12px;
+      line-height: 1.35;
+      color: var(--text-primary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .date-count {
+      font-size: 11px;
+      line-height: 1;
+      color: var(--text-secondary);
+      border: 1px solid var(--border-color);
+      background: var(--bg-secondary);
+      border-radius: 999px;
+      padding: 4px 8px;
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+    }
+  }
+
+  .session-image-decrypt-list-summary {
+    padding: 0 12px 10px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+  }
+
   .session-image-assets-loading,
   .session-image-assets-empty {
     min-height: 180px;

@@ -598,7 +598,6 @@ function ExportPage() {
   const [isContactExporting, setIsContactExporting] = useState(false)
   const [exportResult, setExportResult] = useState<ExportResult | null>(null)
   const [isSessionImageDecrypting, setIsSessionImageDecrypting] = useState(false)
-  const [showSessionImageDecryptConfirm, setShowSessionImageDecryptConfirm] = useState(false)
   const [sessionImageDecryptTaskSessionId, setSessionImageDecryptTaskSessionId] = useState<string | null>(null)
   const [sessionImageOverviews, setSessionImageOverviews] = useState<Record<string, SessionImageDecryptOverview>>({})
   const [showSessionImageAssetsModal, setShowSessionImageAssetsModal] = useState(false)
@@ -607,6 +606,7 @@ function ExportPage() {
   const [sessionImageAssetsSessionId, setSessionImageAssetsSessionId] = useState<string | null>(null)
   const [sessionImageAssetsSessionName, setSessionImageAssetsSessionName] = useState('')
   const [sessionImageAssets, setSessionImageAssets] = useState<SessionImageAssetItem[]>([])
+  const [sessionImageUndecryptedListCollapsed, setSessionImageUndecryptedListCollapsed] = useState(false)
   const [sessionVideoOverviews, setSessionVideoOverviews] = useState<Record<string, SessionVideoAvailabilityOverview>>({})
   const [showSessionVideoAssetsModal, setShowSessionVideoAssetsModal] = useState(false)
   const [sessionVideoAssetsLoading, setSessionVideoAssetsLoading] = useState(false)
@@ -614,8 +614,6 @@ function ExportPage() {
   const [sessionVideoAssetsSessionId, setSessionVideoAssetsSessionId] = useState<string | null>(null)
   const [sessionVideoAssetsSessionName, setSessionVideoAssetsSessionName] = useState('')
   const [sessionVideoAssets, setSessionVideoAssets] = useState<SessionVideoAssetItem[]>([])
-  const [sessionImageMessages, setSessionImageMessages] = useState<{ imageMd5?: string; imageDatName?: string; createTime?: number }[] | null>(null)
-  const [sessionImageDates, setSessionImageDates] = useState<string[]>([])
   const [sessionImageSelectedDates, setSessionImageSelectedDates] = useState<Set<string>>(new Set())
 
   const [showFormatPicker, setShowFormatPicker] = useState(false)
@@ -2016,7 +2014,16 @@ function ExportPage() {
       const result = await inspectSessionImageAssets(sessionId)
       if (requestId !== sessionImageAssetsRequestIdRef.current) return
 
+      const undecryptedDateSet = new Set<string>()
+      result.assets.forEach(item => {
+        if (!item.decrypted && item.createTime) {
+          undecryptedDateSet.add(new Date(item.createTime * 1000).toISOString().slice(0, 10))
+        }
+      })
+
       setSessionImageAssets(result.assets)
+      setSessionImageUndecryptedListCollapsed(false)
+      setSessionImageSelectedDates(new Set(Array.from(undecryptedDateSet).sort((a, b) => b.localeCompare(a))))
       setSessionImageOverviews(prev => ({
         ...prev,
         [sessionId]: {
@@ -2031,6 +2038,8 @@ function ExportPage() {
     } catch (e) {
       if (requestId !== sessionImageAssetsRequestIdRef.current) return
       setSessionImageAssets([])
+      setSessionImageSelectedDates(new Set())
+      setSessionImageUndecryptedListCollapsed(false)
       setSessionImageAssetsError(String(e))
     } finally {
       if (requestId === sessionImageAssetsRequestIdRef.current) {
@@ -2090,7 +2099,9 @@ function ExportPage() {
 
   const formatImageDecryptDateLabel = useCallback((dateStr: string) => {
     const [y, m, d] = dateStr.split('-').map(Number)
-    return `${y}年${m}月${d}日`
+    const dt = new Date(Date.UTC(y, (m || 1) - 1, d || 1))
+    const weekday = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][dt.getUTCDay()] || ''
+    return `${y}年${m}月${d}日 ${weekday}`
   }, [])
 
   const toggleSessionImageDate = useCallback((date: string) => {
@@ -2102,32 +2113,49 @@ function ExportPage() {
     })
   }, [])
 
+  const decryptedImageAssets = useMemo(
+    () => sessionImageAssets.filter(item => item.decrypted && item.localUrl),
+    [sessionImageAssets]
+  )
+
+  const undecryptedImageAssets = useMemo(
+    () => sessionImageAssets.filter(item => !item.decrypted),
+    [sessionImageAssets]
+  )
+
+  const sessionImageUndecryptedCountByDate = useMemo(() => {
+    const map = new Map<string, number>()
+    undecryptedImageAssets.forEach(img => {
+      if (!img.createTime) return
+      const d = new Date(img.createTime * 1000).toISOString().slice(0, 10)
+      map.set(d, (map.get(d) ?? 0) + 1)
+    })
+    return map
+  }, [undecryptedImageAssets])
+
+  const sessionImageUndecryptedDates = useMemo(
+    () => Array.from(sessionImageUndecryptedCountByDate.keys()).sort((a, b) => b.localeCompare(a)),
+    [sessionImageUndecryptedCountByDate]
+  )
+
   const selectAllSessionImageDates = useCallback(() => {
-    setSessionImageSelectedDates(new Set(sessionImageDates))
-  }, [sessionImageDates])
+    setSessionImageSelectedDates(new Set(sessionImageUndecryptedDates))
+  }, [sessionImageUndecryptedDates])
 
   const clearAllSessionImageDates = useCallback(() => {
     setSessionImageSelectedDates(new Set())
   }, [])
 
-  const sessionImageCountByDate = useMemo(() => {
-    const map = new Map<string, number>()
-    if (!sessionImageMessages) return map
-    sessionImageMessages.forEach(img => {
-      if (img.createTime) {
-        const d = new Date(img.createTime * 1000).toISOString().slice(0, 10)
-        map.set(d, (map.get(d) ?? 0) + 1)
-      }
-    })
-    return map
-  }, [sessionImageMessages])
-
   const selectedSessionImageCount = useMemo(() => {
-    if (!sessionImageMessages) return 0
-    return sessionImageMessages.filter(img =>
+    return undecryptedImageAssets.filter(img =>
       img.createTime && sessionImageSelectedDates.has(new Date(img.createTime * 1000).toISOString().slice(0, 10))
     ).length
-  }, [sessionImageMessages, sessionImageSelectedDates])
+  }, [undecryptedImageAssets, sessionImageSelectedDates])
+
+  const selectedSessionImageDateCount = useMemo(
+    () => sessionImageUndecryptedDates.filter(date => sessionImageSelectedDates.has(date)).length,
+    [sessionImageUndecryptedDates, sessionImageSelectedDates]
+  )
 
   const currentSessionImageOverview = selectedSession ? sessionImageOverviews[selectedSession] : undefined
   const isCurrentSessionImageTaskRunning = Boolean(
@@ -2153,10 +2181,6 @@ function ExportPage() {
     currentSessionImageOverview &&
     currentSessionImageOverview.status !== 'checking' &&
     currentSessionImageUndecryptedCount > 0
-  )
-  const decryptedImageAssets = useMemo(
-    () => sessionImageAssets.filter(item => item.decrypted && item.localUrl),
-    [sessionImageAssets]
   )
   const sessionImageAssetsOverview = useMemo(() => {
     if (!sessionImageAssetsSessionId) return undefined
@@ -2792,39 +2816,19 @@ function ExportPage() {
   }
 
   const openSessionImageDecrypt = async () => {
-    if (!selectedSession || isSessionImageDecrypting) return
-
-    try {
-      const result = await window.electronAPI.chat.getAllImageMessages(selectedSession)
-      if (!result.success || !result.images || result.images.length === 0) {
-        alert(result.error || '当前会话没有图片消息')
-        return
-      }
-
-      const dateSet = new Set<string>()
-      result.images.forEach(img => {
-        if (img.createTime) dateSet.add(new Date(img.createTime * 1000).toISOString().slice(0, 10))
-      })
-      const sortedDates = Array.from(dateSet).sort((a, b) => b.localeCompare(a))
-
-      setSessionImageMessages(result.images)
-      setSessionImageDates(sortedDates)
-      setSessionImageSelectedDates(new Set(sortedDates))
-      setShowSessionImageDecryptConfirm(true)
-    } catch (e) {
-      console.error('加载会话图片失败:', e)
-      alert('加载会话图片失败')
-    }
+    if (!selectedSession) return
+    await openSessionImageAssetsModal(selectedSession)
   }
 
   const confirmSessionImageDecrypt = async () => {
-    if (!selectedSession || !sessionImageMessages) return
+    const targetSessionId = sessionImageAssetsSessionId || selectedSession
+    if (!targetSessionId) return
     if (sessionImageSelectedDates.size === 0) {
       alert('请至少选择一个日期')
       return
     }
 
-    const images = sessionImageMessages.filter(img =>
+    const images = undecryptedImageAssets.filter(img =>
       img.createTime && sessionImageSelectedDates.has(new Date(img.createTime * 1000).toISOString().slice(0, 10))
     )
     if (images.length === 0) {
@@ -2832,19 +2836,14 @@ function ExportPage() {
       return
     }
 
-    const targetSessionId = selectedSession
     const targetSessionName =
+      (sessionImageAssetsSessionId === targetSessionId ? sessionImageAssetsSessionName : '') ||
       sessionDetail?.remark ||
       sessionDetail?.nickName ||
-      (targetSessionId ? sessionByUsername.get(targetSessionId)?.displayName : undefined) ||
+      sessionByUsername.get(targetSessionId)?.displayName ||
       targetSessionId ||
       ''
     const decryptTaskId = `image-decrypt:${targetSessionId}:${Date.now()}`
-
-    setShowSessionImageDecryptConfirm(false)
-    setSessionImageMessages(null)
-    setSessionImageDates([])
-    setSessionImageSelectedDates(new Set())
 
     setIsSessionImageDecrypting(true)
     setSessionImageDecryptTaskSessionId(targetSessionId)
@@ -5036,72 +5035,6 @@ function ExportPage() {
         </div>
       )}
 
-      {/* 会话图片批量解密 - 日期选择弹窗 */}
-      {showSessionImageDecryptConfirm && (
-        <div className="export-overlay" onClick={() => setShowSessionImageDecryptConfirm(false)}>
-          <div className="image-decrypt-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="image-decrypt-modal-header">
-              <div>
-                <h3>批量解密图片</h3>
-                <p>选择需要解密的日期范围（仅展示有图片的日期）</p>
-              </div>
-              <button
-                type="button"
-                className="group-friends-close-btn"
-                onClick={() => setShowSessionImageDecryptConfirm(false)}
-                aria-label="关闭图片解密弹窗"
-              >
-                <X size={16} />
-              </button>
-            </div>
-            <div className="image-decrypt-modal-subtitle">
-              {sessionDetail?.remark || sessionDetail?.nickName || (selectedSession ? sessionByUsername.get(selectedSession)?.displayName : undefined) || selectedSession}
-            </div>
-            <div className="image-decrypt-date-toolbar">
-              <button type="button" onClick={selectAllSessionImageDates}>全选</button>
-              <button type="button" onClick={clearAllSessionImageDates}>清空</button>
-            </div>
-            <div className="image-decrypt-date-grid">
-              {sessionImageDates.length === 0 ? (
-                <div className="group-friends-empty">暂无可选日期</div>
-              ) : (
-                sessionImageDates.map(dateStr => {
-                  const count = sessionImageCountByDate.get(dateStr) ?? 0
-                  const checked = sessionImageSelectedDates.has(dateStr)
-                  return (
-                    <button
-                      key={dateStr}
-                      type="button"
-                      className={`image-decrypt-date-btn ${checked ? 'selected' : ''}`}
-                      onClick={() => toggleSessionImageDate(dateStr)}
-                    >
-                      <span className="date-label">{formatImageDecryptDateLabel(dateStr)}</span>
-                      <span className="date-count">{count} 张</span>
-                    </button>
-                  )
-                })
-              )}
-            </div>
-            <div className="image-decrypt-summary">
-              已选择 {sessionImageSelectedDates.size} 天，共 {selectedSessionImageCount} 张图片
-            </div>
-            <div className="image-decrypt-modal-actions">
-              <button type="button" className="cancel-btn" onClick={() => setShowSessionImageDecryptConfirm(false)}>
-                取消
-              </button>
-              <button
-                type="button"
-                className="confirm-btn"
-                onClick={confirmSessionImageDecrypt}
-                disabled={isSessionImageDecrypting || selectedSessionImageCount === 0}
-              >
-                开始解密
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* 会话视频资产查看弹窗（可用性检查 + 可播放视频） */}
       {showSessionVideoAssetsModal && (
         <div
@@ -5390,13 +5323,10 @@ function ExportPage() {
                   <button
                     type="button"
                     className="session-media-action-btn"
-                    onClick={async () => {
-                      setShowSessionImageAssetsModal(false)
-                      await openSessionImageDecrypt()
-                    }}
-                    disabled={isSessionImageDecrypting}
+                    onClick={() => { void confirmSessionImageDecrypt() }}
+                    disabled={isSessionImageDecrypting || selectedSessionImageCount === 0}
                   >
-                    <span>继续解密</span>
+                    <span>{sessionImageAssetsDecryptedCount > 0 ? '继续解密' : '开始解密'}</span>
                   </button>
                 ) : (
                   <span className="session-media-status-pill success">
@@ -5411,51 +5341,116 @@ function ExportPage() {
               {sessionImageAssetsLoading ? (
                 <div className="session-image-assets-loading">
                   <Loader2 size={14} className="spin" />
-                  <span>正在扫描已解密图片...</span>
+                  <span>正在扫描会话图片...</span>
                 </div>
               ) : sessionImageAssetsError ? (
                 <div className="session-image-assets-empty">
                   <span>加载失败：{sessionImageAssetsError}</span>
                 </div>
-              ) : decryptedImageAssets.length === 0 ? (
+              ) : sessionImageAssetsTotalCount === 0 ? (
                 <div className="session-image-assets-empty">
-                  <span>暂无已解密图片</span>
-                  <small>你可以先点击上方“继续解密”处理当前会话图片。</small>
+                  <span>当前会话暂无图片</span>
                 </div>
               ) : (
-                <div className="session-image-assets-grid">
-                  {decryptedImageAssets
-                    .slice()
-                    .sort((a, b) => (b.createTime || 0) - (a.createTime || 0))
-                    .map((item, index) => (
-                      <button
-                        key={`${item.imageMd5 || 'img'}:${item.imageDatName || index}:${item.createTime || 0}`}
-                        type="button"
-                        className="session-image-assets-item"
-                        onClick={() => item.localPath && window.electronAPI.shell.openPath(item.localPath)}
-                        title="打开图片文件"
-                      >
-                        {item.localUrl ? (
-                          <img
-                            src={item.localUrl}
-                            alt=""
-                            loading="lazy"
-                          />
-                        ) : (
-                          <div className="session-image-assets-placeholder">
-                            <Image size={18} />
-                          </div>
-                        )}
-                        <div className="session-image-assets-item-footer">
-                          <span>
-                            {item.createTime
-                              ? new Date(item.createTime * 1000).toLocaleDateString('zh-CN')
-                              : '未知时间'}
-                          </span>
-                          <ExternalLink size={12} />
+                <div className="session-image-unified-content">
+                  {sessionImageAssetsUndecryptedCount > 0 && (
+                    <div className="session-image-decrypt-list-panel">
+                      <div className="session-image-decrypt-list-header">
+                        <div className="session-image-decrypt-list-title">
+                          <span>未解密图片（按日期）</span>
+                          <span className="count-pill">{sessionImageAssetsUndecryptedCount.toLocaleString()} 张</span>
                         </div>
-                      </button>
-                    ))}
+                        <div className="session-image-decrypt-list-actions">
+                          <button type="button" onClick={selectAllSessionImageDates}>全选</button>
+                          <button type="button" onClick={clearAllSessionImageDates}>清空</button>
+                          <button
+                            type="button"
+                            className="collapse-btn"
+                            onClick={() => setSessionImageUndecryptedListCollapsed(v => !v)}
+                            aria-expanded={!sessionImageUndecryptedListCollapsed}
+                          >
+                            <ChevronDown
+                              size={14}
+                              style={{ transform: sessionImageUndecryptedListCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)', transition: 'transform 0.15s ease' }}
+                            />
+                            <span>{sessionImageUndecryptedListCollapsed ? '展开' : '收起'}</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      {!sessionImageUndecryptedListCollapsed && (
+                        <>
+                          <div className="session-image-decrypt-list">
+                            {sessionImageUndecryptedDates.length === 0 ? (
+                              <div className="session-image-decrypt-list-empty">暂无可选日期</div>
+                            ) : (
+                              sessionImageUndecryptedDates.map(dateStr => {
+                                const count = sessionImageUndecryptedCountByDate.get(dateStr) ?? 0
+                                const checked = sessionImageSelectedDates.has(dateStr)
+                                return (
+                                  <button
+                                    key={dateStr}
+                                    type="button"
+                                    className={`session-image-decrypt-list-item ${checked ? 'selected' : ''}`}
+                                    onClick={() => toggleSessionImageDate(dateStr)}
+                                  >
+                                    <span className={`check-indicator ${checked ? 'checked' : ''}`} aria-hidden="true">
+                                      {checked ? <Check size={12} /> : null}
+                                    </span>
+                                    <span className="date-label">{formatImageDecryptDateLabel(dateStr)}</span>
+                                    <span className="date-count">{count.toLocaleString()} 张</span>
+                                  </button>
+                                )
+                              })
+                            )}
+                          </div>
+                          <div className="session-image-decrypt-list-summary">
+                            已选择 {selectedSessionImageDateCount} 天，共 {selectedSessionImageCount.toLocaleString()} 张图片
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  )}
+
+                  {decryptedImageAssets.length > 0 && (
+                    <div className="session-assets-group">
+                      <div className="session-assets-group-title">已解密图片（{decryptedImageAssets.length}）</div>
+                      <div className="session-image-assets-grid">
+                        {decryptedImageAssets
+                          .slice()
+                          .sort((a, b) => (b.createTime || 0) - (a.createTime || 0))
+                          .map((item, index) => (
+                            <button
+                              key={`${item.imageMd5 || 'img'}:${item.imageDatName || index}:${item.createTime || 0}`}
+                              type="button"
+                              className="session-image-assets-item"
+                              onClick={() => item.localPath && window.electronAPI.shell.openPath(item.localPath)}
+                              title="打开图片文件"
+                            >
+                              {item.localUrl ? (
+                                <img
+                                  src={item.localUrl}
+                                  alt=""
+                                  loading="lazy"
+                                />
+                              ) : (
+                                <div className="session-image-assets-placeholder">
+                                  <Image size={18} />
+                                </div>
+                              )}
+                              <div className="session-image-assets-item-footer">
+                                <span>
+                                  {item.createTime
+                                    ? new Date(item.createTime * 1000).toLocaleDateString('zh-CN')
+                                    : '未知时间'}
+                                </span>
+                                <ExternalLink size={12} />
+                              </div>
+                            </button>
+                          ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
