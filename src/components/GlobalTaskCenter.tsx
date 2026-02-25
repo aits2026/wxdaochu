@@ -22,6 +22,29 @@ function TaskCard({
     ? Math.max(0, Math.min(100, (task.progressCurrent / task.progressTotal) * 100))
     : 0
   const unitLabel = task.unitLabel || (task.kind === 'image-decrypt' ? '张' : '项')
+  const isSingleSessionChatExport = task.kind === 'chat-export' && Boolean(task.sessionId)
+  const hasResultCounts = task.successCount !== undefined || task.failCount !== undefined
+  const resultTotal = (task.successCount || 0) + (task.failCount || 0)
+  const showProgressMeta = !(isFinished && isSingleSessionChatExport && task.progressCurrent === 1 && task.progressTotal === 1)
+  const showResultCounts = hasResultCounts && !(isSingleSessionChatExport && resultTotal <= 1)
+  const displayPhase = !isFinished ? (task.phase || '') : ''
+  const displayCurrentName = task.currentName && task.currentName !== task.sessionName ? task.currentName : ''
+
+  let displayDetail = task.detail || ''
+  if (displayDetail && task.phase) {
+    const detailStartsWithPhase = (
+      displayDetail === task.phase ||
+      displayDetail.startsWith(`${task.phase}，`) ||
+      displayDetail.startsWith(`${task.phase},`) ||
+      displayDetail.startsWith(`${task.phase} `)
+    )
+    if (detailStartsWithPhase) {
+      displayDetail = ''
+    }
+  }
+  if (task.status === 'error' && (displayDetail === '导出失败' || displayDetail === '解密任务失败')) {
+    displayDetail = ''
+  }
 
   return (
     <div className="global-task-center-card">
@@ -56,20 +79,20 @@ function TaskCard({
         {task.kind === 'chat-export' && task.format && (
           <span>格式 {task.format}</span>
         )}
-        {task.progressTotal > 0 && (
+        {task.progressTotal > 0 && showProgressMeta && (
           <span>{task.progressCurrent} / {task.progressTotal} {unitLabel}</span>
         )}
-        {(task.successCount !== undefined || task.failCount !== undefined) && (
+        {showResultCounts && (
           <span>成功 {task.successCount || 0} · 失败 {task.failCount || 0}</span>
         )}
         {isFinished && <span>{formatTaskTime(task.updatedAt)}</span>}
       </div>
 
-      {(task.phase || task.currentName || task.detail) && (
+      {(displayPhase || displayCurrentName || displayDetail) && (
         <div className="global-task-center-detail">
-          {task.phase && <div>{task.phase}</div>}
-          {task.currentName && <div className="muted">当前: {task.currentName}</div>}
-          {task.detail && <div className="muted">{task.detail}</div>}
+          {displayPhase && <div>{displayPhase}</div>}
+          {displayCurrentName && <div className="muted">当前: {displayCurrentName}</div>}
+          {displayDetail && <div className="muted">{displayDetail}</div>}
         </div>
       )}
 

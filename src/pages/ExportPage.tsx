@@ -291,6 +291,7 @@ function ExportPage() {
     exportEmojis: false,
     exportVoices: false
   })
+  const [hideImageDecryptExportTip, setHideImageDecryptExportTip] = useState(false)
 
   // 通讯录导出状态
   const [contacts, setContacts] = useState<Contact[]>([])
@@ -343,6 +344,10 @@ function ExportPage() {
       clearTimeout(identityChipCopyResetTimerRef.current)
       identityChipCopyResetTimerRef.current = null
     }
+  }, [selectedSession])
+
+  useEffect(() => {
+    setHideImageDecryptExportTip(false)
   }, [selectedSession])
 
   const exportChatCacheKey = useMemo(() => {
@@ -1245,6 +1250,16 @@ function ExportPage() {
     currentSessionImageOverview.status === 'complete'
   )
   const hasCurrentSessionDecryptedImages = currentSessionImageDecryptedCount > 0
+  const shouldShowImageDecryptExportTip = Boolean(
+    options.exportImages &&
+    !hideImageDecryptExportTip &&
+    selectedSession &&
+    sessionDetail &&
+    sessionDetail.imageCount > 0 &&
+    currentSessionImageOverview &&
+    currentSessionImageOverview.status !== 'checking' &&
+    currentSessionImageUndecryptedCount > 0
+  )
   const decryptedImageAssets = useMemo(
     () => sessionImageAssets.filter(item => item.decrypted && item.localUrl),
     [sessionImageAssets]
@@ -1653,6 +1668,15 @@ function ExportPage() {
     }
   }
 
+  const handleExportImagesToggle = (checked: boolean) => {
+    setOptions(prev => ({ ...prev, exportImages: checked }))
+    setHideImageDecryptExportTip(false)
+  }
+
+  const handleContinueDirectExportWithImages = () => {
+    setHideImageDecryptExportTip(true)
+  }
+
   const openSessionImageDecrypt = async () => {
     if (!selectedSession || isSessionImageDecrypting) return
 
@@ -1848,7 +1872,7 @@ function ExportPage() {
       format: formatLabel,
       outputDir: exportFolder,
       phase: '正在准备...',
-      detail: '已加入任务中心，可继续操作页面',
+      detail: '可继续操作页面',
       createdAt: Date.now(),
       updatedAt: Date.now()
     })
@@ -1885,7 +1909,7 @@ function ExportPage() {
             successCount: result.successCount ?? 1,
             failCount: result.failCount ?? 0,
             phase: '导出完成',
-            detail: '导出完成，可在任务中心打开导出目录',
+            detail: '',
             outputDir: exportFolder
           })
 
@@ -2821,7 +2845,7 @@ function ExportPage() {
                         <span>导出头像</span>
                       </label>
                       <label className={`checkbox-item checkbox-item-with-count ${(sessionDetail?.imageCount ?? 0) === 0 ? 'is-zero-count' : ''}`}>
-                        <input type="checkbox" checked={options.exportImages} onChange={e => setOptions(prev => ({ ...prev, exportImages: e.target.checked }))} />
+                        <input type="checkbox" checked={options.exportImages} onChange={e => handleExportImagesToggle(e.target.checked)} />
                         <div className="custom-checkbox"></div>
                         <Image size={16} style={{ color: 'var(--text-tertiary)' }} />
                         <div className="checkbox-item-content">
@@ -2829,6 +2853,33 @@ function ExportPage() {
                         </div>
                         <span className="checkbox-item-count">{(sessionDetail?.imageCount ?? 0).toLocaleString()} 条</span>
                       </label>
+                      {shouldShowImageDecryptExportTip && (
+                        <div className="export-image-decrypt-tip" role="note" aria-live="polite">
+                          <div className="export-image-decrypt-tip-body">
+                            <div className="export-image-decrypt-tip-title">建议先批量解密图片，可缩短导出等待时间</div>
+                            <div className="export-image-decrypt-tip-meta">
+                              未解密 {currentSessionImageUndecryptedCount.toLocaleString()} 张
+                            </div>
+                          </div>
+                          <div className="export-image-decrypt-tip-actions">
+                            <button
+                              type="button"
+                              className="tip-primary"
+                              onClick={() => void openSessionImageDecrypt()}
+                              disabled={isSessionImageDecrypting || !selectedSession}
+                            >
+                              先批量解密（推荐）
+                            </button>
+                            <button
+                              type="button"
+                              className="tip-secondary"
+                              onClick={handleContinueDirectExportWithImages}
+                            >
+                              仍然直接导出
+                            </button>
+                          </div>
+                        </div>
+                      )}
                       <label className={`checkbox-item checkbox-item-with-count ${(sessionDetail?.videoCount ?? 0) === 0 ? 'is-zero-count' : ''}`}>
                         <input type="checkbox" checked={options.exportVideos} onChange={e => setOptions(prev => ({ ...prev, exportVideos: e.target.checked }))} />
                         <div className="custom-checkbox"></div>

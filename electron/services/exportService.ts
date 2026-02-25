@@ -2637,6 +2637,74 @@ class ExportService {
       emojiSourceResolutionCache.set(cacheKey, result)
       return result
     }
+    const imageExportConcurrency = 6
+    const pendingImageExportJobs: Array<{
+      createTime: number
+      imageMd5?: string
+      imageDatName?: string
+      mediaMapKey?: string
+    }> = []
+    const processPendingImageExportJob = async (job: {
+      createTime: number
+      imageMd5?: string
+      imageDatName?: string
+      mediaMapKey?: string
+    }) => {
+      try {
+        let imageHandled = false
+        const { createTime, imageMd5, imageDatName, mediaMapKey } = job
+
+        if (imageMd5 || imageDatName) {
+          const cacheResult = await imageDecryptService.decryptImage({
+            sessionId,
+            imageMd5,
+            imageDatName
+          })
+
+          if (cacheResult.success && cacheResult.localPath) {
+            let filePath = cacheResult.localPath
+              .replace(/\?v=\d+$/, '')
+              .replace(/^file:\/\/\//i, '')
+            filePath = decodeURIComponent(filePath)
+
+            if (fs.existsSync(filePath)) {
+              const ext = path.extname(filePath) || '.jpg'
+              const fileName = `${createTime}_${imageMd5 || imageDatName}${ext}`
+              const destPath = path.join(imageOutDir, fileName)
+              try {
+                if (!fs.existsSync(destPath)) {
+                  fs.copyFileSync(filePath, destPath)
+                  imageCount++
+                }
+                this.setMediaPathMapEntry(mediaPathMap, `images/${fileName}`, mediaMapKey, createTime)
+                imageHandled = true
+              } catch {
+                bumpReason(imageFailReasons, 'copy_failed')
+              }
+            } else {
+              bumpReason(imageFailReasons, 'source_missing')
+            }
+          } else {
+            bumpReason(imageFailReasons, 'decrypt_failed')
+          }
+        }
+        if (!imageMd5 && !imageDatName) {
+          bumpReason(imageFailReasons, 'no_identifier')
+        }
+        if (!imageHandled) {
+          imageFailCount++
+        }
+      } catch {
+        imageFailCount++
+        bumpReason(imageFailReasons, 'unknown')
+        // 跳过单张图片的错误
+      } finally {
+        imageProcessed++
+        if (imageTotal > 0 && shouldReportStep(imageProcessed, imageTotal)) {
+          emitMediaProgress(`图片处理: ${imageProcessed}/${imageTotal}（已导出 ${imageCount}）`, imageProcessed, imageTotal, '条')
+        }
+      }
+    }
 
     // 构建查询条件：只查需要的消息类型
     const typeConditions: string[] = []
@@ -2718,66 +2786,17 @@ class ExportService {
 
             // 导出图片
             if (options.exportImages && localType === 3) {
-              imageProcessed++
-              if (imageTotal > 0 && shouldReportStep(imageProcessed, imageTotal)) {
-                emitMediaProgress(`图片处理: ${imageProcessed}/${imageTotal}（已导出 ${imageCount}）`, imageProcessed, imageTotal, '条')
-              }
-              try {
-                let imageHandled = false
-                // 从 XML 提取 md5
-                const imageMd5 = this.extractXmlValue(content, 'md5') ||
-                  (/\<img[^>]*\smd5\s*=\s*['"]([^'"]+)['"]/i.exec(content))?.[1] ||
-                  undefined
-
-                // 从 packed_info_data 解析 dat 文件名（缓存文件以此命名）
-                const imageDatName = this.parseImageDatName(row)
-
-                if (imageMd5 || imageDatName) {
-                  const cacheResult = await imageDecryptService.decryptImage({
-                    sessionId,
-                    imageMd5,
-                    imageDatName
-                  })
-
-                  if (cacheResult.success && cacheResult.localPath) {
-                    // localPath 是 file:///path?v=xxx 格式，转为本地路径
-                    let filePath = cacheResult.localPath
-                      .replace(/\?v=\d+$/, '')
-                      .replace(/^file:\/\/\//i, '')
-                    filePath = decodeURIComponent(filePath)
-
-                    if (fs.existsSync(filePath)) {
-                      const ext = path.extname(filePath) || '.jpg'
-                      const fileName = `${createTime}_${imageMd5 || imageDatName}${ext}`
-                      const destPath = path.join(imageOutDir, fileName)
-                      try {
-                        if (!fs.existsSync(destPath)) {
-                          fs.copyFileSync(filePath, destPath)
-                          imageCount++
-                        }
-                        this.setMediaPathMapEntry(mediaPathMap, `images/${fileName}`, mediaMapKey, createTime)
-                        imageHandled = true
-                      } catch {
-                        bumpReason(imageFailReasons, 'copy_failed')
-                      }
-                    } else {
-                      bumpReason(imageFailReasons, 'source_missing')
-                    }
-                  } else {
-                    bumpReason(imageFailReasons, 'decrypt_failed')
-                  }
-                }
-                if (!imageMd5 && !imageDatName) {
-                  bumpReason(imageFailReasons, 'no_identifier')
-                }
-                if (!imageHandled) {
-                  imageFailCount++
-                }
-              } catch (e) {
-                imageFailCount++
-                bumpReason(imageFailReasons, 'unknown')
-                // 跳过单张图片的错误
-              }
+              const imageMd5 = this.extractXmlValue(content, 'md5') ||
+                (/\<img[^>]*\smd5\s*=\s*['"]([^'"]+)['"]/i.exec(content))?.[1] ||
+                undefined
+              const imageDatName = this.parseImageDatName(row)
+              pendingImageExportJobs.push({
+                createTime,
+                imageMd5,
+                imageDatName,
+                mediaMapKey
+              })
+              continue
             }
 
             // 导出视频
@@ -2914,6 +2933,19 @@ class ExportService {
         } catch (e) {
           console.error(`[Export] 读取媒体消息失败:`, e)
         }
+      }
+
+      if (pendingImageExportJobs.length > 0) {
+        let nextImageJobIndex = 0
+        const workerCount = Math.min(imageExportConcurrency, pendingImageExportJobs.length)
+        // 图片解密/复制走限流并发，避免串行拖慢导出，但不把磁盘打满
+        await Promise.all(Array.from({ length: workerCount }, async () => {
+          while (true) {
+            const jobIndex = nextImageJobIndex++
+            if (jobIndex >= pendingImageExportJobs.length) return
+            await processPendingImageExportJob(pendingImageExportJobs[jobIndex])
+          }
+        }))
       }
     } // 结束 typeConditions > 0
 
