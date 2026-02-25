@@ -84,6 +84,26 @@ interface SessionImageAssetItem {
   decrypted: boolean
 }
 
+interface SessionVideoAvailabilityOverview {
+  total: number
+  readyCount: number
+  thumbOnlyCount: number
+  missingCount: number
+  status: 'idle' | 'checking' | 'ready' | 'partial' | 'error'
+  checkedAt?: number
+}
+
+interface SessionVideoAssetItem {
+  videoMd5?: string
+  createTime?: number
+  videoDuration?: number
+  exists: boolean
+  hasPreview: boolean
+  videoUrl?: string
+  coverUrl?: string
+  thumbUrl?: string
+}
+
 // 会话类型筛选
 type SessionTypeFilter = 'group' | 'private' | 'official'
 
@@ -199,6 +219,13 @@ function ExportPage() {
   const [sessionImageAssetsSessionId, setSessionImageAssetsSessionId] = useState<string | null>(null)
   const [sessionImageAssetsSessionName, setSessionImageAssetsSessionName] = useState('')
   const [sessionImageAssets, setSessionImageAssets] = useState<SessionImageAssetItem[]>([])
+  const [sessionVideoOverviews, setSessionVideoOverviews] = useState<Record<string, SessionVideoAvailabilityOverview>>({})
+  const [showSessionVideoAssetsModal, setShowSessionVideoAssetsModal] = useState(false)
+  const [sessionVideoAssetsLoading, setSessionVideoAssetsLoading] = useState(false)
+  const [sessionVideoAssetsError, setSessionVideoAssetsError] = useState<string | null>(null)
+  const [sessionVideoAssetsSessionId, setSessionVideoAssetsSessionId] = useState<string | null>(null)
+  const [sessionVideoAssetsSessionName, setSessionVideoAssetsSessionName] = useState('')
+  const [sessionVideoAssets, setSessionVideoAssets] = useState<SessionVideoAssetItem[]>([])
   const [sessionImageMessages, setSessionImageMessages] = useState<{ imageMd5?: string; imageDatName?: string; createTime?: number }[] | null>(null)
   const [sessionImageDates, setSessionImageDates] = useState<string[]>([])
   const [sessionImageSelectedDates, setSessionImageSelectedDates] = useState<Set<string>>(new Set())
@@ -284,6 +311,8 @@ function ExportPage() {
   const commonGroupMessageCountsRequestIdRef = useRef(0)
   const sessionImageOverviewRequestIdRef = useRef(0)
   const sessionImageAssetsRequestIdRef = useRef(0)
+  const sessionVideoOverviewRequestIdRef = useRef(0)
+  const sessionVideoAssetsRequestIdRef = useRef(0)
   const sessionTypeFilterRef = useRef<SessionTypeFilter>('private')
   const hasBootstrappedChatCacheRef = useRef(false)
   const bootstrappedChatCacheKeyRef = useRef<string | null>(null)
@@ -896,6 +925,90 @@ function ExportPage() {
     }
   }, [])
 
+  const inspectSessionVideoAssets = useCallback(async (sessionId: string) => {
+    const listResult = await window.electronAPI.chat.getAllVideoMessages(sessionId)
+    if (!listResult.success || !listResult.videos) {
+      throw new Error(listResult.error || '读取会话视频失败')
+    }
+
+    const assets: SessionVideoAssetItem[] = []
+    let readyCount = 0
+    let thumbOnlyCount = 0
+    let missingCount = 0
+
+    for (let i = 0; i < listResult.videos.length; i++) {
+      const video = listResult.videos[i]
+      let exists = false
+      let videoUrl: string | undefined
+      let coverUrl: string | undefined
+      let thumbUrl: string | undefined
+
+      if (video.videoMd5) {
+        try {
+          const infoResult = await window.electronAPI.video.getVideoInfo(video.videoMd5)
+          if (infoResult.success) {
+            exists = Boolean(infoResult.exists)
+            videoUrl = infoResult.videoUrl
+            coverUrl = infoResult.coverUrl
+            thumbUrl = infoResult.thumbUrl
+          }
+        } catch {
+          // 单条检测失败按缺失处理
+        }
+      }
+
+      const hasPreview = Boolean(thumbUrl || coverUrl)
+      if (exists) readyCount++
+      else if (hasPreview) thumbOnlyCount++
+      else missingCount++
+
+      assets.push({
+        ...video,
+        exists,
+        hasPreview,
+        videoUrl,
+        coverUrl,
+        thumbUrl
+      })
+
+      if (i % 20 === 0) {
+        await new Promise(r => setTimeout(r, 0))
+      }
+    }
+
+    return {
+      total: listResult.videos.length,
+      readyCount,
+      thumbOnlyCount,
+      missingCount,
+      assets
+    }
+  }, [])
+
+  const toLocalPathFromFileUrl = useCallback((fileUrl?: string) => {
+    if (!fileUrl) return undefined
+    try {
+      const decoded = decodeURI(fileUrl)
+      if (decoded.startsWith('file:///')) {
+        return decoded.replace(/^file:\/\/\//, '/')
+      }
+      if (decoded.startsWith('file://')) {
+        return decoded.replace(/^file:\/\//, '')
+      }
+      return decoded
+    } catch {
+      return fileUrl
+    }
+  }, [])
+
+  const formatVideoDurationLabel = useCallback((seconds?: number) => {
+    if (!seconds || Number.isNaN(seconds)) return ''
+    const totalSeconds = Math.max(0, Math.floor(seconds))
+    const mm = Math.floor(totalSeconds / 60)
+    const ss = totalSeconds % 60
+    return `${mm}:${String(ss).padStart(2, '0')}`
+  }, [])
+
   const refreshSessionImageOverview = useCallback(async (sessionId: string) => {
     const requestId = ++sessionImageOverviewRequestIdRef.current
 
@@ -939,6 +1052,52 @@ function ExportPage() {
     }
   }, [inspectSessionImageAssets])
 
+  const refreshSessionVideoOverview = useCallback(async (sessionId: string) => {
+    const requestId = ++sessionVideoOverviewRequestIdRef.current
+
+    setSessionVideoOverviews(prev => ({
+      ...prev,
+      [sessionId]: {
+        total: prev[sessionId]?.total || 0,
+        readyCount: prev[sessionId]?.readyCount || 0,
+        thumbOnlyCount: prev[sessionId]?.thumbOnlyCount || 0,
+        missingCount: prev[sessionId]?.missingCount || 0,
+        status: 'checking',
+        checkedAt: prev[sessionId]?.checkedAt,
+      }
+    }))
+
+    try {
+      const result = await inspectSessionVideoAssets(sessionId)
+      if (requestId !== sessionVideoOverviewRequestIdRef.current) return
+
+      setSessionVideoOverviews(prev => ({
+        ...prev,
+        [sessionId]: {
+          total: result.total,
+          readyCount: result.readyCount,
+          thumbOnlyCount: result.thumbOnlyCount,
+          missingCount: result.missingCount,
+          status: result.total > 0 && result.missingCount === 0 && result.thumbOnlyCount === 0 ? 'ready' : 'partial',
+          checkedAt: Date.now(),
+        }
+      }))
+    } catch {
+      if (requestId !== sessionVideoOverviewRequestIdRef.current) return
+      setSessionVideoOverviews(prev => ({
+        ...prev,
+        [sessionId]: {
+          total: prev[sessionId]?.total || 0,
+          readyCount: prev[sessionId]?.readyCount || 0,
+          thumbOnlyCount: prev[sessionId]?.thumbOnlyCount || 0,
+          missingCount: prev[sessionId]?.missingCount || 0,
+          status: 'error',
+          checkedAt: Date.now(),
+        }
+      }))
+    }
+  }, [inspectSessionVideoAssets])
+
   const openSessionImageAssetsModal = useCallback(async () => {
     if (!selectedSession) return
 
@@ -975,6 +1134,44 @@ function ExportPage() {
       }
     }
   }, [getSessionDisplayName, inspectSessionImageAssets, selectedSession])
+
+  const openSessionVideoAssetsModal = useCallback(async () => {
+    if (!selectedSession) return
+
+    const sessionId = selectedSession
+    const requestId = ++sessionVideoAssetsRequestIdRef.current
+    setShowSessionVideoAssetsModal(true)
+    setSessionVideoAssetsLoading(true)
+    setSessionVideoAssetsError(null)
+    setSessionVideoAssetsSessionId(sessionId)
+    setSessionVideoAssetsSessionName(getSessionDisplayName(sessionId))
+
+    try {
+      const result = await inspectSessionVideoAssets(sessionId)
+      if (requestId !== sessionVideoAssetsRequestIdRef.current) return
+
+      setSessionVideoAssets(result.assets)
+      setSessionVideoOverviews(prev => ({
+        ...prev,
+        [sessionId]: {
+          total: result.total,
+          readyCount: result.readyCount,
+          thumbOnlyCount: result.thumbOnlyCount,
+          missingCount: result.missingCount,
+          status: result.total > 0 && result.missingCount === 0 && result.thumbOnlyCount === 0 ? 'ready' : 'partial',
+          checkedAt: Date.now(),
+        }
+      }))
+    } catch (e) {
+      if (requestId !== sessionVideoAssetsRequestIdRef.current) return
+      setSessionVideoAssets([])
+      setSessionVideoAssetsError(String(e))
+    } finally {
+      if (requestId === sessionVideoAssetsRequestIdRef.current) {
+        setSessionVideoAssetsLoading(false)
+      }
+    }
+  }, [getSessionDisplayName, inspectSessionVideoAssets, selectedSession])
 
   const formatImageDecryptDateLabel = useCallback((dateStr: string) => {
     const [y, m, d] = dateStr.split('-').map(Number)
@@ -1043,6 +1240,36 @@ function ExportPage() {
   const sessionImageAssetsTotalCount = sessionImageAssetsOverview?.total ?? sessionImageAssets.length
   const sessionImageAssetsDecryptedCount = sessionImageAssetsOverview?.decryptedCount ?? decryptedImageAssets.length
   const sessionImageAssetsUndecryptedCount = sessionImageAssetsOverview?.undecryptedCount ?? Math.max(0, sessionImageAssetsTotalCount - sessionImageAssetsDecryptedCount)
+  const currentSessionVideoOverview = selectedSession ? sessionVideoOverviews[selectedSession] : undefined
+  const currentSessionVideoReadyCount = currentSessionVideoOverview?.readyCount || 0
+  const currentSessionVideoThumbOnlyCount = currentSessionVideoOverview?.thumbOnlyCount || 0
+  const currentSessionVideoMissingCount = currentSessionVideoOverview?.missingCount || 0
+  const currentSessionAllVideosReady = Boolean(
+    sessionDetail &&
+    sessionDetail.videoCount > 0 &&
+    currentSessionVideoOverview &&
+    currentSessionVideoOverview.total === sessionDetail.videoCount &&
+    currentSessionVideoOverview.thumbOnlyCount === 0 &&
+    currentSessionVideoOverview.missingCount === 0 &&
+    currentSessionVideoOverview.status === 'ready'
+  )
+  const hasCurrentSessionVideoPreviews = (currentSessionVideoReadyCount + currentSessionVideoThumbOnlyCount) > 0
+  const readySessionVideoAssets = useMemo(
+    () => sessionVideoAssets.filter(item => item.exists && item.videoUrl),
+    [sessionVideoAssets]
+  )
+  const thumbOnlySessionVideoAssets = useMemo(
+    () => sessionVideoAssets.filter(item => !item.exists && item.hasPreview),
+    [sessionVideoAssets]
+  )
+  const sessionVideoAssetsOverview = useMemo(() => {
+    if (!sessionVideoAssetsSessionId) return undefined
+    return sessionVideoOverviews[sessionVideoAssetsSessionId]
+  }, [sessionVideoAssetsSessionId, sessionVideoOverviews])
+  const sessionVideoAssetsTotalCount = sessionVideoAssetsOverview?.total ?? sessionVideoAssets.length
+  const sessionVideoAssetsReadyCount = sessionVideoAssetsOverview?.readyCount ?? readySessionVideoAssets.length
+  const sessionVideoAssetsThumbOnlyCount = sessionVideoAssetsOverview?.thumbOnlyCount ?? thumbOnlySessionVideoAssets.length
+  const sessionVideoAssetsMissingCount = sessionVideoAssetsOverview?.missingCount ?? Math.max(0, sessionVideoAssetsTotalCount - sessionVideoAssetsReadyCount - sessionVideoAssetsThumbOnlyCount)
   const imageDecryptTaskExists = Boolean(sessionImageDecryptTaskSessionId && sessionImageDecryptProgress.total > 0)
   const imageDecryptTaskRecord = imageDecryptTaskExists ? {
     id: `image-decrypt:${sessionImageDecryptTaskSessionId}`,
@@ -1245,6 +1472,8 @@ function ExportPage() {
     groupFriendMessageCountsRequestIdRef.current++
     commonGroupMessageCountsRequestIdRef.current++
     sessionImageAssetsRequestIdRef.current++
+    sessionVideoAssetsRequestIdRef.current++
+    sessionVideoOverviewRequestIdRef.current++
     setSelectedSession(username)
     setShowExportSettings(false)
     setShowGroupFriendsPopup(false)
@@ -1262,6 +1491,12 @@ function ExportPage() {
     setSessionImageAssetsLoading(false)
     setSessionImageAssetsSessionId(null)
     setSessionImageAssetsSessionName('')
+    setShowSessionVideoAssetsModal(false)
+    setSessionVideoAssets([])
+    setSessionVideoAssetsError(null)
+    setSessionVideoAssetsLoading(false)
+    setSessionVideoAssetsSessionId(null)
+    setSessionVideoAssetsSessionName('')
     setSessionDetail(null)
     setShowSessionImageDecryptConfirm(false)
     setSessionImageMessages(null)
@@ -2148,7 +2383,7 @@ function ExportPage() {
                                 {([
                                   { icon: <Image size={13} />, label: '图片', count: sessionDetail.imageCount, action: 'decrypt' as const },
                                   { icon: <Smile size={13} />, label: '表情', count: sessionDetail.emojiCount },
-                                  { icon: <Video size={13} />, label: '视频', count: sessionDetail.videoCount },
+                                  { icon: <Video size={13} />, label: '视频', count: sessionDetail.videoCount, action: 'check-video' as const },
                                   { icon: <Mic size={13} />, label: '语音', count: sessionDetail.voiceCount },
                                 ] as const).filter(item => item.count > 0).map(item => (
                                   <div key={item.label} style={{
@@ -2166,50 +2401,120 @@ function ExportPage() {
                                         {item.icon}
                                         <span>{item.label}</span>
                                       </div>
-                                      {item.action === 'decrypt' && (
+                                      {(item.action === 'decrypt' || item.action === 'check-video') && (
                                         <div className="session-media-image-actions">
-                                          {isCurrentSessionImageTaskRunning ? (
-                                            <span className="session-media-status-pill running">
-                                              <Loader2 size={11} className="spin" />
-                                              <span>解密中</span>
-                                            </span>
-                                          ) : currentSessionImageOverview?.status === 'checking' ? (
-                                            <span className="session-media-status-pill checking">
-                                              <Loader2 size={11} className="spin" />
-                                              <span>检查中</span>
-                                            </span>
-                                          ) : hasCurrentSessionDecryptedImages ? (
-                                            <>
+                                          {item.action === 'decrypt' ? (
+                                            isCurrentSessionImageTaskRunning ? (
+                                              <span className="session-media-status-pill running">
+                                                <Loader2 size={11} className="spin" />
+                                                <span>解密中</span>
+                                              </span>
+                                            ) : currentSessionImageOverview?.status === 'checking' ? (
+                                              <span className="session-media-status-pill checking">
+                                                <Loader2 size={11} className="spin" />
+                                                <span>检查中</span>
+                                              </span>
+                                            ) : hasCurrentSessionDecryptedImages ? (
+                                              <>
+                                                <button
+                                                  type="button"
+                                                  className="session-media-action-btn"
+                                                  onClick={openSessionImageAssetsModal}
+                                                  disabled={!selectedSession}
+                                                  title="查看已解密图片"
+                                                >
+                                                  <span>查看图片</span>
+                                                </button>
+                                                {currentSessionAllImagesDecrypted ? (
+                                                  <span className="session-media-status-pill success">
+                                                    <CheckCircle size={11} />
+                                                    <span>已解密</span>
+                                                  </span>
+                                                ) : (
+                                                  <span className="session-media-status-pill warning">
+                                                    <span>未解密 {currentSessionImageUndecryptedCount}</span>
+                                                  </span>
+                                                )}
+                                              </>
+                                            ) : (
                                               <button
                                                 type="button"
                                                 className="session-media-action-btn"
-                                                onClick={openSessionImageAssetsModal}
-                                                disabled={!selectedSession}
-                                                title="查看已解密图片"
+                                                onClick={openSessionImageDecrypt}
+                                                disabled={isSessionImageDecrypting || !selectedSession}
+                                                title="批量解密该会话图片"
                                               >
-                                                <span>查看图片</span>
+                                                <span>解密</span>
                                               </button>
-                                              {currentSessionAllImagesDecrypted ? (
-                                                <span className="session-media-status-pill success">
-                                                  <CheckCircle size={11} />
-                                                  <span>已解密</span>
-                                                </span>
-                                              ) : (
-                                                <span className="session-media-status-pill warning">
-                                                  <span>未解密 {currentSessionImageUndecryptedCount}</span>
-                                                </span>
-                                              )}
-                                            </>
+                                            )
                                           ) : (
-                                            <button
-                                              type="button"
-                                              className="session-media-action-btn"
-                                              onClick={openSessionImageDecrypt}
-                                              disabled={isSessionImageDecrypting || !selectedSession}
-                                              title="批量解密该会话图片"
-                                            >
-                                              <span>解密</span>
-                                            </button>
+                                            currentSessionVideoOverview?.status === 'checking' || sessionVideoAssetsLoading ? (
+                                              <span className="session-media-status-pill checking">
+                                                <Loader2 size={11} className="spin" />
+                                                <span>检查中</span>
+                                              </span>
+                                            ) : currentSessionVideoOverview?.status === 'error' ? (
+                                              <button
+                                                type="button"
+                                                className="session-media-action-btn"
+                                                onClick={() => selectedSession && void refreshSessionVideoOverview(selectedSession)}
+                                                disabled={!selectedSession}
+                                                title="重新检查该会话视频文件"
+                                              >
+                                                <span>重试</span>
+                                              </button>
+                                            ) : hasCurrentSessionVideoPreviews ? (
+                                              <>
+                                                <button
+                                                  type="button"
+                                                  className="session-media-action-btn"
+                                                  onClick={openSessionVideoAssetsModal}
+                                                  disabled={!selectedSession}
+                                                  title="查看可用视频"
+                                                >
+                                                  <span>查看视频</span>
+                                                </button>
+                                                {currentSessionVideoMissingCount > 0 ? (
+                                                  <span className="session-media-status-pill warning">
+                                                    <span>缺失 {currentSessionVideoMissingCount}</span>
+                                                  </span>
+                                                ) : currentSessionVideoThumbOnlyCount > 0 ? (
+                                                  <span className="session-media-status-pill warning">
+                                                    <span>仅缩略图 {currentSessionVideoThumbOnlyCount}</span>
+                                                  </span>
+                                                ) : currentSessionAllVideosReady ? (
+                                                  <span className="session-media-status-pill success">
+                                                    <CheckCircle size={11} />
+                                                    <span>已就绪</span>
+                                                  </span>
+                                                )}
+                                              </>
+                                            ) : currentSessionVideoOverview?.status === 'partial' ? (
+                                              <>
+                                                <button
+                                                  type="button"
+                                                  className="session-media-action-btn"
+                                                  onClick={() => selectedSession && void refreshSessionVideoOverview(selectedSession)}
+                                                  disabled={!selectedSession}
+                                                  title="重新检查该会话视频文件"
+                                                >
+                                                  <span>重试</span>
+                                                </button>
+                                                <span className="session-media-status-pill warning">
+                                                  <span>缺失 {currentSessionVideoMissingCount}</span>
+                                                </span>
+                                              </>
+                                            ) : (
+                                              <button
+                                                type="button"
+                                                className="session-media-action-btn"
+                                                onClick={() => selectedSession && void refreshSessionVideoOverview(selectedSession)}
+                                                disabled={!selectedSession}
+                                                title="检查该会话视频文件可用性"
+                                              >
+                                                <span>检查</span>
+                                              </button>
+                                            )
                                           )}
                                         </div>
                                       )}
@@ -2915,6 +3220,206 @@ function ExportPage() {
               >
                 开始解密
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 会话视频资产查看弹窗（可用性检查 + 可播放视频） */}
+      {showSessionVideoAssetsModal && (
+        <div
+          className="export-overlay"
+          onClick={() => setShowSessionVideoAssetsModal(false)}
+        >
+          <div className="session-image-assets-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="session-image-assets-header">
+              <div>
+                <h3>会话视频</h3>
+                <p>查看可用视频，并检查缺失视频文件</p>
+              </div>
+              <button
+                type="button"
+                className="group-friends-close-btn"
+                onClick={() => setShowSessionVideoAssetsModal(false)}
+                aria-label="关闭会话视频弹窗"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="session-image-assets-subtitle">
+              {sessionVideoAssetsSessionName || sessionVideoAssetsSessionId || selectedSession}
+            </div>
+
+            <div className="session-image-assets-toolbar">
+              <div className="session-image-assets-stats">
+                <div className="session-image-assets-stat">
+                  <span className="label">总数</span>
+                  <strong>{sessionVideoAssetsTotalCount.toLocaleString()}</strong>
+                </div>
+                <div className="session-image-assets-stat success">
+                  <span className="label">已就绪</span>
+                  <strong>{sessionVideoAssetsReadyCount.toLocaleString()}</strong>
+                </div>
+                <div className="session-image-assets-stat info">
+                  <span className="label">仅缩略图</span>
+                  <strong>{sessionVideoAssetsThumbOnlyCount.toLocaleString()}</strong>
+                </div>
+                <div className="session-image-assets-stat warning">
+                  <span className="label">缺失</span>
+                  <strong>{sessionVideoAssetsMissingCount.toLocaleString()}</strong>
+                </div>
+              </div>
+              <div className="session-image-assets-actions">
+                {sessionVideoAssetsLoading ? (
+                  <span className="session-media-status-pill checking">
+                    <Loader2 size={11} className="spin" />
+                    <span>检查中</span>
+                  </span>
+                ) : sessionVideoAssetsError ? (
+                  <button
+                    type="button"
+                    className="session-media-action-btn"
+                    onClick={() => { void openSessionVideoAssetsModal() }}
+                    disabled={!selectedSession}
+                  >
+                    <span>重试</span>
+                  </button>
+                ) : sessionVideoAssetsMissingCount > 0 ? (
+                  <button
+                    type="button"
+                    className="session-media-action-btn"
+                    onClick={() => { void openSessionVideoAssetsModal() }}
+                    disabled={!selectedSession}
+                  >
+                    <span>重新检查</span>
+                  </button>
+                ) : sessionVideoAssetsThumbOnlyCount > 0 ? (
+                  <span className="session-media-status-pill warning">
+                    <span>仅缩略图 {sessionVideoAssetsThumbOnlyCount}</span>
+                  </span>
+                ) : (
+                  <span className="session-media-status-pill success">
+                    <CheckCircle size={11} />
+                    <span>已全部就绪</span>
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div className="session-image-assets-content">
+              {sessionVideoAssetsLoading ? (
+                <div className="session-image-assets-loading">
+                  <Loader2 size={14} className="spin" />
+                  <span>正在检查会话视频...</span>
+                </div>
+              ) : sessionVideoAssetsError ? (
+                <div className="session-image-assets-empty">
+                  <span>加载失败：{sessionVideoAssetsError}</span>
+                </div>
+              ) : (readySessionVideoAssets.length === 0 && thumbOnlySessionVideoAssets.length === 0) ? (
+                <div className="session-image-assets-empty">
+                  <span>暂无可用视频预览</span>
+                  <small>点击上方“重新检查”可再次扫描当前会话视频文件。</small>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                  {readySessionVideoAssets.length > 0 && (
+                    <div className="session-assets-group">
+                      <div className="session-assets-group-title">可播放视频（{readySessionVideoAssets.length}）</div>
+                      <div className="session-image-assets-grid">
+                        {readySessionVideoAssets
+                          .slice()
+                          .sort((a, b) => (b.createTime || 0) - (a.createTime || 0))
+                          .map((item, index) => {
+                            const localVideoPath = toLocalPathFromFileUrl(item.videoUrl)
+                            const dateLabel = item.createTime
+                              ? new Date(item.createTime * 1000).toLocaleDateString('zh-CN')
+                              : '未知时间'
+                            const durationLabel = formatVideoDurationLabel(item.videoDuration)
+
+                            return (
+                              <button
+                                key={`${item.videoMd5 || 'video'}:${index}:${item.createTime || 0}`}
+                                type="button"
+                                className="session-image-assets-item"
+                                onClick={() => localVideoPath && window.electronAPI.shell.openPath(localVideoPath)}
+                                title="打开视频文件"
+                              >
+                                {item.thumbUrl || item.coverUrl ? (
+                                  <img
+                                    src={item.thumbUrl || item.coverUrl}
+                                    alt=""
+                                    loading="lazy"
+                                  />
+                                ) : (
+                                  <div className="session-image-assets-placeholder">
+                                    <Video size={18} />
+                                  </div>
+                                )}
+                                <div className="session-image-assets-item-footer" style={{ justifyContent: 'space-between' }}>
+                                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', minWidth: 0 }}>
+                                    <span>{dateLabel}</span>
+                                    {durationLabel && (
+                                      <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{durationLabel}</span>
+                                    )}
+                                  </div>
+                                  <ExternalLink size={12} />
+                                </div>
+                              </button>
+                            )
+                          })}
+                      </div>
+                    </div>
+                  )}
+
+                  {thumbOnlySessionVideoAssets.length > 0 && (
+                    <div className="session-assets-group">
+                      <div className="session-assets-group-title">仅缩略图（{thumbOnlySessionVideoAssets.length}）</div>
+                      <div className="session-image-assets-grid">
+                        {thumbOnlySessionVideoAssets
+                          .slice()
+                          .sort((a, b) => (b.createTime || 0) - (a.createTime || 0))
+                          .map((item, index) => {
+                            const dateLabel = item.createTime
+                              ? new Date(item.createTime * 1000).toLocaleDateString('zh-CN')
+                              : '未知时间'
+                            const durationLabel = formatVideoDurationLabel(item.videoDuration)
+
+                            return (
+                              <div
+                                key={`${item.videoMd5 || 'video-thumb'}:${index}:${item.createTime || 0}`}
+                                className="session-image-assets-item is-disabled"
+                                title="仅保留缩略图，视频源文件缺失"
+                              >
+                                {item.thumbUrl || item.coverUrl ? (
+                                  <img
+                                    src={item.thumbUrl || item.coverUrl}
+                                    alt=""
+                                    loading="lazy"
+                                  />
+                                ) : (
+                                  <div className="session-image-assets-placeholder">
+                                    <Video size={18} />
+                                  </div>
+                                )}
+                                <div className="session-image-assets-item-footer" style={{ justifyContent: 'space-between' }}>
+                                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', minWidth: 0 }}>
+                                    <span>{dateLabel}</span>
+                                    {durationLabel && (
+                                      <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{durationLabel}</span>
+                                    )}
+                                  </div>
+                                  <span className="session-assets-preview-badge">仅缩略图</span>
+                                </div>
+                              </div>
+                            )
+                          })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </div>

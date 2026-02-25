@@ -1871,6 +1871,10 @@ function registerIpcHandlers() {
     return chatService.getAllImageMessages(sessionId)
   })
 
+  ipcMain.handle('chat:getAllVideoMessages', async (_, sessionId: string) => {
+    return chatService.getAllVideoMessages(sessionId)
+  })
+
   ipcMain.handle('chat:getContact', async (_, username: string) => {
     return chatService.getContact(username)
   })

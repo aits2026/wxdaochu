@@ -219,6 +219,11 @@ export interface ElectronAPI {
       images?: { imageMd5?: string; imageDatName?: string; createTime?: number }[];
       error?: string
     }>
+    getAllVideoMessages: (sessionId: string) => Promise<{
+      success: boolean;
+      videos?: { videoMd5?: string; createTime?: number; videoDuration?: number }[];
+      error?: string
+    }>
     getContact: (username: string) => Promise<Contact | null>
     getContactAvatar: (username: string) => Promise<{ avatarUrl?: string; displayName?: string } | null>
     resolveTransferDisplayNames: (chatroomId: string, payerUsername: string, receiverUsername: string) => Promise<{ payerName: string; receiverName: string }>

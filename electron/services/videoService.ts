@@ -189,21 +189,38 @@ class VideoService {
         })
         .sort((a, b) => b.localeCompare(a)) // 从最新的目录开始查�?
 
+      let previewFallback: { coverUrl?: string; thumbUrl?: string } | null = null
+
       for (const yearMonth of yearMonthDirs) {
         const dirPath = join(videoBaseDir, yearMonth)
 
         const videoPath = join(dirPath, `${realVideoMd5}.mp4`)
         const coverPath = join(dirPath, `${realVideoMd5}.jpg`)
         const thumbPath = join(dirPath, `${realVideoMd5}_thumb.jpg`)
+        const coverUrl = this.fileToDataUrl(coverPath, 'image/jpeg')
+        const thumbUrl = this.fileToDataUrl(thumbPath, 'image/jpeg')
 
         // 检查视频文件是否存�?
         if (existsSync(videoPath)) {
           return {
             videoUrl: `file:///${videoPath.replace(/\\/g, '/')}`,  // 转换为 file:// 协议
-            coverUrl: this.fileToDataUrl(coverPath, 'image/jpeg'),
-            thumbUrl: this.fileToDataUrl(thumbPath, 'image/jpeg'),
+            coverUrl,
+            thumbUrl,
             exists: true
           }
+        }
+
+        // 记录仅缩略图/封面可用的兜底结果（优先较新的目录）
+        if (!previewFallback && (coverUrl || thumbUrl)) {
+          previewFallback = { coverUrl, thumbUrl }
+        }
+      }
+
+      if (previewFallback) {
+        return {
+          exists: false,
+          coverUrl: previewFallback.coverUrl,
+          thumbUrl: previewFallback.thumbUrl
         }
       }
     } catch {

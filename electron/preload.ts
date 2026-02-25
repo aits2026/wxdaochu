@@ -225,6 +225,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('chat:getAllVoiceMessages', sessionId),
     getAllImageMessages: (sessionId: string) =>
       ipcRenderer.invoke('chat:getAllImageMessages', sessionId),
+    getAllVideoMessages: (sessionId: string) =>
+      ipcRenderer.invoke('chat:getAllVideoMessages', sessionId),
     getContact: (username: string) => ipcRenderer.invoke('chat:getContact', username),
     getContactAvatar: (username: string) => ipcRenderer.invoke('chat:getContactAvatar', username),
     resolveTransferDisplayNames: (chatroomId: string, payerUsername: string, receiverUsername: string) =>

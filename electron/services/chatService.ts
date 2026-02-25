@@ -1669,6 +1669,78 @@ class ChatService extends EventEmitter {
   }
 
   /**
+   * 获取会话的所有视频消息（用于可用性检查）
+   */
+  async getAllVideoMessages(
+    sessionId: string
+  ): Promise<{ success: boolean; videos?: { videoMd5?: string; createTime?: number; videoDuration?: number }[]; error?: string }> {
+    try {
+      if (!this.dbDir) {
+        const connectResult = await this.connect()
+        if (!connectResult.success) {
+          return { success: false, error: connectResult.error || '数据库未连接' }
+        }
+      }
+
+      const dbTablePairs = this.findSessionTables(sessionId)
+      if (dbTablePairs.length === 0) {
+        return { success: false, error: '未找到该会话的消息表' }
+      }
+
+      const videos: { videoMd5?: string; createTime?: number; videoDuration?: number }[] = []
+
+      for (const { db, tableName } of dbTablePairs) {
+        try {
+          const columns = db.prepare(`PRAGMA table_info('${tableName}')`).all() as any[]
+          const columnNames = columns.map((c: any) => c.name.toLowerCase())
+          const hasLocalTypeColumn = columnNames.includes('local_type')
+          const hasTypeColumn = columnNames.includes('type')
+
+          let typeCondition = ''
+          if (hasLocalTypeColumn && hasTypeColumn) {
+            typeCondition = '(local_type = 43 OR type = 43)'
+          } else if (hasLocalTypeColumn) {
+            typeCondition = 'local_type = 43'
+          } else if (hasTypeColumn) {
+            typeCondition = 'type = 43'
+          } else {
+            continue
+          }
+
+          const rows = db.prepare(
+            `SELECT * FROM ${tableName} WHERE ${typeCondition}`
+          ).all() as any[]
+
+          for (const row of rows) {
+            const content = this.decodeMessageContent(row.message_content, row.compress_content)
+            const videoMd5 = this.parseVideoMd5(content)
+            const videoDuration = this.parseVideoDuration(content)
+            if (videoMd5) {
+              videos.push({ videoMd5, createTime: row.create_time, videoDuration })
+            }
+          }
+        } catch (e: any) {
+          console.error('[ChatService] 查询视频消息失败:', e)
+        }
+      }
+
+      const seen = new Set<string>()
+      const unique = videos.filter(video => {
+        const key = video.videoMd5 || ''
+        if (!key || seen.has(key)) return false
+        seen.add(key)
+        return true
+      })
+
+      console.log(`[ChatService] 共找到 ${unique.length} 条视频消息（去重后）`)
+      return { success: true, videos: unique }
+    } catch (e) {
+      console.error('[ChatService] 获取所有视频消息失败:', e)
+      return { success: false, error: String(e) }
+    }
+  }
+
+  /**
    * 根据日期获取消息（用于日期跳转）
    * @param sessionId 会话ID
    * @param targetTimestamp 目标日期的 Unix 时间戳（秒）
