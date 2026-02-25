@@ -1590,6 +1590,26 @@ document.querySelectorAll('.vi video').forEach(function(v) {
     return acc
   }, {})
 
+  const selectedUsername = selectedUsernames.length === 1 ? selectedUsernames[0] : ''
+  const selectedContact = selectedUsername ? contacts.find(c => c.username === selectedUsername) : undefined
+  const selectedContactSamplePost = selectedUsername ? posts.find(p => p.username === selectedUsername) : undefined
+  const selectedPresetLabel = activeUserPresetFilter && activeUserPresetFilter.username === selectedUsername
+    ? activeUserPresetFilter.label
+    : ''
+  const selectedContactHeaderLabel = (
+    (selectedPresetLabel === '我的朋友圈' ? selectedPresetLabel : selectedPresetLabel.replace(/的朋友圈$/, '').trim())
+    || selectedContact?.displayName
+    || selectedContactSamplePost?.nickname
+    || selectedUsername
+  )
+  const selectedContactAvatarUrl = selectedContact?.avatarUrl || selectedContactSamplePost?.avatarUrl
+  const selectedContactLoadedCount = selectedUsername ? (loadedPostCounts[selectedUsername] ?? 0) : 0
+  const selectedContactTotalCountDisplay = selectedUsername
+    ? (snsUserPostCountsStatus === 'ready'
+      ? `${(snsUserPostCounts[selectedUsername] ?? 0).toLocaleString()}`
+      : '--')
+    : '--'
+
   const filteredContacts = contacts
     .filter(c =>
       c.displayName.toLowerCase().includes(contactSearch.toLowerCase()) ||
@@ -1760,6 +1780,24 @@ document.querySelectorAll('.vi video').forEach(function(v) {
             )}
 
             <div className="moments-content custom-scrollbar">
+              {selectedUsername && (
+                <div className="single-contact-timeline-header">
+                  <div className="timeline-contact-avatar">
+                    {selectedContactAvatarUrl ? (
+                      <img src={selectedContactAvatarUrl} alt="" />
+                    ) : (
+                      <div className="avatar-placeholder">{(selectedContactHeaderLabel || selectedUsername || '?')[0]}</div>
+                    )}
+                  </div>
+                  <div className="timeline-contact-meta">
+                    <div className="timeline-contact-name">{selectedContactHeaderLabel}</div>
+                    <div className="timeline-contact-stats">
+                      <span>总数 {selectedContactTotalCountDisplay} 条</span>
+                      <span>已加载 {selectedContactLoadedCount.toLocaleString()} 条</span>
+                    </div>
+                  </div>
+                </div>
+              )}
               {shouldWaitForContactListBeforeLoadingPosts ? (
                 <div className="moments-placeholder">
                   <Search size={64} opacity={0.3} />
@@ -1811,15 +1849,7 @@ document.querySelectorAll('.vi video').forEach(function(v) {
                   {posts.map((post) => (
                     <div key={post.id} className={`post-item ${deletedPostIds.has(post.id) ? 'post-deleted' : ''}`}>
                       <div className="post-header">
-                        <div className="post-avatar">
-                          {post.avatarUrl ? (
-                            <img src={post.avatarUrl} alt="" />
-                          ) : (
-                            <div className="avatar-placeholder">{post.nickname[0]}</div>
-                          )}
-                        </div>
-                        <div className="post-info">
-                          <div className="post-nickname">{post.nickname}</div>
+                        <div className="post-meta">
                           <div className="post-time">{formatTime(post.createTime)}</div>
                         </div>
                         <div className="post-header-actions">

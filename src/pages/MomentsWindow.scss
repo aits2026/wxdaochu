@@ -427,6 +427,84 @@
     overflow-x: hidden;
     padding: 16px;
   }
+
+  .single-contact-timeline-header {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    max-width: 700px;
+    margin: 0 auto 14px;
+    padding: 12px 14px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.04);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+
+    .timeline-contact-avatar {
+      width: 40px;
+      height: 40px;
+      border-radius: 10px;
+      overflow: hidden;
+      flex-shrink: 0;
+      background: var(--bg-tertiary);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+
+      img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+
+      .avatar-placeholder {
+        color: var(--text-secondary);
+        font-size: 15px;
+        font-weight: 600;
+      }
+    }
+
+    .timeline-contact-meta {
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    .timeline-contact-name {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--text-primary);
+      line-height: 1.2;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .timeline-contact-stats {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--text-secondary);
+      font-variant-numeric: tabular-nums;
+
+      span {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 2px 6px;
+        border-radius: 999px;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+      }
+    }
+  }
 }
 
 .moments-loading,
@@ -521,8 +599,17 @@
 
 .post-header {
   display: flex;
-  gap: 12px;
-  margin-bottom: 12px;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  justify-content: space-between;
+
+  .post-meta {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
 
   .post-avatar {
     width: 44px;
@@ -591,7 +678,7 @@
   }
 
   .debug-btn {
-    opacity: 0;
+    opacity: 0.18;
     transition: opacity 0.2s;
     background: none;
     border: none;
@@ -602,6 +689,13 @@
 
   &:hover .debug-btn {
     opacity: 1;
+  }
+
+  > .post-time,
+  .post-meta .post-time {
+    font-size: 12px;
+    color: var(--text-tertiary);
+    font-variant-numeric: tabular-nums;
   }
 }
 
