@@ -3099,6 +3099,8 @@ function ExportPage() {
 
     chatExportQueueRef.current = [...chatExportQueueRef.current, job]
     taskCenterHighlightTask(exportTaskId)
+    setShowExportSettings(false)
+    taskCenterOpen()
     void processNextQueuedChatExport()
   }, [
     exportFolder,
@@ -3112,6 +3114,7 @@ function ExportPage() {
     sessionDetail?.wxid,
     sessionByUsername,
     sessionMessageCounts,
+    taskCenterOpen,
     taskCenterHighlightTask,
     taskCenterUpsertTask
   ])
