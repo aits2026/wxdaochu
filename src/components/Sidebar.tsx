@@ -1,5 +1,5 @@
 import { NavLink, useLocation } from 'react-router-dom'
-import { Database, Settings, Download, Aperture, Sun, Moon, Monitor } from 'lucide-react'
+import { Database, Settings, Download, Sun, Moon, Monitor } from 'lucide-react'
 import { useThemeStore } from '../stores/themeStore'
 import GlobalTaskCenter from './GlobalTaskCenter'
 import './Sidebar.scss'
@@ -11,26 +11,9 @@ function Sidebar() {
     return location.pathname === path
   }
 
-  const openMomentsWindow = async () => {
-    try {
-      await window.electronAPI.window.openMomentsWindow()
-    } catch (e) {
-      console.error('打开朋友圈窗口失败:', e)
-    }
-  }
-
   return (
     <aside className="sidebar">
       <nav className="nav-menu">
-        {/* 朋友圈 - 打开独立窗口 */}
-        <button
-          className="nav-item"
-          onClick={openMomentsWindow}
-        >
-          <span className="nav-icon"><Aperture size={20} /></span>
-          <span className="nav-label">朋友圈</span>
-        </button>
-
         {/* 导出 */}
         <NavLink
           to="/export"
