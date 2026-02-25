@@ -307,7 +307,7 @@ const ExportSessionRow = (props: RowComponentProps<ExportSessionRowData>) => {
   }, [onEnsureCardStats, session])
 
   return (
-    <div style={{ ...style, padding: '8px 12px', boxSizing: 'border-box' }}>
+    <div style={{ ...style, padding: '2px 12px', boxSizing: 'border-box' }}>
       <div
         className={`export-session-item ${selectedSession === session.username ? 'selected' : ''}`}
         onClick={() => onSelect(session.username)}
@@ -326,9 +326,6 @@ const ExportSessionRow = (props: RowComponentProps<ExportSessionRowData>) => {
             <div className="session-cell-info-main">
               <div className="session-cell-title-row">
                 <div className="export-session-name">{primaryName || session.username}</div>
-                <span className={`export-session-type-badge ${isGroup ? 'group' : isPrivate ? 'private' : 'official'}`}>
-                  {isGroup ? '群聊' : isPrivate ? '私聊' : '公众号'}
-                </span>
               </div>
               <div className="session-cell-subtitle">
                 {secondaryParts.length > 0 ? secondaryParts.join(' · ') : (session.summary || '暂无消息')}
@@ -1060,7 +1057,7 @@ function ExportPage() {
     [sessionTypeFilter]
   )
   const sessionListRowHeight = useMemo(
-    () => (sessionTypeFilter === 'group' ? 126 : 122),
+    () => (sessionTypeFilter === 'group' ? 88 : 84),
     [sessionTypeFilter]
   )
 

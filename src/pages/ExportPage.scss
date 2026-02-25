@@ -574,36 +574,48 @@
     align-items: stretch;
     gap: 6px;
     padding: 0 20px;
-    margin-bottom: 8px;
+    margin-bottom: 6px;
 
     .type-filter-btn {
       flex: 1;
       display: flex;
-      flex-direction: column;
       align-items: center;
-      gap: 3px;
-      padding: 7px 8px;
-      font-size: 12px;
-      font-weight: 500;
-      color: var(--text-secondary);
+      justify-content: space-between;
+      min-width: 0;
+      gap: 6px;
+      height: 36px;
+      padding: 0 10px;
+      border-radius: 8px;
+      white-space: nowrap;
+      transition: all 0.2s;
+      cursor: pointer;
       background: var(--bg-secondary);
       border: 1px solid transparent;
-      border-radius: 10px;
-      cursor: pointer;
-      transition: all 0.2s;
-      white-space: nowrap;
+      color: var(--text-secondary);
+      font-size: 12px;
+      font-weight: 500;
+    }
 
+    .type-filter-btn {
       .type-filter-label {
         display: flex;
         align-items: center;
         gap: 4px;
+        min-width: 0;
+
+        span {
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
       }
 
       .type-filter-count {
-        font-size: 15px;
+        margin-left: auto;
+        font-size: 12px;
         font-weight: 600;
         color: var(--text-primary);
-        line-height: 1;
+        line-height: 1.1;
+        flex-shrink: 0;
       }
 
       &:hover {
@@ -626,7 +638,6 @@
         flex-shrink: 0;
       }
     }
-
   }
 
   .session-more-wrap {
@@ -801,7 +812,7 @@
     padding: 2px 12px 14px;
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 2px;
   }
 
   .export-session-list-body {
@@ -813,7 +824,7 @@
   .export-session-table-header,
   .export-session-table-row {
     display: grid;
-    gap: 8px;
+    gap: 3px;
 
     &.session-grid-private {
       grid-template-columns: minmax(280px, 1.9fr) minmax(132px, 0.9fr) minmax(116px, 0.9fr) minmax(110px, 0.8fr) minmax(110px, 0.8fr) 72px 72px 86px 72px;
@@ -833,44 +844,43 @@
   }
 
   .export-session-table-header-cell {
-    height: 32px;
-    border-radius: 10px;
-    background: var(--bg-secondary);
-    border: 1px solid rgba(127, 127, 127, 0.08);
+    height: 24px;
+    border-radius: 7px;
+    background: rgba(127, 127, 127, 0.06);
     display: flex;
     align-items: center;
     justify-content: center;
     color: var(--text-secondary);
-    font-size: 11px;
+    font-size: 9px;
     font-weight: 600;
     white-space: nowrap;
-    padding: 0 8px;
+    padding: 0 5px;
   }
 
   .export-session-item {
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    padding: 10px;
-    border-radius: 14px;
+    gap: 2px;
+    padding: 5px;
+    border-radius: 8px;
     cursor: pointer;
     transition: all 0.2s;
-    border: 1px solid var(--border-color);
+    border: 1px solid rgba(127, 127, 127, 0.06);
     background:
-      radial-gradient(circle at top right, rgba(var(--primary-rgb), 0.035), transparent 55%),
+      radial-gradient(circle at top right, rgba(var(--primary-rgb), 0.025), transparent 55%),
       var(--card-bg);
 
     &:hover {
-      border-color: rgba(var(--primary-rgb), 0.24);
-      box-shadow: 0 8px 18px rgba(0, 0, 0, 0.05);
+      border-color: rgba(var(--primary-rgb), 0.14);
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.02);
     }
 
     &.selected {
-      border-color: rgba(var(--primary-rgb), 0.4);
+      border-color: rgba(var(--primary-rgb), 0.26);
       background:
-        radial-gradient(circle at top right, rgba(var(--primary-rgb), 0.12), transparent 58%),
-        rgba(var(--primary-rgb), 0.04);
-      box-shadow: 0 10px 20px rgba(var(--primary-rgb), 0.1);
+        radial-gradient(circle at top right, rgba(var(--primary-rgb), 0.08), transparent 58%),
+        rgba(var(--primary-rgb), 0.025);
+      box-shadow: 0 3px 10px rgba(var(--primary-rgb), 0.04);
     }
 
     .export-session-table-row {
@@ -878,9 +888,9 @@
     }
 
     .export-avatar {
-      width: 42px;
-      height: 42px;
-      border-radius: 12px;
+      width: 34px;
+      height: 34px;
+      border-radius: 8px;
       background: linear-gradient(135deg, var(--primary), var(--primary-hover));
       display: flex;
       align-items: center;
@@ -892,12 +902,12 @@
         width: 100%;
         height: 100%;
         object-fit: cover;
-        border-radius: 12px;
+        border-radius: 8px;
       }
 
       span {
         color: #fff;
-        font-size: 15px;
+        font-size: 13px;
         font-weight: 600;
 
         &.group-placeholder {
@@ -907,8 +917,8 @@
           display: flex;
           align-items: center;
           justify-content: center;
-          border-radius: 12px;
-          font-size: 14px;
+          border-radius: 8px;
+          font-size: 12px;
         }
       }
     }
@@ -918,16 +928,15 @@
       align-items: center;
       justify-content: center;
       min-width: 0;
-      padding: 8px 10px;
-      border-radius: 12px;
-      background: var(--bg-secondary);
-      border: 1px solid rgba(127, 127, 127, 0.08);
+      padding: 4px 6px;
+      border-radius: 7px;
+      background: rgba(127, 127, 127, 0.06);
     }
 
     .session-cell-info {
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 8px;
       justify-content: flex-start;
 
       .session-cell-info-main {
@@ -935,18 +944,18 @@
         flex: 1;
         display: flex;
         flex-direction: column;
-        gap: 2px;
+        gap: 1px;
       }
 
       .session-cell-title-row {
         display: flex;
         align-items: center;
-        gap: 8px;
+        gap: 4px;
         min-width: 0;
       }
 
       .export-session-name {
-        font-size: 13px;
+        font-size: 11px;
         font-weight: 600;
         color: var(--text-primary);
         white-space: nowrap;
@@ -955,7 +964,7 @@
       }
 
       .session-cell-subtitle {
-        font-size: 11px;
+        font-size: 9px;
         color: var(--text-secondary);
         white-space: nowrap;
         overflow: hidden;
@@ -963,7 +972,7 @@
       }
 
       .session-cell-weak {
-        font-size: 10px;
+        font-size: 8px;
         color: var(--text-tertiary);
         white-space: nowrap;
         overflow: hidden;
@@ -972,18 +981,18 @@
 
       .session-card-inline-status {
         margin-left: auto;
-        padding-left: 8px;
+        padding-left: 2px;
       }
     }
 
     .session-cell-kpi {
       flex-direction: column;
-      gap: 6px;
+      gap: 3px;
       align-items: center;
       justify-content: center;
 
       .export-session-count-value {
-        font-size: 16px;
+        font-size: 14px;
         line-height: 1;
         font-weight: 700;
         color: var(--text-primary);
@@ -991,45 +1000,14 @@
       }
     }
 
-    .export-session-type-badge {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      height: 18px;
-      padding: 0 8px;
-      border-radius: 999px;
-      border: 1px solid transparent;
-      font-size: 10px;
-      font-weight: 600;
-      flex-shrink: 0;
-
-      &.private {
-        color: #2563eb;
-        background: rgba(37, 99, 235, 0.08);
-        border-color: rgba(37, 99, 235, 0.14);
-      }
-
-      &.group {
-        color: #059669;
-        background: rgba(5, 150, 105, 0.08);
-        border-color: rgba(5, 150, 105, 0.14);
-      }
-
-      &.official {
-        color: #7c3aed;
-        background: rgba(124, 58, 237, 0.08);
-        border-color: rgba(124, 58, 237, 0.14);
-      }
-    }
-
     .session-cell-metric {
-      font-size: 12px;
+      font-size: 10px;
       font-weight: 600;
       color: var(--text-primary);
       white-space: nowrap;
 
       &.session-cell-media {
-        gap: 4px;
+        gap: 3px;
         font-weight: 600;
 
         .media-icon {
@@ -1051,21 +1029,20 @@
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      gap: 4px;
-      height: 24px;
-      padding: 0 8px;
+      gap: 3px;
+      height: 18px;
+      padding: 0 5px;
       border-radius: 999px;
-      border: 1px solid rgba(var(--primary-rgb), 0.2);
-      background: rgba(var(--primary-rgb), 0.06);
+      border: none;
+      background: rgba(var(--primary-rgb), 0.1);
       color: var(--primary);
-      font-size: 11px;
+      font-size: 9px;
       font-weight: 600;
       cursor: pointer;
       transition: all 0.15s ease;
 
       &:hover {
-        background: rgba(var(--primary-rgb), 0.1);
-        border-color: rgba(var(--primary-rgb), 0.3);
+        background: rgba(var(--primary-rgb), 0.14);
       }
     }
 
@@ -1073,8 +1050,9 @@
       max-width: 100%;
       min-width: 0;
       background: transparent;
-      border-color: rgba(127, 127, 127, 0.14);
+      border: none;
       color: var(--text-primary);
+      background: rgba(127, 127, 127, 0.08);
 
       span {
         white-space: nowrap;
@@ -1087,7 +1065,7 @@
       display: inline-flex;
       align-items: center;
       gap: 4px;
-      font-size: 11px;
+      font-size: 9px;
       color: var(--text-tertiary);
       white-space: nowrap;
 
