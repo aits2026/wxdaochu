@@ -568,13 +568,36 @@
     }
   }
 
+  .session-filter-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 12px 20px 6px;
+    flex-wrap: wrap;
+  }
+
+  .session-filter-search {
+    margin: 0;
+    flex: 1 1 260px;
+    min-width: 220px;
+    padding: 8px 12px;
+    border-radius: 8px;
+
+    input {
+      font-size: 13px;
+    }
+  }
+
   // 会话类型筛选按钮组
   .session-type-filter {
     display: flex;
     align-items: stretch;
     gap: 6px;
-    padding: 0 20px;
-    margin-bottom: 6px;
+    padding: 0;
+    margin-bottom: 0;
+    flex: 0 1 auto;
+    min-width: 0;
+    flex-wrap: wrap;
 
     .type-filter-btn {
       flex: 1;
@@ -637,6 +660,23 @@
       svg {
         flex-shrink: 0;
       }
+    }
+  }
+
+  @media (max-width: 980px) {
+    .session-filter-row {
+      align-items: stretch;
+      gap: 8px;
+    }
+
+    .session-type-filter {
+      width: 100%;
+    }
+
+    .session-filter-search {
+      width: 100%;
+      min-width: 0;
+      flex-basis: 100%;
     }
   }
 
