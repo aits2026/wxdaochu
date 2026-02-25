@@ -2931,124 +2931,128 @@ function ExportPage() {
               </div>
             </div>
 
-            <div className="session-filter-row">
-              <div className="session-type-filter">
-                <button
-                  className={`type-filter-btn ${sessionTypeFilter === 'private' ? 'active' : ''}`}
-                  onClick={() => setSessionTypeFilter('private')}
-                >
-                  <div className="type-filter-label">
-                    <User size={13} />
-                    <span>私聊</span>
-                  </div>
-                  <div className="type-filter-count">
-                    {formatSessionTypeCount(sessionTypeCounts.private)}
-                  </div>
-                </button>
-                <button
-                  className={`type-filter-btn ${sessionTypeFilter === 'group' ? 'active' : ''}`}
-                  onClick={() => setSessionTypeFilter('group')}
-                >
-                  <div className="type-filter-label">
-                    <Users size={13} />
-                    <span>群聊</span>
-                  </div>
-                  <div className="type-filter-count">
-                    {formatSessionTypeCount(sessionTypeCounts.group)}
-                  </div>
-                </button>
-                <button
-                  className={`type-filter-btn ${sessionTypeFilter === 'official' ? 'active' : ''}`}
-                  onClick={() => setSessionTypeFilter('official')}
-                >
-                  <div className="type-filter-label">
-                    <Newspaper size={13} />
-                    <span>公众号</span>
-                  </div>
-                  <div className="type-filter-count">
-                    {formatSessionTypeCount(sessionTypeCounts.official)}
-                  </div>
-                </button>
-              </div>
-              <div className="search-bar session-filter-search">
-                <Search size={16} />
-                <input
-                  type="text"
-                  placeholder="搜索联系人或群组..."
-                  value={searchKeyword}
-                  onChange={e => setSearchKeyword(e.target.value)}
-                />
-                {searchKeyword && (
-                  <button className="clear-btn" onClick={() => setSearchKeyword('')}>
-                    <X size={14} />
-                  </button>
-                )}
-              </div>
-            </div>
-            {isLoadingSessionCounts && (
-              <div className="session-count-loading-hint">
-                <Loader2 size={12} className="spin" />
-                <span>正在统计消息数量并排序...</span>
-              </div>
-            )}
-            {isRefreshingSessions && sessions.length > 0 && (
-              <div className="session-count-loading-hint">
-                <Loader2 size={12} className="spin" />
-                <span>列表正在后台更新...</span>
-              </div>
-            )}
-
-            {isLoading ? (
-              <div className="loading-state">
-                <Loader2 size={24} className="spin" />
-                <span>加载中...</span>
-              </div>
-            ) : filteredSessions.length === 0 ? (
-              <div className="empty-state">
-                <span>暂无会话</span>
-              </div>
-            ) : (
-              <div className="export-session-list">
-                <div className={`export-session-table-header ${sessionListGridClass}`}>
-                  {sessionListHeaderColumns.map(label => (
-                    <div
-                      key={label}
-                      className={`export-session-table-header-cell ${SESSION_TABLE_HEADER_MEDIA_ICONS[label] ? 'is-media-header' : ''}`}
-                      title={label}
-                    >
-                      {SESSION_TABLE_HEADER_MEDIA_ICONS[label] ? (
-                        <>
-                          <span className="header-media-icon">{SESSION_TABLE_HEADER_MEDIA_ICONS[label]}</span>
-                          <span>{label}</span>
-                        </>
-                      ) : (
-                        <span>{label}</span>
-                      )}
+            <div className="session-list-controls">
+              <div className="session-filter-row">
+                <div className="session-type-filter">
+                  <button
+                    className={`type-filter-btn ${sessionTypeFilter === 'private' ? 'active' : ''}`}
+                    onClick={() => setSessionTypeFilter('private')}
+                  >
+                    <div className="type-filter-label">
+                      <User size={13} />
+                      <span>私聊</span>
                     </div>
-                  ))}
+                    <div className="type-filter-count">
+                      {formatSessionTypeCount(sessionTypeCounts.private)}
+                    </div>
+                  </button>
+                  <button
+                    className={`type-filter-btn ${sessionTypeFilter === 'group' ? 'active' : ''}`}
+                    onClick={() => setSessionTypeFilter('group')}
+                  >
+                    <div className="type-filter-label">
+                      <Users size={13} />
+                      <span>群聊</span>
+                    </div>
+                    <div className="type-filter-count">
+                      {formatSessionTypeCount(sessionTypeCounts.group)}
+                    </div>
+                  </button>
+                  <button
+                    className={`type-filter-btn ${sessionTypeFilter === 'official' ? 'active' : ''}`}
+                    onClick={() => setSessionTypeFilter('official')}
+                  >
+                    <div className="type-filter-label">
+                      <Newspaper size={13} />
+                      <span>公众号</span>
+                    </div>
+                    <div className="type-filter-count">
+                      {formatSessionTypeCount(sessionTypeCounts.official)}
+                    </div>
+                  </button>
                 </div>
-                <div className="export-session-list-body">
-                {/* @ts-ignore - react-window v2 类型定义与当前 rowProps 推断不一致 */}
-                <List
-                  style={{ height: '100%', width: '100%' }}
-                  rowCount={filteredSessions.length}
-                  rowHeight={sessionListRowHeight}
-                  rowProps={{
-                    sessions: filteredSessions,
-                    selectedSession,
-                    sessionTypeFilter,
-                    sessionMessageCounts,
-                    sessionCardStatsMap,
-                    onSelect: selectSession,
-                    onEnsureCardStats: ensureSessionCardStats,
-                    onOpenChatWindow: handleOpenChatWindowFromList,
-                    onOpenCommonGroups: handleOpenCommonGroupsFromList
-                  }}
-                  rowComponent={ExportSessionRow}
-                />
+                <div className="search-bar session-filter-search">
+                  <Search size={16} />
+                  <input
+                    type="text"
+                    placeholder="搜索联系人或群组..."
+                    value={searchKeyword}
+                    onChange={e => setSearchKeyword(e.target.value)}
+                  />
+                  {searchKeyword && (
+                    <button className="clear-btn" onClick={() => setSearchKeyword('')}>
+                      <X size={14} />
+                    </button>
+                  )}
                 </div>
               </div>
-            )}
+              {isLoadingSessionCounts && (
+                <div className="session-count-loading-hint">
+                  <Loader2 size={12} className="spin" />
+                  <span>正在统计消息数量并排序...</span>
+                </div>
+              )}
+              {isRefreshingSessions && sessions.length > 0 && (
+                <div className="session-count-loading-hint">
+                  <Loader2 size={12} className="spin" />
+                  <span>列表正在后台更新...</span>
+                </div>
+              )}
+            </div>
+
+            <div className="session-table-layer">
+              {isLoading ? (
+                <div className="loading-state">
+                  <Loader2 size={24} className="spin" />
+                  <span>加载中...</span>
+                </div>
+              ) : filteredSessions.length === 0 ? (
+                <div className="empty-state">
+                  <span>暂无会话</span>
+                </div>
+              ) : (
+                <div className="export-session-list">
+                  <div className={`export-session-table-header ${sessionListGridClass}`}>
+                    {sessionListHeaderColumns.map(label => (
+                      <div
+                        key={label}
+                        className={`export-session-table-header-cell ${SESSION_TABLE_HEADER_MEDIA_ICONS[label] ? 'is-media-header' : ''}`}
+                        title={label}
+                      >
+                        {SESSION_TABLE_HEADER_MEDIA_ICONS[label] ? (
+                          <>
+                            <span className="header-media-icon">{SESSION_TABLE_HEADER_MEDIA_ICONS[label]}</span>
+                            <span>{label}</span>
+                          </>
+                        ) : (
+                          <span>{label}</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  <div className="export-session-list-body">
+                  {/* @ts-ignore - react-window v2 类型定义与当前 rowProps 推断不一致 */}
+                  <List
+                    style={{ height: '100%', width: '100%' }}
+                    rowCount={filteredSessions.length}
+                    rowHeight={sessionListRowHeight}
+                    rowProps={{
+                      sessions: filteredSessions,
+                      selectedSession,
+                      sessionTypeFilter,
+                      sessionMessageCounts,
+                      sessionCardStatsMap,
+                      onSelect: selectSession,
+                      onEnsureCardStats: ensureSessionCardStats,
+                      onOpenChatWindow: handleOpenChatWindowFromList,
+                      onOpenCommonGroups: handleOpenCommonGroupsFromList
+                    }}
+                    rowComponent={ExportSessionRow}
+                  />
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
 
           {selectedSession && <div className="chat-session-drawer-backdrop" onClick={closeSessionDrawer} />}
