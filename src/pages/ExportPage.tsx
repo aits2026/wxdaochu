@@ -4,6 +4,7 @@ import { List, RowComponentProps } from 'react-window'
 import DateRangePicker from '../components/DateRangePicker'
 import { useTitleBarStore } from '../stores/titleBarStore'
 import { useAppStore } from '../stores/appStore'
+import { useExportPageCacheStore } from '../stores/exportPageCacheStore'
 import * as configService from '../services/config'
 import './ExportPage.scss'
 
@@ -59,6 +60,12 @@ interface ExportResult {
 type SessionMessageCountMap = Record<string, number>
 type ImageDecryptTaskStatus = 'running' | 'success' | 'error'
 type TaskCenterTaskStatus = 'pending' | 'running' | 'success' | 'error'
+type LoadSessionsOptions = {
+  silent?: boolean
+  preserveCounts?: boolean
+}
+
+const EXPORT_CHAT_CACHE_TTL_MS = 60 * 1000
 
 interface SessionImageDecryptOverview {
   total: number
@@ -137,8 +144,12 @@ function ExportPage() {
   const [activeTab, setActiveTab] = useState<ExportTab>('chat')
   const setTitleBarContent = useTitleBarStore(state => state.setRightContent)
   const isDbConnected = useAppStore(state => state.isDbConnected)
+  const dbPath = useAppStore(state => state.dbPath)
+  const storeMyWxid = useAppStore(state => state.myWxid)
   const preloadedUserInfo = useAppStore(state => state.userInfo)
   const userInfoLoaded = useAppStore(state => state.userInfoLoaded)
+  const exportPageChatCache = useExportPageCacheStore(state => state.chatCache)
+  const setExportPageChatCache = useExportPageCacheStore(state => state.setChatCache)
   const [exportAccountInfo, setExportAccountInfo] = useState<{
     connected: boolean
     wxid: string
@@ -157,6 +168,7 @@ function ExportPage() {
   const [sessions, setSessions] = useState<ChatSession[]>([])
   const [sessionMessageCounts, setSessionMessageCounts] = useState<SessionMessageCountMap>({})
   const [isLoading, setIsLoading] = useState(true)
+  const [isRefreshingSessions, setIsRefreshingSessions] = useState(false)
   const [isLoadingSessionCounts, setIsLoadingSessionCounts] = useState(false)
   const [loadedSessionCountUsernames, setLoadedSessionCountUsernames] = useState<Set<string>>(new Set())
   const [searchKeyword, setSearchKeyword] = useState('')
@@ -272,10 +284,20 @@ function ExportPage() {
   const sessionImageOverviewRequestIdRef = useRef(0)
   const sessionImageAssetsRequestIdRef = useRef(0)
   const sessionTypeFilterRef = useRef<SessionTypeFilter>('private')
+  const hasBootstrappedChatCacheRef = useRef(false)
+  const bootstrappedChatCacheKeyRef = useRef<string | null>(null)
+  const chatCacheDataLoadedAtRef = useRef(0)
+  const pendingCachedSelectedSessionRef = useRef<string | null>(null)
 
   useEffect(() => {
     sessionTypeFilterRef.current = sessionTypeFilter
   }, [sessionTypeFilter])
+
+  const exportChatCacheKey = useMemo(() => {
+    if (!isDbConnected) return ''
+    const accountWxid = preloadedUserInfo?.wxid || storeMyWxid || ''
+    return [dbPath || 'no-db-path', accountWxid || 'unknown-account'].join('::')
+  }, [dbPath, isDbConnected, preloadedUserInfo?.wxid, storeMyWxid])
 
   const loadExportAccountInfo = useCallback(async () => {
     try {
@@ -445,20 +467,48 @@ function ExportPage() {
   }, [])
 
   // 加载聊天会话
-  const loadSessions = useCallback(async () => {
-    setIsLoading(true)
+  const loadSessions = useCallback(async (options?: LoadSessionsOptions) => {
+    const silent = Boolean(options?.silent)
+    const preserveCounts = Boolean(options?.preserveCounts)
+
+    if (silent) {
+      setIsRefreshingSessions(true)
+    } else {
+      setIsLoading(true)
+    }
     try {
       const result = await window.electronAPI.chat.connect()
       if (!result.success) {
         console.error('连接失败:', result.error)
-        setIsLoading(false)
         return
       }
       const sessionsResult = await window.electronAPI.chat.getSessions()
       if (sessionsResult.success && sessionsResult.sessions) {
         setSessions(sessionsResult.sessions)
-        setSessionMessageCounts({})
-        setLoadedSessionCountUsernames(new Set())
+        chatCacheDataLoadedAtRef.current = Date.now()
+
+        const currentUsernames = new Set(sessionsResult.sessions.map(s => s.username))
+        if (preserveCounts) {
+          setSessionMessageCounts(prev => {
+            const next: SessionMessageCountMap = {}
+            for (const [username, count] of Object.entries(prev)) {
+              if (currentUsernames.has(username)) {
+                next[username] = count
+              }
+            }
+            return next
+          })
+          setLoadedSessionCountUsernames(prev => {
+            const next = new Set<string>()
+            prev.forEach(username => {
+              if (currentUsernames.has(username)) next.add(username)
+            })
+            return next
+          })
+        } else {
+          setSessionMessageCounts({})
+          setLoadedSessionCountUsernames(new Set())
+        }
         // 批量加载消息数量（异步，不阻塞列表显示）
         const allUsernames = sessionsResult.sessions.map(s => s.username)
         const priorityFilter = sessionTypeFilterRef.current
@@ -511,7 +561,11 @@ function ExportPage() {
     } catch (e) {
       console.error('加载会话失败:', e)
     } finally {
-      setIsLoading(false)
+      if (silent) {
+        setIsRefreshingSessions(false)
+      } else {
+        setIsLoading(false)
+      }
     }
   }, [])
 
@@ -552,10 +606,96 @@ function ExportPage() {
   }, [])
 
   useEffect(() => {
-    loadSessions()
     loadExportPath()
     loadDefaultExportConfig()
-  }, [loadSessions, loadExportPath, loadDefaultExportConfig])
+  }, [loadExportPath, loadDefaultExportConfig])
+
+  useEffect(() => {
+    if (!isDbConnected) {
+      hasBootstrappedChatCacheRef.current = false
+      bootstrappedChatCacheKeyRef.current = null
+      chatCacheDataLoadedAtRef.current = 0
+      pendingCachedSelectedSessionRef.current = null
+      setSessions([])
+      setSessionMessageCounts({})
+      setLoadedSessionCountUsernames(new Set())
+      setSelectedSession(null)
+      setSearchKeyword('')
+      setSessionTypeFilter('private')
+      setIsLoading(false)
+      setIsRefreshingSessions(false)
+      return
+    }
+
+    if (!exportChatCacheKey) return
+    if (bootstrappedChatCacheKeyRef.current === exportChatCacheKey) return
+
+    bootstrappedChatCacheKeyRef.current = exportChatCacheKey
+
+    const cache = exportPageChatCache
+    const matchedCache = cache && cache.cacheKey === exportChatCacheKey ? cache : null
+    const now = Date.now()
+
+    if (matchedCache) {
+      setSessions(matchedCache.sessions)
+      setSessionMessageCounts(matchedCache.sessionMessageCounts || {})
+      setLoadedSessionCountUsernames(new Set(matchedCache.loadedSessionCountUsernames || []))
+      setSearchKeyword(matchedCache.searchKeyword || '')
+      setSessionTypeFilter(matchedCache.sessionTypeFilter || 'private')
+      const cachedSelectedSession = matchedCache.selectedSession && matchedCache.sessions.some(s => s.username === matchedCache.selectedSession)
+        ? matchedCache.selectedSession
+        : null
+      pendingCachedSelectedSessionRef.current = cachedSelectedSession
+      setSelectedSession(cachedSelectedSession)
+      chatCacheDataLoadedAtRef.current = matchedCache.dataLoadedAt || 0
+      setIsLoading(false)
+    } else {
+      pendingCachedSelectedSessionRef.current = null
+      setIsLoading(true)
+    }
+
+    hasBootstrappedChatCacheRef.current = true
+
+    const shouldRefresh = !matchedCache ||
+      matchedCache.dirty ||
+      !matchedCache.dataLoadedAt ||
+      now - matchedCache.dataLoadedAt > EXPORT_CHAT_CACHE_TTL_MS
+
+    if (shouldRefresh) {
+      void loadSessions({
+        silent: Boolean(matchedCache),
+        preserveCounts: Boolean(matchedCache)
+      })
+    }
+  }, [isDbConnected, exportChatCacheKey, exportPageChatCache, loadSessions])
+
+  useEffect(() => {
+    if (!isDbConnected || !exportChatCacheKey) return
+    if (!hasBootstrappedChatCacheRef.current) return
+    if (sessions.length === 0 && chatCacheDataLoadedAtRef.current === 0) return
+
+    setExportPageChatCache({
+      cacheKey: exportChatCacheKey,
+      sessions,
+      sessionMessageCounts,
+      loadedSessionCountUsernames: Array.from(loadedSessionCountUsernames),
+      selectedSession,
+      searchKeyword,
+      sessionTypeFilter,
+      dataLoadedAt: chatCacheDataLoadedAtRef.current || Date.now(),
+      dirty: false
+    })
+  }, [
+    isDbConnected,
+    exportChatCacheKey,
+    sessions,
+    sessionMessageCounts,
+    loadedSessionCountUsernames,
+    selectedSession,
+    searchKeyword,
+    sessionTypeFilter,
+    setExportPageChatCache
+  ])
 
   // 切换到通讯录时加载
   useEffect(() => {
@@ -619,6 +759,12 @@ function ExportPage() {
 
     return filtered
   }, [sessions, sessionTypeFilter, deferredSearchKeyword, deferredSessionMessageCounts, loadedSessionCountUsernames])
+
+  useEffect(() => {
+    if (!selectedSession) return
+    if (sessions.some(session => session.username === selectedSession)) return
+    setSelectedSession(null)
+  }, [selectedSession, sessions])
 
   const sessionByUsername = useMemo(() => {
     const map = new Map<string, ChatSession>()
@@ -1142,6 +1288,13 @@ function ExportPage() {
       }
     }
   }
+
+  useEffect(() => {
+    const cachedSelectedSession = pendingCachedSelectedSessionRef.current
+    if (!cachedSelectedSession) return
+    pendingCachedSelectedSessionRef.current = null
+    void selectSession(cachedSelectedSession)
+  }, [selectSession])
 
   const toggleContact = (username: string) => {
     const newSet = new Set(selectedContacts)
@@ -1723,6 +1876,12 @@ function ExportPage() {
               <div className="session-count-loading-hint">
                 <Loader2 size={12} className="spin" />
                 <span>正在统计消息数量并排序...</span>
+              </div>
+            )}
+            {isRefreshingSessions && sessions.length > 0 && (
+              <div className="session-count-loading-hint">
+                <Loader2 size={12} className="spin" />
+                <span>列表正在后台更新...</span>
               </div>
             )}
 
