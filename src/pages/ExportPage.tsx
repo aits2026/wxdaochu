@@ -523,9 +523,10 @@ function ExportPage() {
   const taskCenterSetActiveExportTaskId = useTaskCenterStore(state => state.setActiveExportTaskId)
   const taskCenterOpen = useTaskCenterStore(state => state.openTaskCenter)
   const taskCenterHighlightTask = useTaskCenterStore(state => state.highlightTask)
-  const chatExportTasks = useTaskCenterStore(state => state.tasks.filter(
+  const taskCenterTasks = useTaskCenterStore(state => state.tasks)
+  const chatExportTasks = useMemo(() => taskCenterTasks.filter(
     task => task.kind === 'chat-export' && (task.status === 'pending' || task.status === 'running')
-  ))
+  ), [taskCenterTasks])
   const runningChatExportSessionId = useMemo(
     () => chatExportTasks.find(task => task.status === 'running')?.sessionId || null,
     [chatExportTasks]
