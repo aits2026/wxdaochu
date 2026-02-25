@@ -285,6 +285,7 @@ const ExportSessionRow = (props: RowComponentProps<ExportSessionRowData>) => {
   const messageCount = cardStats?.messageCount ?? sessionMessageCounts[session.username]
   const isGroup = session.username.includes('@chatroom')
   const isPrivate = session.accountType === 'friend'
+  const isOfficial = session.accountType === 'official'
   const statsLoading = cardStats?.status === 'loading' || (isGroup && cardStats?.groupInfoLoading)
   const mediaStats = [
     { label: '图片', icon: <Image size={12} />, count: cardStats?.imageCount },
