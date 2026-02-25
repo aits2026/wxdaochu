@@ -334,9 +334,11 @@ const ExportSessionRow = (props: RowComponentProps<ExportSessionRowData>) => {
               <div className="session-cell-title-row">
                 <div className="export-session-name">{primaryName || session.username}</div>
               </div>
-              <div className="session-cell-subtitle">
-                {secondaryParts.length > 0 ? secondaryParts.join(' · ') : (session.summary || '暂无消息')}
-              </div>
+              {secondaryParts.length > 0 && (
+                <div className="session-cell-subtitle">
+                  {secondaryParts.join(' · ')}
+                </div>
+              )}
               <div className="session-cell-weak" title={infoIdLine}>{infoIdLine}</div>
             </div>
             {(statsLoading || cardStats?.status === 'error') && (
