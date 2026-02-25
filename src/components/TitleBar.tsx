@@ -3,6 +3,7 @@ import { RefreshCw } from 'lucide-react'
 import { useTitleBarStore } from '../stores/titleBarStore'
 import { useUpdateStatusStore } from '../stores/updateStatusStore'
 import { useThemeStore } from '../stores/themeStore'
+import GlobalTaskCenter from './GlobalTaskCenter'
 import './TitleBar.scss'
 
 interface TitleBarProps {
@@ -39,11 +40,10 @@ function TitleBar({ rightContent, title }: TitleBarProps) {
           </div>
         )}
       </div>
-      {displayContent && (
-        <div className="title-bar-right">
-          {displayContent}
-        </div>
-      )}
+      <div className="title-bar-right">
+        {displayContent}
+        <GlobalTaskCenter />
+      </div>
     </div>
   )
 }

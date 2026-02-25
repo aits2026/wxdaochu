@@ -27,6 +27,7 @@ import { useThemeStore } from './stores/themeStore'
 import { useChatStore } from './stores/chatStore'
 import { useUpdateStatusStore } from './stores/updateStatusStore'
 import { useActivationStore } from './stores/activationStore'
+import { useTaskCenterStore } from './stores/taskCenterStore'
 import * as configService from './services/config'
 import { initTldList } from './utils/linkify'
 import LockScreen from './pages/LockScreen'
@@ -171,6 +172,15 @@ function App() {
     })
     return () => {
       removeDownloadListener?.()
+    }
+  }, [])
+
+  useEffect(() => {
+    const removeExportProgressListener = window.electronAPI.export.onProgress?.((progress) => {
+      useTaskCenterStore.getState().updateActiveExportProgress(progress || {})
+    })
+    return () => {
+      removeExportProgressListener?.()
     }
   }, [])
 

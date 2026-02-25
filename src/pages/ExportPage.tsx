@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback, useDeferredValue, useMemo, useRef, startTransition } from 'react'
-import { Search, Download, FolderOpen, RefreshCw, Check, FileJson, FileText, Table, Loader2, X, FileSpreadsheet, Database, FileCode, CheckCircle, XCircle, ExternalLink, MessageSquare, Users, User, Filter, Image, Video, CircleUserRound, Smile, Mic, Newspaper, ChevronDown, MoreHorizontal, ArrowLeft, Eye, Aperture, CircleHelp, ListTodo } from 'lucide-react'
+import { Search, Download, FolderOpen, RefreshCw, Check, FileJson, FileText, Table, Loader2, X, FileSpreadsheet, Database, FileCode, CheckCircle, XCircle, ExternalLink, MessageSquare, Users, User, Filter, Image, Video, CircleUserRound, Smile, Mic, Newspaper, ChevronDown, MoreHorizontal, ArrowLeft, Eye, Aperture, CircleHelp } from 'lucide-react'
 import { List, RowComponentProps } from 'react-window'
 import DateRangePicker from '../components/DateRangePicker'
 import { useTitleBarStore } from '../stores/titleBarStore'
 import { useAppStore } from '../stores/appStore'
 import { useExportPageCacheStore } from '../stores/exportPageCacheStore'
+import { useTaskCenterStore } from '../stores/taskCenterStore'
 import * as configService from '../services/config'
 import './ExportPage.scss'
 
@@ -59,7 +60,6 @@ interface ExportResult {
 
 type SessionMessageCountMap = Record<string, number>
 type ImageDecryptTaskStatus = 'running' | 'success' | 'error'
-type TaskCenterTaskStatus = 'pending' | 'running' | 'success' | 'error'
 type LoadSessionsOptions = {
   silent?: boolean
   preserveCounts?: boolean
@@ -174,6 +174,12 @@ function ExportPage() {
   const userInfoLoaded = useAppStore(state => state.userInfoLoaded)
   const exportPageChatCache = useExportPageCacheStore(state => state.chatCache)
   const setExportPageChatCache = useExportPageCacheStore(state => state.setChatCache)
+  const taskCenterUpsertTask = useTaskCenterStore(state => state.upsertTask)
+  const taskCenterPatchTask = useTaskCenterStore(state => state.patchTask)
+  const taskCenterSetActiveExportTaskId = useTaskCenterStore(state => state.setActiveExportTaskId)
+  const hasRunningGlobalChatExportTask = useTaskCenterStore(state => state.tasks.some(
+    task => task.kind === 'chat-export' && (task.status === 'pending' || task.status === 'running')
+  ))
   const [exportAccountInfo, setExportAccountInfo] = useState<{
     connected: boolean
     wxid: string
@@ -199,13 +205,6 @@ function ExportPage() {
   const [sessionTypeFilter, setSessionTypeFilter] = useState<SessionTypeFilter>('private')
   const [exportFolder, setExportFolder] = useState<string>('')
   const [isExporting, setIsExporting] = useState(false)
-  const [exportProgress, setExportProgress] = useState({
-    current: 0,
-    total: 0,
-    currentName: '',
-    phase: '',
-    detail: ''
-  })
   const [exportResult, setExportResult] = useState<ExportResult | null>(null)
   const [isSessionImageDecrypting, setIsSessionImageDecrypting] = useState(false)
   const [showSessionImageDecryptConfirm, setShowSessionImageDecryptConfirm] = useState(false)
@@ -276,7 +275,6 @@ function ExportPage() {
   const [showExportSettings, setShowExportSettings] = useState(false)
   const [showMoreMenu, setShowMoreMenu] = useState(false)
   const [showUsageTipsPopover, setShowUsageTipsPopover] = useState(false)
-  const [showTaskCenterPopover, setShowTaskCenterPopover] = useState(false)
   const [snsUserPostCounts, setSnsUserPostCounts] = useState<Record<string, number>>({})
   const [snsUserPostCountsStatus, setSnsUserPostCountsStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
   const [copiedIdentityChip, setCopiedIdentityChip] = useState<'wxid' | 'alias' | null>(null)
@@ -490,30 +488,6 @@ function ExportPage() {
     } catch (e) {
       console.error('加载默认导出配置失败:', e)
       // 即使加载失败也不影响页面显示，使用默认值
-    }
-  }, [])
-
-  // 监听导出进度
-  useEffect(() => {
-    const removeListener = window.electronAPI.export.onProgress((data) => {
-      // 将 phase 英文映射为中文描述
-      const phaseMap: Record<string, string> = {
-        'preparing': '正在准备...',
-        'exporting': '正在导出消息...',
-        'writing': '正在写入文件...',
-        'complete': '导出完成'
-      }
-      setExportProgress({
-        current: data.current || 0,
-        total: data.total || 0,
-        currentName: data.currentSession || '',
-        phase: (data.phase ? phaseMap[data.phase] : undefined) || data.phase || '',
-        detail: data.detail || ''
-      })
-    })
-
-    return () => {
-      removeListener()
     }
   }, [])
 
@@ -1315,26 +1289,6 @@ function ExportPage() {
   const sessionVideoAssetsReadyCount = sessionVideoAssetsOverview?.readyCount ?? readySessionVideoAssets.length
   const sessionVideoAssetsThumbOnlyCount = sessionVideoAssetsOverview?.thumbOnlyCount ?? thumbOnlySessionVideoAssets.length
   const sessionVideoAssetsMissingCount = sessionVideoAssetsOverview?.missingCount ?? Math.max(0, sessionVideoAssetsTotalCount - sessionVideoAssetsReadyCount - sessionVideoAssetsThumbOnlyCount)
-  const imageDecryptTaskExists = Boolean(sessionImageDecryptTaskSessionId && sessionImageDecryptProgress.total > 0)
-  const imageDecryptTaskRecord = imageDecryptTaskExists ? {
-    id: `image-decrypt:${sessionImageDecryptTaskSessionId}`,
-    typeLabel: '图片解密',
-    sessionId: sessionImageDecryptTaskSessionId!,
-    sessionName: sessionImageDecryptTaskSessionName || sessionByUsername.get(sessionImageDecryptTaskSessionId!)?.displayName || sessionImageDecryptTaskSessionId!,
-    status: (isSessionImageDecrypting ? 'running' : sessionImageDecryptTaskStatus) as TaskCenterTaskStatus,
-    progressCurrent: sessionImageDecryptProgress.current,
-    progressTotal: sessionImageDecryptProgress.total,
-    successCount: sessionImageDecryptTaskStats.success,
-    failCount: sessionImageDecryptTaskStats.fail,
-    error: sessionImageDecryptTaskError,
-  } : null
-  const taskCenterTasks = useMemo(() => (
-    imageDecryptTaskRecord ? [imageDecryptTaskRecord] : []
-  ), [imageDecryptTaskRecord])
-  const taskCenterPendingTasks = taskCenterTasks.filter(task => task.status === 'pending')
-  const taskCenterRunningTasks = taskCenterTasks.filter(task => task.status === 'running')
-  const taskCenterFinishedTasks = taskCenterTasks.filter(task => task.status === 'success' || task.status === 'error')
-  const taskCenterActiveCount = taskCenterPendingTasks.length + taskCenterRunningTasks.length
   const groupFriendMembersForPopup = useMemo(() => {
     const friendMembers = sessionDetail?.groupInfo?.friendMembers || []
     if (friendMembers.length <= 1) return friendMembers
@@ -1710,6 +1664,15 @@ function ExportPage() {
       return
     }
 
+    const targetSessionId = selectedSession
+    const targetSessionName =
+      sessionDetail?.remark ||
+      sessionDetail?.nickName ||
+      (targetSessionId ? sessionByUsername.get(targetSessionId)?.displayName : undefined) ||
+      targetSessionId ||
+      ''
+    const decryptTaskId = `image-decrypt:${targetSessionId}:${Date.now()}`
+
     setShowSessionImageDecryptConfirm(false)
     setSessionImageMessages(null)
     setSessionImageDates([])
@@ -1717,24 +1680,39 @@ function ExportPage() {
 
     setIsSessionImageDecrypting(true)
     setShowSessionImageDecryptProgress(true)
-    setShowTaskCenterPopover(true)
     setSessionImageDecryptTaskExpanded(true)
     setSessionImageDecryptTaskStatus('running')
     setSessionImageDecryptTaskStats({ success: 0, fail: 0 })
-    setSessionImageDecryptTaskSessionId(selectedSession)
+    setSessionImageDecryptTaskSessionId(targetSessionId)
     setSessionImageDecryptTaskError(null)
-    setSessionImageDecryptTaskSessionName(
-      sessionDetail?.remark || sessionDetail?.nickName || (selectedSession ? sessionByUsername.get(selectedSession)?.displayName : undefined) || selectedSession || ''
-    )
+    setSessionImageDecryptTaskSessionName(targetSessionName)
     setSessionImageDecryptProgress({ current: 0, total: images.length })
+
+    taskCenterUpsertTask({
+      id: decryptTaskId,
+      kind: 'image-decrypt',
+      typeLabel: '图片解密',
+      sessionId: targetSessionId,
+      sessionName: targetSessionName,
+      status: 'running',
+      progressCurrent: 0,
+      progressTotal: images.length,
+      successCount: 0,
+      failCount: 0,
+      unitLabel: '张',
+      detail: '后台解密中，可继续操作页面',
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    })
 
     let success = 0
     let fail = 0
+    let processedCount = 0
     try {
       for (let i = 0; i < images.length; i++) {
         try {
           const r = await window.electronAPI.image.decrypt({
-            sessionId: selectedSession,
+            sessionId: targetSessionId,
             imageMd5: images[i].imageMd5,
             imageDatName: images[i].imageDatName,
             force: false
@@ -1745,22 +1723,48 @@ function ExportPage() {
           fail++
         }
         if (i % 5 === 0) await new Promise(r => setTimeout(r, 0))
-        setSessionImageDecryptProgress({ current: i + 1, total: images.length })
+        processedCount = i + 1
+        setSessionImageDecryptProgress({ current: processedCount, total: images.length })
         setSessionImageDecryptTaskStats({ success, fail })
+        taskCenterPatchTask(decryptTaskId, {
+          progressCurrent: processedCount,
+          progressTotal: images.length,
+          successCount: success,
+          failCount: fail,
+          detail: '后台解密中，可继续操作页面'
+        })
       }
       setSessionImageDecryptTaskStatus('success')
+      taskCenterPatchTask(decryptTaskId, {
+        status: 'success',
+        progressCurrent: images.length,
+        progressTotal: images.length,
+        successCount: success,
+        failCount: fail,
+        detail: '解密完成'
+      })
     } catch (e) {
       console.error('批量解密图片失败:', e)
+      const errorMessage = e instanceof Error ? e.message : String(e)
       setSessionImageDecryptTaskStatus('error')
-      setSessionImageDecryptTaskError(String(e))
+      setSessionImageDecryptTaskError(errorMessage)
+      taskCenterPatchTask(decryptTaskId, {
+        status: 'error',
+        progressCurrent: processedCount,
+        progressTotal: images.length,
+        successCount: success,
+        failCount: fail,
+        error: errorMessage,
+        detail: '解密任务失败'
+      })
     }
 
     setIsSessionImageDecrypting(false)
     setSessionImageDecryptTaskStats({ success, fail })
     setSessionImageDecryptTaskExpanded(false)
 
-    void refreshSessionImageOverview(selectedSession)
-    if (showSessionImageAssetsModal && sessionImageAssetsSessionId === selectedSession) {
+    void refreshSessionImageOverview(targetSessionId)
+    if (showSessionImageAssetsModal && sessionImageAssetsSessionId === targetSessionId) {
       void openSessionImageAssetsModal()
     }
   }
@@ -1785,14 +1789,43 @@ function ExportPage() {
 
   // 导出聊天记录
   const startExport = async () => {
-    if (!selectedSession || !exportFolder) return
+    if (!selectedSession || !exportFolder || hasRunningGlobalChatExportTask) return
+
+    const targetSessionId = selectedSession
+    const targetSessionName =
+      (sessionDetail?.wxid === targetSessionId ? (sessionDetail?.remark || sessionDetail?.nickName || sessionDetail?.alias) : undefined) ||
+      sessionByUsername.get(targetSessionId)?.displayName ||
+      targetSessionId
+    const targetMessageCount =
+      (sessionDetail?.wxid === targetSessionId ? sessionDetail.messageCount : undefined) ??
+      sessionMessageCounts[targetSessionId] ??
+      0
+    const exportTaskId = `chat-export:${targetSessionId}:${Date.now()}`
+    const formatLabel = options.format.toUpperCase()
 
     setIsExporting(true)
-    setExportProgress({ current: 0, total: 1, currentName: '', phase: '准备导出', detail: '' })
     setExportResult(null)
+    taskCenterUpsertTask({
+      id: exportTaskId,
+      kind: 'chat-export',
+      typeLabel: '聊天导出',
+      sessionId: targetSessionId,
+      sessionName: targetSessionName,
+      status: 'running',
+      progressCurrent: 0,
+      progressTotal: 1,
+      unitLabel: '个会话',
+      format: formatLabel,
+      outputDir: exportFolder,
+      phase: '正在准备...',
+      detail: '已加入任务中心，可继续操作页面',
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    })
+    taskCenterSetActiveExportTaskId(exportTaskId)
 
     try {
-      const sessionList = [selectedSession]
+      const sessionList = [targetSessionId]
       const exportOptions = {
         format: options.format,
         dateRange: (options.startDate && options.endDate) ? {
@@ -1814,19 +1847,60 @@ function ExportPage() {
         )
         setExportResult(result)
         // 导出成功后保存记录并刷新
-        if (result.success && sessionDetail) {
-          await window.electronAPI.export.saveExportRecord(selectedSession, options.format, sessionDetail.messageCount)
-          const records = await window.electronAPI.export.getExportRecords(selectedSession)
+        if (result.success) {
+          taskCenterPatchTask(exportTaskId, {
+            status: 'success',
+            progressCurrent: 1,
+            progressTotal: 1,
+            successCount: result.successCount ?? 1,
+            failCount: result.failCount ?? 0,
+            phase: '导出完成',
+            detail: '导出完成，可在任务中心打开导出目录',
+            outputDir: exportFolder
+          })
+
+          await window.electronAPI.export.saveExportRecord(targetSessionId, options.format, targetMessageCount)
+          const records = await window.electronAPI.export.getExportRecords(targetSessionId)
           setExportRecords(records)
+        } else {
+          taskCenterPatchTask(exportTaskId, {
+            status: 'error',
+            progressCurrent: 1,
+            progressTotal: 1,
+            successCount: result.successCount ?? 0,
+            failCount: result.failCount ?? 1,
+            phase: '导出失败',
+            detail: '导出失败',
+            error: result.error || '导出失败'
+          })
         }
       } else {
-        setExportResult({ success: false, error: `${options.format.toUpperCase()} 格式导出功能开发中...` })
+        const errorMessage = `${options.format.toUpperCase()} 格式导出功能开发中...`
+        setExportResult({ success: false, error: errorMessage })
+        taskCenterPatchTask(exportTaskId, {
+          status: 'error',
+          progressCurrent: 1,
+          progressTotal: 1,
+          phase: '导出失败',
+          detail: '导出失败',
+          error: errorMessage
+        })
       }
     } catch (e) {
       console.error('导出失败:', e)
-      setExportResult({ success: false, error: String(e) })
+      const errorMessage = e instanceof Error ? e.message : String(e)
+      setExportResult({ success: false, error: errorMessage })
+      taskCenterPatchTask(exportTaskId, {
+        status: 'error',
+        progressCurrent: 1,
+        progressTotal: 1,
+        phase: '导出失败',
+        detail: '导出失败',
+        error: errorMessage
+      })
     } finally {
       setIsExporting(false)
+      taskCenterSetActiveExportTaskId(null)
     }
   }
 
@@ -1938,7 +2012,6 @@ function ExportPage() {
                             const next = !v
                             if (next) {
                               setShowMoreMenu(false)
-                              setShowTaskCenterPopover(false)
                             }
                             return next
                           })
@@ -1960,155 +2033,6 @@ function ExportPage() {
                         </>
                       )}
                     </div>
-                    <div className="session-account-task-wrap">
-                      <button
-                        type="button"
-                        className={`session-account-task-btn ${showTaskCenterPopover ? 'active' : ''}`}
-                        title="任务中心"
-                        onClick={() => {
-                          setShowTaskCenterPopover(v => {
-                            const next = !v
-                            if (next) {
-                              setShowUsageTipsPopover(false)
-                              setShowMoreMenu(false)
-                            }
-                            return next
-                          })
-                        }}
-                      >
-                        <ListTodo size={14} />
-                        {taskCenterActiveCount > 0 && (
-                          <span className="task-badge">{taskCenterActiveCount}</span>
-                        )}
-                      </button>
-                      {showTaskCenterPopover && (
-                        <>
-                          <div className="more-menu-overlay" onClick={() => setShowTaskCenterPopover(false)} />
-                          <div className="session-task-center-popover">
-                            <div className="session-task-center-header">
-                              <div className="title">任务中心</div>
-                              <button type="button" onClick={() => setShowTaskCenterPopover(false)}>收起</button>
-                            </div>
-                            {taskCenterTasks.length === 0 ? (
-                              <div className="session-task-center-empty">暂无任务</div>
-                            ) : (
-                              <div className="session-task-center-sections">
-                                {taskCenterPendingTasks.length > 0 && (
-                                  <div className="task-section">
-                                    <div className="task-section-title">待开始（{taskCenterPendingTasks.length}）</div>
-                                    {taskCenterPendingTasks.map(task => (
-                                      <div key={task.id} className="task-card">
-                                        <div className="task-card-top">
-                                          <div className="task-main">
-                                            <span className="task-type">{task.typeLabel}</span>
-                                            <span className="task-name">{task.sessionName}</span>
-                                          </div>
-                                          <span className="task-state pending">待开始</span>
-                                        </div>
-                                      </div>
-                                    ))}
-                                  </div>
-                                )}
-
-                                {taskCenterRunningTasks.length > 0 && (
-                                  <div className="task-section">
-                                    <div className="task-section-title">进行中（{taskCenterRunningTasks.length}）</div>
-                                    {taskCenterRunningTasks.map(task => (
-                                      <div key={task.id} className="task-card">
-                                        <div className="task-card-top">
-                                          <div className="task-main">
-                                            <span className="task-type">{task.typeLabel}</span>
-                                            <span className="task-name">{task.sessionName}</span>
-                                          </div>
-                                          <span className="task-state running">
-                                            <Loader2 size={11} className="spin" />
-                                            <span>进行中</span>
-                                          </span>
-                                        </div>
-                                        <div className="task-progress-meta">
-                                          <span>{task.progressCurrent} / {task.progressTotal} 张</span>
-                                          <span>成功 {task.successCount} · 失败 {task.failCount}</span>
-                                        </div>
-                                        <div className="task-progress-bar">
-                                          <div
-                                            className="task-progress-fill"
-                                            style={{ width: `${task.progressTotal > 0 ? (task.progressCurrent / task.progressTotal) * 100 : 0}%` }}
-                                          />
-                                        </div>
-                                      </div>
-                                    ))}
-                                  </div>
-                                )}
-
-                                {taskCenterFinishedTasks.length > 0 && (
-                                  <div className="task-section">
-                                    <div className="task-section-title">已完成（{taskCenterFinishedTasks.length}）</div>
-                                    {taskCenterFinishedTasks.map(task => (
-                                      <div key={task.id} className="task-card">
-                                        <div className="task-card-top">
-                                          <div className="task-main">
-                                            <span className="task-type">{task.typeLabel}</span>
-                                            <span className="task-name">{task.sessionName}</span>
-                                          </div>
-                                          <span className={`task-state ${task.status}`}>
-                                            {task.status === 'success' ? (
-                                              <>
-                                                <CheckCircle size={11} />
-                                                <span>已完成</span>
-                                              </>
-                                            ) : (
-                                              <>
-                                                <XCircle size={11} />
-                                                <span>失败</span>
-                                              </>
-                                            )}
-                                          </span>
-                                        </div>
-                                        <div className="task-progress-meta">
-                                          <span>{task.progressCurrent} / {task.progressTotal} 张</span>
-                                          <span>成功 {task.successCount} · 失败 {task.failCount}</span>
-                                        </div>
-                                        {task.status === 'error' && task.error && (
-                                          <div className="task-error-text">{task.error}</div>
-                                        )}
-                                        <div className="task-card-actions">
-                                          {task.status === 'success' && task.sessionId && (
-                                            <button
-                                              type="button"
-                                              onClick={async () => {
-                                                await selectSession(task.sessionId)
-                                                setShowTaskCenterPopover(false)
-                                                setTimeout(() => { void openSessionImageAssetsModal() }, 0)
-                                              }}
-                                            >
-                                              查看图片
-                                            </button>
-                                          )}
-                                          <button
-                                            type="button"
-                                            onClick={() => {
-                                              setShowSessionImageDecryptProgress(false)
-                                              setSessionImageDecryptTaskSessionId(null)
-                                              setSessionImageDecryptTaskSessionName('')
-                                              setSessionImageDecryptTaskStatus('running')
-                                              setSessionImageDecryptTaskStats({ success: 0, fail: 0 })
-                                              setSessionImageDecryptTaskError(null)
-                                              setSessionImageDecryptProgress({ current: 0, total: 0 })
-                                            }}
-                                          >
-                                            关闭
-                                          </button>
-                                        </div>
-                                      </div>
-                                    ))}
-                                  </div>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        </>
-                      )}
-                    </div>
                   </div>
                 </div>
               </div>
@@ -2120,7 +2044,6 @@ function ExportPage() {
                       const next = !v
                       if (next) {
                         setShowUsageTipsPopover(false)
-                        setShowTaskCenterPopover(false)
                       }
                       return next
                     })
@@ -2938,9 +2861,9 @@ function ExportPage() {
                   <button
                     className="export-btn"
                     onClick={startExport}
-                    disabled={!selectedSession || !exportFolder || isExporting}
+                    disabled={!selectedSession || !exportFolder || isExporting || hasRunningGlobalChatExportTask}
                   >
-                    {isExporting ? (
+                    {(isExporting || hasRunningGlobalChatExportTask) ? (
                       <>
                         <Loader2 size={18} className="spin" />
                         <span>导出中...</span>
@@ -3144,9 +3067,9 @@ function ExportPage() {
               <button
                 className="export-btn"
                 onClick={startContactExport}
-                disabled={!exportFolder || isExporting}
+                disabled={!exportFolder || isExporting || hasRunningGlobalChatExportTask}
               >
-                {isExporting ? (
+                {(isExporting || hasRunningGlobalChatExportTask) ? (
                   <>
                     <Loader2 size={18} className="spin" />
                     <span>导出中...</span>
@@ -3801,45 +3724,6 @@ function ExportPage() {
               )}
             </div>
           )}
-        </div>
-      )}
-
-      {/* 导出进度弹窗 */}
-      {isExporting && (
-        <div className="export-overlay">
-          <div className="export-progress-modal">
-            <div className="progress-spinner">
-              <Loader2 size={32} className="spin" />
-            </div>
-            <h3>正在导出</h3>
-            {exportProgress.phase && <p className="progress-phase">{exportProgress.phase}</p>}
-            {exportProgress.currentName && (
-              <p className="progress-text">当前会话: {exportProgress.currentName}</p>
-            )}
-            {exportProgress.detail && <p className="progress-detail">{exportProgress.detail}</p>}
-            {!exportProgress.currentName && !exportProgress.detail && (
-              <p className="progress-text">准备中...</p>
-            )}
-            <div className="progress-export-options">
-              <span>格式: {options.format.toUpperCase()}</span>
-              {options.exportImages && <span> · 含图片</span>}
-              {options.exportVideos && <span> · 含视频</span>}
-              {options.exportEmojis && <span> · 含表情</span>}
-              {options.exportVoices && <span> · 含语音</span>}
-              {options.exportAvatars && <span> · 含头像</span>}
-            </div>
-            {exportProgress.total > 0 && (
-              <>
-                <div className="progress-bar">
-                  <div
-                    className="progress-fill"
-                    style={{ width: `${(exportProgress.current / exportProgress.total) * 100}%` }}
-                  />
-                </div>
-                <p className="progress-count">{exportProgress.current} / {exportProgress.total} 个会话</p>
-              </>
-            )}
-          </div>
         </div>
       )}
 
