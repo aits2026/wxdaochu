@@ -11,6 +11,7 @@ import { dbPathService } from './services/dbPathService'
 import { wcdbService } from './services/wcdbService'
 import { dataManagementService } from './services/dataManagementService'
 import { imageDecryptService } from './services/imageDecryptService'
+import { imagePredecryptWarmupService } from './services/imagePredecryptWarmupService'
 import { imageKeyService } from './services/imageKeyService'
 import { chatService } from './services/chatService'
 import { analyticsService } from './services/analyticsService'
@@ -1803,6 +1804,7 @@ function registerIpcHandlers() {
     const result = await chatService.connect()
     if (result.success) {
       logService?.info('Chat', '聊天服务连接成功')
+      imagePredecryptWarmupService.notifyChatReady('ipc-chat-connect')
     } else {
       // 聊天连接失败可能是数据库未准备好，使用WARN级别
       logService?.warn('Chat', '聊天服务连接失败', { error: result.error })
@@ -2130,15 +2132,25 @@ function registerIpcHandlers() {
 
   // 导出相关
   ipcMain.handle('export:exportSessions', async (event, sessionIds: string[], outputDir: string, options: ExportOptions) => {
-    return exportService.exportSessions(sessionIds, outputDir, options, (progress) => {
-      event.sender.send('export:progress', progress)
-    })
+    imagePredecryptWarmupService.setExportBusy(true)
+    try {
+      return await exportService.exportSessions(sessionIds, outputDir, options, (progress) => {
+        event.sender.send('export:progress', progress)
+      })
+    } finally {
+      imagePredecryptWarmupService.setExportBusy(false)
+    }
   })
 
   ipcMain.handle('export:exportSession', async (event, sessionId: string, outputPath: string, options: ExportOptions) => {
-    return exportService.exportSessionToChatLab(sessionId, outputPath, options, (progress) => {
-      event.sender.send('export:progress', progress)
-    })
+    imagePredecryptWarmupService.setExportBusy(true)
+    try {
+      return await exportService.exportSessionToChatLab(sessionId, outputPath, options, (progress) => {
+        event.sender.send('export:progress', progress)
+      })
+    } finally {
+      imagePredecryptWarmupService.setExportBusy(false)
+    }
   })
 
   ipcMain.handle('export:exportContacts', async (event, outputDir: string, options: any) => {
@@ -3488,9 +3500,11 @@ app.whenReady().then(async () => {
   })
 
   registerIpcHandlers()
+  imagePredecryptWarmupService.start()
 
   // 监听增量更新事件
   chatService.on('sessions-update-available', (sessions) => {
+    imagePredecryptWarmupService.notifySessionsUpdated()
     // 广播给所有窗口
     BrowserWindow.getAllWindows().forEach(win => {
       if (!win.isDestroyed()) {
@@ -3520,6 +3534,7 @@ app.whenReady().then(async () => {
           // 增量解密完成后，重新连接数据库并启动自动同步
           chatService.connect().then(connectResult => {
             if (connectResult.success) {
+              imagePredecryptWarmupService.notifyChatReady('auto-incremental-update')
               // 重新启动自动同步
               chatService.startAutoSync(5000)
               // 立即检查一次更新
@@ -3540,6 +3555,7 @@ app.whenReady().then(async () => {
         if (res.success && res.updated) {
           chatService.connect().then(connectResult => {
             if (connectResult.success) {
+              imagePredecryptWarmupService.notifyChatReady('startup-incremental-update')
               chatService.startAutoSync(5000)
               chatService.checkUpdates(true)
             }
@@ -3554,6 +3570,9 @@ app.whenReady().then(async () => {
 
   // 检查是否需要显示启动屏并连接数据库
   const shouldShowSplash = await checkAndConnectOnStartup()
+  if (shouldShowSplash) {
+    imagePredecryptWarmupService.notifyChatReady('startup-connect')
+  }
 
   // 只有在配置完整时才创建主窗口
   // 如果配置不完整，checkAndConnectOnStartup 会创建引导窗口
@@ -3582,6 +3601,7 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
+  imagePredecryptWarmupService.stop()
   // 关闭配置数据库连接
   configService?.close()
 })
