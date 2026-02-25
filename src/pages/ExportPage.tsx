@@ -2487,6 +2487,7 @@ function ExportPage() {
                                                     <CheckCircle size={11} />
                                                     <span>已就绪</span>
                                                   </span>
+                                                ) : null
                                                 )}
                                               </>
                                             ) : currentSessionVideoOverview?.status === 'partial' ? (
