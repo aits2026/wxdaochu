@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useDeferredValue, useMemo, useRef, startTransition, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react'
+import { useState, useEffect, useCallback, useDeferredValue, useMemo, useRef, startTransition } from 'react'
 import { Search, Download, FolderOpen, RefreshCw, Check, FileJson, FileText, Table, Loader2, X, FileSpreadsheet, Database, FileCode, CheckCircle, XCircle, ExternalLink, MessageSquare, Users, User, Filter, Image, Video, CircleUserRound, Smile, Mic, Newspaper, ChevronDown, MoreHorizontal, ArrowLeft, Eye, Aperture, CircleHelp } from 'lucide-react'
 import { List, RowComponentProps } from 'react-window'
 import DateRangePicker from '../components/DateRangePicker'
@@ -1205,15 +1205,9 @@ function ExportPage() {
     }
   }, [getSessionDisplayName, inspectSessionVideoAssets, selectedSession])
 
-  const handleImageStatCardClick = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
-    const target = event.target as HTMLElement | null
-    if (target?.closest('button, a, input, select, textarea')) return
-    void openSessionImageAssetsModal()
-  }, [openSessionImageAssetsModal])
-
-  const handleImageStatCardKeyDown = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (event.key !== 'Enter' && event.key !== ' ') return
-    event.preventDefault()
+  const handleImageStatCardClick = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    const target = event.target
+    if (target instanceof Element && target.closest('button, a, input, select, textarea')) return
     void openSessionImageAssetsModal()
   }, [openSessionImageAssetsModal])
 
@@ -2452,11 +2446,7 @@ function ExportPage() {
                                   <div
                                     key={item.label}
                                     className={item.action === 'decrypt' ? 'session-media-stat-card clickable-image-card' : 'session-media-stat-card'}
-                                    role={item.action === 'decrypt' ? 'button' : undefined}
-                                    tabIndex={item.action === 'decrypt' ? 0 : undefined}
-                                    aria-label={item.action === 'decrypt' ? '打开会话图片详情' : undefined}
                                     onClick={item.action === 'decrypt' ? handleImageStatCardClick : undefined}
-                                    onKeyDown={item.action === 'decrypt' ? handleImageStatCardKeyDown : undefined}
                                     style={{
                                       flex: 1,
                                       display: 'flex',
