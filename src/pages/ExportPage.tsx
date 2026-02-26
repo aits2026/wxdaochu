@@ -3896,13 +3896,6 @@ function ExportPage() {
                           {exportFolder || '未设置'}
                         </span>
                       </div>
-                      <button
-                        type="button"
-                        className="session-account-export-path-btn"
-                        onClick={selectExportFolder}
-                      >
-                        {exportFolder ? '更换' : '选择'}
-                      </button>
                       {exportFolder && (
                         <button
                           type="button"
