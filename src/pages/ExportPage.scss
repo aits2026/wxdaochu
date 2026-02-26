@@ -1196,9 +1196,9 @@
   .profile-switcher-dropdown {
     position: absolute;
     top: calc(100% + 6px);
-    right: 0;
+    left: 0;
     z-index: 100;
-    width: min(420px, calc(100vw - 32px));
+    width: min(420px, calc(100vw - 48px));
     background: var(--bg-primary);
     border: 1px solid var(--border-color);
     border-radius: 12px;

@@ -2,6 +2,7 @@ import Database from 'better-sqlite3'
 import { app } from 'electron'
 import path from 'path'
 import fs from 'fs'
+import crypto from 'crypto'
 import { DEFAULT_PROFILE_ID, ensureProfileRegistry, getActiveProfileId, getProfileConfigDbPath } from './profileStorage'
 
 interface ConfigSchema {
@@ -102,7 +103,49 @@ const defaults: ConfigSchema = {
   aiMessageLimit: 3000     // 默认3000条，用户可调至5000
 }
 
+type SensitiveConfigKey = 'decryptKey' | 'imageXorKey' | 'imageAesKey' | 'aiProviderConfigs'
+
+const SENSITIVE_CONFIG_KEYS: SensitiveConfigKey[] = [
+  'decryptKey',
+  'imageXorKey',
+  'imageAesKey',
+  'aiProviderConfigs'
+]
+
+const SECURE_SECRETS_ENVELOPE_KEY = '__secureSecretsEnvelope'
+const SECURE_SECRETS_VERSION = 1
+
+interface SecureSecretsEnvelope {
+  version: number
+  alg: 'aes-256-gcm'
+  kdf: 'scrypt'
+  salt: string
+  iv: string
+  authTag: string
+  ciphertext: string
+  nonEmptyKeys: SensitiveConfigKey[]
+  updatedAt: number
+}
+
+interface UnlockedSecureSecretsCache {
+  derivedKey: Buffer
+  secrets: Partial<Record<SensitiveConfigKey, ConfigSchema[SensitiveConfigKey]>>
+  envelopeSalt: string
+}
+
+function isSensitiveConfigKey(key: string): key is SensitiveConfigKey {
+  return (SENSITIVE_CONFIG_KEYS as string[]).includes(key)
+}
+
+function isNonEmptySensitiveValue(key: SensitiveConfigKey, value: unknown): boolean {
+  if (key === 'aiProviderConfigs') {
+    return !!value && typeof value === 'object' && Object.keys(value as Record<string, unknown>).length > 0
+  }
+  return typeof value === 'string' ? value.trim().length > 0 : !!value
+}
+
 export class ConfigService {
+  private static unlockedSecureSecrets = new Map<string, UnlockedSecureSecretsCache>()
   private db: Database.Database | null = null
   private dbPath: string
   private profileId: string
@@ -116,6 +159,177 @@ export class ConfigService {
 
   getProfileId(): string {
     return this.profileId
+  }
+
+  private getUnlockedSecureSecrets(): UnlockedSecureSecretsCache | null {
+    return ConfigService.unlockedSecureSecrets.get(this.profileId) || null
+  }
+
+  private setUnlockedSecureSecrets(cache: UnlockedSecureSecretsCache | null): void {
+    if (!cache) {
+      ConfigService.unlockedSecureSecrets.delete(this.profileId)
+      return
+    }
+    ConfigService.unlockedSecureSecrets.set(this.profileId, cache)
+  }
+
+  private readConfigRowValue(key: string): string | null {
+    if (!this.db) return null
+    const row = this.db.prepare('SELECT value FROM config WHERE key = ?').get(key) as { value: string } | undefined
+    return row?.value ?? null
+  }
+
+  private writeConfigRowValue(key: string, jsonValue: string): void {
+    if (!this.db) return
+    this.db.prepare(`
+      INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)
+    `).run(key, jsonValue)
+  }
+
+  private deleteConfigRow(key: string): void {
+    if (!this.db) return
+    this.db.prepare('DELETE FROM config WHERE key = ?').run(key)
+  }
+
+  private getRawConfigValue<T = unknown>(key: string): T | undefined {
+    const raw = this.readConfigRowValue(key)
+    if (raw === null) return undefined
+    return JSON.parse(raw) as T
+  }
+
+  private setRawConfigValue(key: string, value: unknown): void {
+    this.writeConfigRowValue(key, JSON.stringify(value))
+  }
+
+  private getSecureSecretsEnvelope(): SecureSecretsEnvelope | null {
+    try {
+      const env = this.getRawConfigValue<SecureSecretsEnvelope>(SECURE_SECRETS_ENVELOPE_KEY)
+      if (!env || typeof env !== 'object') return null
+      if (env.version !== SECURE_SECRETS_VERSION) return null
+      if (!env.salt || !env.iv || !env.authTag || !env.ciphertext) return null
+      return {
+        ...env,
+        nonEmptyKeys: Array.isArray(env.nonEmptyKeys)
+          ? env.nonEmptyKeys.filter((key): key is SensitiveConfigKey => isSensitiveConfigKey(String(key)))
+          : []
+      }
+    } catch {
+      return null
+    }
+  }
+
+  private setSecureSecretsEnvelope(envelope: SecureSecretsEnvelope | null): void {
+    if (!this.db) return
+    if (!envelope) {
+      this.deleteConfigRow(SECURE_SECRETS_ENVELOPE_KEY)
+      return
+    }
+    this.setRawConfigValue(SECURE_SECRETS_ENVELOPE_KEY, envelope)
+  }
+
+  private deriveSecureSecretsKey(password: string, saltHex: string): Buffer {
+    return crypto.scryptSync(password, Buffer.from(saltHex, 'hex'), 32)
+  }
+
+  private encryptSecureSecretsPayload(
+    password: string,
+    secrets: Partial<Record<SensitiveConfigKey, ConfigSchema[SensitiveConfigKey]>>
+  ): { envelope: SecureSecretsEnvelope; cache: UnlockedSecureSecretsCache } {
+    const salt = crypto.randomBytes(16).toString('hex')
+    const key = this.deriveSecureSecretsKey(password, salt)
+    return this.encryptSecureSecretsPayloadWithDerivedKey(key, salt, secrets)
+  }
+
+  private encryptSecureSecretsPayloadWithDerivedKey(
+    derivedKey: Buffer,
+    saltHex: string,
+    secrets: Partial<Record<SensitiveConfigKey, ConfigSchema[SensitiveConfigKey]>>
+  ): { envelope: SecureSecretsEnvelope; cache: UnlockedSecureSecretsCache } {
+    const iv = crypto.randomBytes(12)
+    const plainPayload = JSON.stringify(secrets)
+    const cipher = crypto.createCipheriv('aes-256-gcm', derivedKey, iv)
+    const ciphertext = Buffer.concat([cipher.update(plainPayload, 'utf8'), cipher.final()])
+    const authTag = cipher.getAuthTag()
+
+    const nonEmptyKeys = SENSITIVE_CONFIG_KEYS.filter((key) => isNonEmptySensitiveValue(key, secrets[key]))
+    const envelope: SecureSecretsEnvelope = {
+      version: SECURE_SECRETS_VERSION,
+      alg: 'aes-256-gcm',
+      kdf: 'scrypt',
+      salt: saltHex,
+      iv: iv.toString('hex'),
+      authTag: authTag.toString('hex'),
+      ciphertext: ciphertext.toString('hex'),
+      nonEmptyKeys,
+      updatedAt: Date.now()
+    }
+
+    return {
+      envelope,
+      cache: {
+        derivedKey,
+        secrets,
+        envelopeSalt: saltHex
+      }
+    }
+  }
+
+  private decryptSecureSecretsPayload(
+    envelope: SecureSecretsEnvelope,
+    password: string
+  ): UnlockedSecureSecretsCache {
+    const derivedKey = this.deriveSecureSecretsKey(password, envelope.salt)
+    const decipher = crypto.createDecipheriv('aes-256-gcm', derivedKey, Buffer.from(envelope.iv, 'hex'))
+    decipher.setAuthTag(Buffer.from(envelope.authTag, 'hex'))
+    const plain = Buffer.concat([
+      decipher.update(Buffer.from(envelope.ciphertext, 'hex')),
+      decipher.final()
+    ]).toString('utf8')
+    const parsed = JSON.parse(plain) as Partial<Record<SensitiveConfigKey, ConfigSchema[SensitiveConfigKey]>>
+
+    const secrets: Partial<Record<SensitiveConfigKey, ConfigSchema[SensitiveConfigKey]>> = {}
+    for (const key of SENSITIVE_CONFIG_KEYS) {
+      if (Object.prototype.hasOwnProperty.call(parsed, key)) {
+        secrets[key] = parsed[key] as ConfigSchema[typeof key]
+      }
+    }
+
+    return {
+      derivedKey,
+      secrets,
+      envelopeSalt: envelope.salt
+    }
+  }
+
+  private readSensitiveSecretsFromPlaintextRows(): Partial<Record<SensitiveConfigKey, ConfigSchema[SensitiveConfigKey]>> {
+    const result: Partial<Record<SensitiveConfigKey, ConfigSchema[SensitiveConfigKey]>> = {}
+    for (const key of SENSITIVE_CONFIG_KEYS) {
+      const raw = this.readConfigRowValue(key)
+      if (raw === null) {
+        result[key] = defaults[key]
+        continue
+      }
+      try {
+        result[key] = JSON.parse(raw)
+      } catch {
+        result[key] = defaults[key]
+      }
+    }
+    return result
+  }
+
+  private clearSensitivePlaintextRows(): void {
+    for (const key of SENSITIVE_CONFIG_KEYS) {
+      this.setRawConfigValue(key, defaults[key])
+    }
+  }
+
+  private persistUnlockedSensitiveSecrets(): void {
+    const cache = this.getUnlockedSecureSecrets()
+    if (!cache) return
+    const { envelope } = this.encryptSecureSecretsPayloadWithDerivedKey(cache.derivedKey, cache.envelopeSalt, cache.secrets)
+    this.setSecureSecretsEnvelope(envelope)
+    this.clearSensitivePlaintextRows()
   }
 
   static getSuggestedCacheBasePath(profileId?: string): string {
@@ -229,9 +443,24 @@ export class ConfigService {
       if (!this.db) {
         return defaults[key]
       }
-      const row = this.db.prepare('SELECT value FROM config WHERE key = ?').get(key) as { value: string } | undefined
-      if (row) {
-        return JSON.parse(row.value)
+
+      if (isSensitiveConfigKey(String(key))) {
+        const envelope = this.getSecureSecretsEnvelope()
+        if (envelope) {
+          const unlocked = this.getUnlockedSecureSecrets()
+          if (!unlocked) {
+            return defaults[key]
+          }
+          if (Object.prototype.hasOwnProperty.call(unlocked.secrets, key)) {
+            return (unlocked.secrets[key as SensitiveConfigKey] as ConfigSchema[K]) ?? defaults[key]
+          }
+          return defaults[key]
+        }
+      }
+
+      const raw = this.readConfigRowValue(String(key))
+      if (raw !== null) {
+        return JSON.parse(raw)
       }
       return defaults[key]
     } catch (e) {
@@ -243,9 +472,20 @@ export class ConfigService {
   set<K extends keyof ConfigSchema>(key: K, value: ConfigSchema[K]): void {
     try {
       if (!this.db) return
-      this.db.prepare(`
-        INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)
-      `).run(key, JSON.stringify(value))
+
+      if (isSensitiveConfigKey(String(key)) && this.getSecureSecretsEnvelope()) {
+        const unlocked = this.getUnlockedSecureSecrets()
+        if (!unlocked) {
+          console.warn(`[Config] profile ${this.profileId} 的敏感配置 ${String(key)} 已加密且当前未解锁，忽略写入`)
+          return
+        }
+        unlocked.secrets[key as SensitiveConfigKey] = value as ConfigSchema[SensitiveConfigKey]
+        this.setUnlockedSecureSecrets(unlocked)
+        this.persistUnlockedSensitiveSecrets()
+        return
+      }
+
+      this.writeConfigRowValue(String(key), JSON.stringify(value))
     } catch (e) {
       console.error(`设置配置 ${key} 失败:`, e)
     }
@@ -263,6 +503,17 @@ export class ConfigService {
           (result as any)[row.key] = JSON.parse(row.value)
         }
       }
+      const envelope = this.getSecureSecretsEnvelope()
+      if (envelope) {
+        const unlocked = this.getUnlockedSecureSecrets()
+        for (const key of SENSITIVE_CONFIG_KEYS) {
+          if (unlocked && Object.prototype.hasOwnProperty.call(unlocked.secrets, key)) {
+            ;(result as any)[key] = unlocked.secrets[key]
+          } else {
+            ;(result as any)[key] = defaults[key]
+          }
+        }
+      }
       return result
     } catch (e) {
       console.error('获取所有配置失败:', e)
@@ -274,6 +525,7 @@ export class ConfigService {
     try {
       if (!this.db) return
       this.db.exec('DELETE FROM config')
+      this.setUnlockedSecureSecrets(null)
       // 重新插入默认值
       const insertStmt = this.db.prepare(`
         INSERT INTO config (key, value) VALUES (?, ?)
@@ -283,6 +535,116 @@ export class ConfigService {
       }
     } catch (e) {
       console.error('清除配置失败:', e)
+    }
+  }
+
+  enableSensitiveSecretsProtection(password: string): { success: boolean; error?: string } {
+    try {
+      if (!this.db) return { success: false, error: '配置数据库未初始化' }
+      if (!password) return { success: false, error: '密码不能为空' }
+
+      const existingEnvelope = this.getSecureSecretsEnvelope()
+      let secrets: Partial<Record<SensitiveConfigKey, ConfigSchema[SensitiveConfigKey]>>
+
+      if (existingEnvelope) {
+        const unlocked = this.getUnlockedSecureSecrets()
+        if (unlocked) {
+          secrets = unlocked.secrets
+        } else {
+          secrets = this.decryptSecureSecretsPayload(existingEnvelope, password).secrets
+        }
+      } else {
+        secrets = this.readSensitiveSecretsFromPlaintextRows()
+      }
+
+      const { envelope, cache } = this.encryptSecureSecretsPayload(password, secrets)
+      this.setSecureSecretsEnvelope(envelope)
+      this.clearSensitivePlaintextRows()
+      this.setUnlockedSecureSecrets(cache)
+      return { success: true }
+    } catch (e) {
+      return { success: false, error: e instanceof Error ? e.message : String(e) }
+    }
+  }
+
+  unlockSensitiveSecrets(password: string): { success: boolean; error?: string } {
+    try {
+      if (!this.db) return { success: false, error: '配置数据库未初始化' }
+      const envelope = this.getSecureSecretsEnvelope()
+      if (!envelope) {
+        return { success: true }
+      }
+      const cache = this.decryptSecureSecretsPayload(envelope, password)
+      this.setUnlockedSecureSecrets(cache)
+      return { success: true }
+    } catch (e) {
+      return { success: false, error: '敏感配置解锁失败，密码可能错误' }
+    }
+  }
+
+  lockSensitiveSecrets(): void {
+    this.setUnlockedSecureSecrets(null)
+  }
+
+  disableSensitiveSecretsProtection(): { success: boolean; error?: string } {
+    try {
+      if (!this.db) return { success: false, error: '配置数据库未初始化' }
+      const envelope = this.getSecureSecretsEnvelope()
+      if (!envelope) {
+        this.setUnlockedSecureSecrets(null)
+        return { success: true }
+      }
+
+      const unlocked = this.getUnlockedSecureSecrets()
+      if (!unlocked) {
+        return { success: false, error: '当前未解锁，无法恢复明文敏感配置' }
+      }
+
+      for (const key of SENSITIVE_CONFIG_KEYS) {
+        const nextValue = Object.prototype.hasOwnProperty.call(unlocked.secrets, key)
+          ? unlocked.secrets[key]
+          : defaults[key]
+        this.setRawConfigValue(key, nextValue)
+      }
+      this.setSecureSecretsEnvelope(null)
+      this.setUnlockedSecureSecrets(null)
+      return { success: true }
+    } catch (e) {
+      return { success: false, error: e instanceof Error ? e.message : String(e) }
+    }
+  }
+
+  hasConfiguredSensitiveValue(key: SensitiveConfigKey): boolean {
+    try {
+      const raw = this.getRawConfigValue<ConfigSchema[SensitiveConfigKey]>(key)
+      if (isNonEmptySensitiveValue(key, raw)) return true
+      const envelope = this.getSecureSecretsEnvelope()
+      if (!envelope) return false
+      return envelope.nonEmptyKeys.includes(key)
+    } catch {
+      return false
+    }
+  }
+
+  hasConfiguredDatabaseConnection(): boolean {
+    const wxid = this.getRawConfigValue<string>('myWxid') || ''
+    const dbPath = this.getRawConfigValue<string>('dbPath') || ''
+    const hasDecryptKey = this.hasConfiguredSensitiveValue('decryptKey')
+    return !!wxid && !!dbPath && hasDecryptKey
+  }
+
+  shouldDeferAutoConnectUntilUnlock(): boolean {
+    try {
+      const authEnabled = !!this.getRawConfigValue<boolean>('authEnabled')
+      if (!authEnabled) return false
+      const passwordHash = this.getRawConfigValue<string>('authPasswordHash') || ''
+      if (!passwordHash) return false
+      const envelope = this.getSecureSecretsEnvelope()
+      if (!envelope) return false
+      const unlocked = this.getUnlockedSecureSecrets()
+      return !unlocked
+    } catch {
+      return false
     }
   }
 

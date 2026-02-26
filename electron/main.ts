@@ -1137,6 +1137,28 @@ function registerIpcHandlers() {
     return { success: true, profileId: result.profileId }
   })
 
+  // 当前 profile 敏感配置保护（按本机密码解密）
+  ipcMain.handle('profileSecurity:enableWithPassword', async (_, password: string) => {
+    if (!configService) configService = new ConfigService()
+    return configService.enableSensitiveSecretsProtection(password)
+  })
+
+  ipcMain.handle('profileSecurity:unlockWithPassword', async (_, password: string) => {
+    if (!configService) configService = new ConfigService()
+    return configService.unlockSensitiveSecrets(password)
+  })
+
+  ipcMain.handle('profileSecurity:disableProtection', async () => {
+    if (!configService) configService = new ConfigService()
+    return configService.disableSensitiveSecretsProtection()
+  })
+
+  ipcMain.handle('profileSecurity:lock', async () => {
+    if (!configService) configService = new ConfigService()
+    configService.lockSensitiveSecrets()
+    return { success: true }
+  })
+
   // TLD 缓存相关
   ipcMain.handle('config:getTldCache', async () => {
     return configService?.getTldCache()
@@ -3469,17 +3491,21 @@ async function checkAndConnectOnStartup(): Promise<boolean> {
     profileService.touchCurrentProfile()
   }
 
-  // 检查配置是否完整
-  const wxid = configService?.get('myWxid')
-  const dbPath = configService?.get('dbPath')
-  const decryptKey = configService?.get('decryptKey')
-
-  // 如果配置不完整，打开引导窗口而不是主窗口
-  if (!wxid || !dbPath || !decryptKey) {
+  // 检查配置是否完整（支持敏感密钥已加密但尚未解锁的场景）
+  if (!configService?.hasConfiguredDatabaseConnection()) {
     // 创建引导窗口
     createWelcomeWindow()
     return false
   }
+
+  // 密码保护账号在启动时延后自动连接，等锁屏解锁后由渲染进程触发
+  if (configService.shouldDeferAutoConnectUntilUnlock()) {
+    return true
+  }
+
+  const wxid = configService?.get('myWxid')
+  const dbPath = configService?.get('dbPath')
+  const decryptKey = configService?.get('decryptKey')
 
   // 开发环境下：等待 Vite 服务器就绪后再显示启动屏
   if (process.env.VITE_DEV_SERVER_URL) {
@@ -3676,7 +3702,7 @@ app.whenReady().then(async () => {
 
   // 检查是否需要显示启动屏并连接数据库
   const shouldShowSplash = await checkAndConnectOnStartup()
-  if (shouldShowSplash) {
+  if (shouldShowSplash && startupDbConnected) {
     imagePredecryptWarmupService.notifyChatReady('startup-connect')
   }
 

@@ -394,6 +394,13 @@ function WelcomePage({ standalone = false }: WelcomePageProps) {
       await configService.setDecryptKey(decryptKey)
       await configService.setMyWxid(wxid)
       await configService.setCachePath(cachePath)
+      // 新账号首次完成引导时，若未设置导出目录，则默认与引导页目录保持一致
+      if (cachePath) {
+        const savedExportPath = await configService.getExportPath()
+        if (!savedExportPath) {
+          await configService.setExportPath(cachePath)
+        }
+      }
       if (imageXorKey) {
         await configService.setImageXorKey(imageXorKey)
       }

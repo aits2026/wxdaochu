@@ -90,6 +90,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
     enableAuth: async () => {
         try {
+            const prevAuthMethod = get().authMethod
+
             // 优先尝试使用原生 Windows Hello DLL (更快)
             if (window.electronAPI?.windowsHello) {
                 const available = await window.electronAPI.windowsHello.isAvailable()
@@ -97,6 +99,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
                     // 使用原生 API 进行首次验证
                     const result = await window.electronAPI.windowsHello.verify('请验证您的身份以启用 Windows Hello 保护')
                     if (result.success) {
+                        if (prevAuthMethod === 'password') {
+                            const secureResult = await window.electronAPI.profileSecurity.disableProtection()
+                            if (!secureResult.success) {
+                                return { success: false, error: secureResult.error || '切换认证方式失败：无法恢复敏感配置' }
+                            }
+                        }
                         // 保存状态 (使用简单标记，原生 API 不需要 credential ID)
                         set({
                             isAuthEnabled: true,
@@ -135,6 +143,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
             const credential = await navigator.credentials.create({ publicKey }) as PublicKeyCredential
             if (!credential) throw new Error('创建凭证失败')
 
+            if (prevAuthMethod === 'password') {
+                const secureResult = await window.electronAPI.profileSecurity.disableProtection()
+                if (!secureResult.success) {
+                    return { success: false, error: secureResult.error || '切换认证方式失败：无法恢复敏感配置' }
+                }
+            }
             set({
                 isAuthEnabled: true,
                 credentialId: credential.id,
@@ -167,6 +181,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
             await configService.setAuthPasswordSalt(salt)
             await configService.setAuthCredentialId(null) // 清除生物识别
 
+            const secureResult = await window.electronAPI.profileSecurity.enableWithPassword(password)
+            if (!secureResult.success) {
+                return { success: false, error: secureResult.error || '敏感配置加密失败' }
+            }
+
             return { success: true }
         } catch (e: any) {
             return { success: false, error: e.message || '设置密码失败' }
@@ -183,6 +202,14 @@ export const useAuthStore = create<AuthState>((set, get) => ({
             const { hash } = await hashPassword(password, savedSalt)
 
             if (hash === savedHash) {
+                const secureResult = await window.electronAPI.profileSecurity.unlockWithPassword(password)
+                if (!secureResult.success) {
+                    return { success: false, error: secureResult.error || '敏感配置解锁失败' }
+                }
+                const migrateResult = await window.electronAPI.profileSecurity.enableWithPassword(password)
+                if (!migrateResult.success) {
+                    return { success: false, error: migrateResult.error || '敏感配置升级失败' }
+                }
                 set({
                     isLocked: false,
                     isAuthenticated: true
@@ -197,6 +224,14 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     },
 
     disableAuth: async () => {
+        const currentMethod = get().authMethod
+        if (currentMethod === 'password') {
+            const secureResult = await window.electronAPI.profileSecurity.disableProtection()
+            if (!secureResult.success) {
+                throw new Error(secureResult.error || '无法关闭密码保护：敏感配置仍处于加密状态')
+            }
+        }
+        await window.electronAPI.profileSecurity.lock()
         set({
             isAuthEnabled: false,
             credentialId: null,
@@ -262,9 +297,15 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
     lock: () => {
         if (get().isAuthEnabled) {
+            window.electronAPI.profileSecurity.lock().catch(() => { })
             set({ isLocked: true })
         }
     },
 
-    setLocked: (locked) => set({ isLocked: locked })
+    setLocked: (locked) => {
+        if (locked) {
+            window.electronAPI.profileSecurity.lock().catch(() => { })
+        }
+        set({ isLocked: locked })
+    }
 }))

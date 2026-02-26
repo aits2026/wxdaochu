@@ -20,6 +20,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     resetCurrentAndRelaunch: () => ipcRenderer.invoke('profile:resetCurrentAndRelaunch')
   },
 
+  profileSecurity: {
+    enableWithPassword: (password: string) => ipcRenderer.invoke('profileSecurity:enableWithPassword', password),
+    unlockWithPassword: (password: string) => ipcRenderer.invoke('profileSecurity:unlockWithPassword', password),
+    disableProtection: () => ipcRenderer.invoke('profileSecurity:disableProtection'),
+    lock: () => ipcRenderer.invoke('profileSecurity:lock')
+  },
+
   // 数据库操作
   db: {
     open: (dbPath: string, key?: string) => ipcRenderer.invoke('db:open', dbPath, key),

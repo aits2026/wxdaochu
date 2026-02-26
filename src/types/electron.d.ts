@@ -81,6 +81,12 @@ export interface ElectronAPI {
     switch: (profileId: string) => Promise<{ success: boolean; error?: string }>
     resetCurrentAndRelaunch: () => Promise<{ success: boolean; error?: string; profileId?: string }>
   }
+  profileSecurity: {
+    enableWithPassword: (password: string) => Promise<{ success: boolean; error?: string }>
+    unlockWithPassword: (password: string) => Promise<{ success: boolean; error?: string }>
+    disableProtection: () => Promise<{ success: boolean; error?: string }>
+    lock: () => Promise<{ success: boolean; error?: string }>
+  }
   db: {
     open: (dbPath: string, key?: string) => Promise<boolean>
     query: <T = unknown>(sql: string, params?: unknown[]) => Promise<T[]>

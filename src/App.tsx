@@ -201,6 +201,7 @@ function App() {
   useEffect(() => {
     // 独立窗口不需要自动连接主数据库
     if (isChatWindow || isGroupAnalyticsWindow || isMomentsWindow || isAnnualReportWindow || isAgreementWindow || isAISummaryWindow || location.pathname === '/image-viewer-window') return
+    if (isLocked) return
 
     const autoConnect = async () => {
       try {
@@ -268,7 +269,7 @@ function App() {
     }
 
     autoConnect()
-  }, [isChatWindow, isGroupAnalyticsWindow])
+  }, [isChatWindow, isGroupAnalyticsWindow, isMomentsWindow, isAnnualReportWindow, isAgreementWindow, isAISummaryWindow, location.pathname, isLocked])
 
   // 独立聊天窗口 - 只显示聊天页面，无侧边栏
   if (isChatWindow) {
