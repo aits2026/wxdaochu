@@ -284,6 +284,7 @@ export interface ElectronAPI {
         videoCount: number
         voiceCount: number
         emojiCount: number
+        fileCount: number
         commonGroupCount?: number
         commonGroups?: Array<{ username: string; displayName: string }>
         groupInfo?: {

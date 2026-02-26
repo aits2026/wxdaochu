@@ -4150,6 +4150,7 @@ class ChatService extends EventEmitter {
       videoCount: number
       voiceCount: number
       emojiCount: number
+      fileCount: number
       commonGroupCount?: number
       commonGroups?: Array<{ username: string; displayName: string }>
       groupInfo?: {
@@ -4228,6 +4229,7 @@ class ChatService extends EventEmitter {
       let videoCount = 0
       let voiceCount = 0
       let emojiCount = 0
+      let fileCount = 0
 
       for (const { db, tableName, dbPath } of dbTablePairs) {
         try {
@@ -4273,6 +4275,26 @@ class ChatService extends EventEmitter {
               videoCount += typeCountResult.video_count || 0
               voiceCount += typeCountResult.voice_count || 0
               emojiCount += typeCountResult.emoji_count || 0
+            }
+
+            const hasMessageContentCol = colNames.includes('message_content')
+            const hasCompressContentCol = colNames.includes('compress_content')
+            if (hasMessageContentCol || hasCompressContentCol) {
+              const fileRows = db.prepare(`
+                SELECT
+                  ${hasMessageContentCol ? 'message_content' : 'NULL as message_content'},
+                  ${hasCompressContentCol ? 'compress_content' : 'NULL as compress_content'}
+                FROM ${tableName}
+                WHERE ${typeCol} = 49
+              `).all() as any[]
+
+              for (const row of fileRows) {
+                const content = this.decodeMessageContent(row.message_content, row.compress_content)
+                if (!content) continue
+                if (this.extractXmlValue(content, 'type') === '6') {
+                  fileCount += 1
+                }
+              }
             }
           }
 
@@ -4320,6 +4342,7 @@ class ChatService extends EventEmitter {
           videoCount,
           voiceCount,
           emojiCount,
+          fileCount,
           commonGroupCount,
           commonGroups,
           groupInfo,

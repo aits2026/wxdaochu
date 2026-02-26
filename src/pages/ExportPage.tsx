@@ -155,6 +155,7 @@ type SessionListSortKey =
   | 'videoCount'
   | 'voiceCount'
   | 'emojiCount'
+  | 'fileCount'
   | 'groupMemberCount'
   | 'groupFriendMemberCount'
   | 'groupSelfMessageCount'
@@ -253,6 +254,7 @@ interface SessionCardStats {
   videoCount?: number
   voiceCount?: number
   emojiCount?: number
+  fileCount?: number
   commonGroupCount?: number
   groupInfo?: SessionCardGroupInfo
   groupInfoLoading?: boolean
@@ -291,14 +293,16 @@ const SESSION_TABLE_HEADER_MEDIA_ICONS: Record<string, JSX.Element> = {
   图片: <Image size={11} />,
   视频: <Video size={11} />,
   表情包: <Smile size={11} />,
-  语音: <Mic size={11} />
+  语音: <Mic size={11} />,
+  文件: <FileText size={11} />
 }
 
 const SESSION_TABLE_ROW_MEDIA_ICONS: Record<string, JSX.Element> = {
   图片: <Image size={12} />,
   视频: <Video size={12} />,
   表情包: <Smile size={12} />,
-  语音: <Mic size={12} />
+  语音: <Mic size={12} />,
+  文件: <FileText size={12} />
 }
 
 const getSessionTableLayoutClass = (filter: SessionTypeFilter) => {
@@ -309,12 +313,12 @@ const getSessionTableLayoutClass = (filter: SessionTypeFilter) => {
 
 const getSessionTableHeaderColumns = (filter: SessionTypeFilter) => {
   if (filter === 'private') {
-    return ['会话信息', '总消息', '语音', '表情包', '图片', '视频', '共同群聊', '最早时间', '最新时间', '导出']
+    return ['会话信息', '总消息', '语音', '表情包', '图片', '视频', '文件', '共同群聊', '最早时间', '最新时间', '导出']
   }
   if (filter === 'group') {
-    return ['会话信息', '总消息', '语音', '表情包', '图片', '视频', '群人数', '群内好友数', '我发消息', '最早时间', '最新时间', '导出']
+    return ['会话信息', '总消息', '语音', '表情包', '图片', '视频', '文件', '群人数', '群内好友数', '我发消息', '最早时间', '最新时间', '导出']
   }
-  return ['会话信息', '总消息', '语音', '表情包', '图片', '视频', '最早时间', '最新时间', '导出']
+  return ['会话信息', '总消息', '语音', '表情包', '图片', '视频', '文件', '最早时间', '最新时间', '导出']
 }
 
 const SESSION_TABLE_HEADER_SORT_KEY_MAP: Partial<Record<string, SessionListSortKey>> = {
@@ -326,13 +330,14 @@ const SESSION_TABLE_HEADER_SORT_KEY_MAP: Partial<Record<string, SessionListSortK
   图片: 'imageCount',
   视频: 'videoCount',
   语音: 'voiceCount',
-  表情包: 'emojiCount'
+  表情包: 'emojiCount',
+  文件: 'fileCount'
 }
 
 const SESSION_TABLE_SORT_KEYS_BY_FILTER: Record<SessionTypeFilter, SessionListSortKey[]> = {
-  private: ['messageCount', 'voiceCount', 'emojiCount', 'imageCount', 'videoCount', 'commonGroupCount'],
-  group: ['messageCount', 'voiceCount', 'emojiCount', 'imageCount', 'videoCount', 'groupMemberCount', 'groupFriendMemberCount', 'groupSelfMessageCount'],
-  official: ['messageCount', 'voiceCount', 'emojiCount', 'imageCount', 'videoCount']
+  private: ['messageCount', 'voiceCount', 'emojiCount', 'imageCount', 'videoCount', 'fileCount', 'commonGroupCount'],
+  group: ['messageCount', 'voiceCount', 'emojiCount', 'imageCount', 'videoCount', 'fileCount', 'groupMemberCount', 'groupFriendMemberCount', 'groupSelfMessageCount'],
+  official: ['messageCount', 'voiceCount', 'emojiCount', 'imageCount', 'videoCount', 'fileCount']
 }
 
 const getSessionTableHeaderSortKey = (filter: SessionTypeFilter, label: string): SessionListSortKey | null => {
@@ -421,7 +426,8 @@ const ExportSessionRow = (props: RowComponentProps<ExportSessionRowData>) => {
     { label: '语音', count: cardStats?.voiceCount },
     { label: '表情包', count: cardStats?.emojiCount },
     { label: '图片', count: cardStats?.imageCount },
-    { label: '视频', count: cardStats?.videoCount }
+    { label: '视频', count: cardStats?.videoCount },
+    { label: '文件', count: cardStats?.fileCount }
   ] as const
   const gridClass = getSessionTableLayoutClass(sessionTypeFilter)
   const primaryName = (cardStats?.remark || cardStats?.nickName || session.displayName || session.username || '').trim()
@@ -724,6 +730,7 @@ function ExportPage() {
     videoCount: number
     voiceCount: number
     emojiCount: number
+    fileCount: number
     commonGroupCount?: number
     commonGroups?: Array<{ username: string; displayName: string }>
     messageTables: { dbName: string; tableName: string; count: number }[]
@@ -1335,6 +1342,8 @@ function ExportPage() {
           return stats?.voiceCount
         case 'emojiCount':
           return stats?.emojiCount
+        case 'fileCount':
+          return stats?.fileCount
         case 'groupMemberCount':
           return stats?.groupInfo?.memberCount
         case 'groupFriendMemberCount':
@@ -1651,6 +1660,7 @@ function ExportPage() {
       videoCount: sessionDetail.videoCount,
       voiceCount: sessionDetail.voiceCount,
       emojiCount: sessionDetail.emojiCount,
+      fileCount: sessionDetail.fileCount,
       commonGroupCount: sessionDetail.commonGroupCount,
       groupInfo: sessionDetail.groupInfo ? {
         memberCount: sessionDetail.groupInfo.memberCount,
@@ -1697,6 +1707,7 @@ function ExportPage() {
         videoCount: detailResult.detail.videoCount,
         voiceCount: detailResult.detail.voiceCount,
         emojiCount: detailResult.detail.emojiCount,
+        fileCount: detailResult.detail.fileCount,
         commonGroupCount: detailResult.detail.commonGroupCount,
         groupInfoLoading: username.includes('@chatroom'),
         updatedAt: Date.now(),
@@ -1758,6 +1769,8 @@ function ExportPage() {
           return typeof stats?.voiceCount === 'number'
         case 'emojiCount':
           return typeof stats?.emojiCount === 'number'
+        case 'fileCount':
+          return typeof stats?.fileCount === 'number'
         case 'groupMemberCount':
           return typeof stats?.groupInfo?.memberCount === 'number'
         case 'groupFriendMemberCount':
@@ -3050,6 +3063,7 @@ function ExportPage() {
           videoCount: detailResult.detail.videoCount,
           voiceCount: detailResult.detail.voiceCount,
           emojiCount: detailResult.detail.emojiCount,
+          fileCount: detailResult.detail.fileCount,
           commonGroupCount: detailResult.detail.commonGroupCount,
           messageTablesCount: detailResult.detail.messageTables?.length || 0,
           isGroupChat
@@ -3066,6 +3080,7 @@ function ExportPage() {
           videoCount: detailResult.detail.videoCount,
           voiceCount: detailResult.detail.voiceCount,
           emojiCount: detailResult.detail.emojiCount,
+          fileCount: detailResult.detail.fileCount,
           commonGroupCount: detailResult.detail.commonGroupCount,
           commonGroups: detailResult.detail.commonGroups,
           messageTables: detailResult.detail.messageTables || [],

@@ -1342,15 +1342,15 @@
     gap: 0;
 
     &.session-grid-private {
-      grid-template-columns: minmax(280px, 1.9fr) minmax(132px, 0.9fr) 72px 86px 72px 72px minmax(116px, 0.9fr) minmax(110px, 0.8fr) minmax(110px, 0.8fr) 92px;
+      grid-template-columns: minmax(280px, 1.9fr) minmax(132px, 0.9fr) 72px 86px 72px 72px 72px minmax(116px, 0.9fr) minmax(110px, 0.8fr) minmax(110px, 0.8fr) 92px;
     }
 
     &.session-grid-group {
-      grid-template-columns: minmax(280px, 1.9fr) minmax(132px, 0.9fr) 72px 86px 72px 72px 84px 96px 96px 110px 110px 92px;
+      grid-template-columns: minmax(280px, 1.9fr) minmax(132px, 0.9fr) 72px 86px 72px 72px 72px 84px 96px 96px 110px 110px 92px;
     }
 
     &.session-grid-official {
-      grid-template-columns: minmax(280px, 2fr) minmax(132px, 1fr) 72px 86px 72px 72px 110px 110px 92px;
+      grid-template-columns: minmax(280px, 2fr) minmax(132px, 1fr) 72px 86px 72px 72px 72px 110px 110px 92px;
     }
   }
 
