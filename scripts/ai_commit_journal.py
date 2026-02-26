@@ -9,7 +9,7 @@ import shlex
 import subprocess
 import sys
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 MARKER = "<!-- ai-commit-journal:v1 -->"
 GIT_COMMIT_TIME_PLACEHOLDER = "__AI_COMMIT_JOURNAL_GIT_COMMIT_TIME_PENDING__"
@@ -43,6 +43,10 @@ class SessionContext:
     cwd: str
     user_messages: List[str] = field(default_factory=list)
     agent_messages: List[str] = field(default_factory=list)
+    context_window_reason: str = "session-start"
+    context_window_start_timestamp: Optional[str] = None
+    context_window_end_timestamp: Optional[str] = None
+    last_successful_push_timestamp: Optional[str] = None
 
 
 @dataclass
@@ -66,6 +70,14 @@ class JournalDraft:
 class HeadCommitInfo:
     commit_hash: str
     committer_time_iso: str
+
+
+@dataclass
+class TimelineMessage:
+    timestamp: Optional[str]
+    timestamp_dt: Optional[dt.datetime]
+    role: str
+    text: str
 
 
 def eprint(msg: str) -> None:
@@ -301,6 +313,82 @@ def normalize_message(text: str) -> str:
     return t
 
 
+def parse_iso_timestamp(ts: Optional[str]) -> Optional[dt.datetime]:
+    if not ts:
+        return None
+    s = ts.strip()
+    if not s:
+        return None
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    try:
+        parsed = dt.datetime.fromisoformat(s)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=dt.timezone.utc)
+    return parsed
+
+
+def command_looks_like_git_push_for_repo(cmd: str, repo_root: pathlib.Path) -> bool:
+    c = cmd.strip()
+    if not c:
+        return False
+    if not re.search(r"\bgit\b", c):
+        return False
+    if not re.search(r"\bpush\b", c):
+        return False
+    if not re.search(r"\bgit\b[\s\S]*\bpush\b", c):
+        return False
+    # If the command explicitly targets another repo with `git -C`, don't treat it as a boundary.
+    if re.search(r"\bgit\s+-C\s+", c) and str(repo_root) not in c:
+        return False
+    return True
+
+
+def function_call_output_succeeded(output_text: str) -> bool:
+    t = output_text or ""
+    if "Process exited with code 0" in t:
+        return True
+    if re.search(r'"exit_code"\s*:\s*0', t):
+        return True
+    return False
+
+
+def extract_exec_command_candidates_from_function_call(payload: Dict[str, Any]) -> List[str]:
+    cmds: List[str] = []
+    if payload.get("type") != "function_call":
+        return cmds
+    name = str(payload.get("name") or "")
+    raw_args = payload.get("arguments")
+    if not isinstance(raw_args, str):
+        return cmds
+    try:
+        args = json.loads(raw_args)
+    except json.JSONDecodeError:
+        return cmds
+
+    if name == "exec_command" and isinstance(args, dict):
+        cmd = args.get("cmd")
+        if isinstance(cmd, str):
+            cmds.append(cmd)
+        return cmds
+
+    if name == "parallel" and isinstance(args, dict):
+        for item in args.get("tool_uses") or []:
+            if not isinstance(item, dict):
+                continue
+            if item.get("recipient_name") != "functions.exec_command":
+                continue
+            params = item.get("parameters")
+            if not isinstance(params, dict):
+                continue
+            cmd = params.get("cmd")
+            if isinstance(cmd, str):
+                cmds.append(cmd)
+    return cmds
+
+
 def session_matches_repo(session_cwd: str, repo_root: pathlib.Path) -> bool:
     try:
         sc = pathlib.Path(session_cwd).resolve()
@@ -324,13 +412,16 @@ def iter_recent_session_files(limit: int = 60) -> List[pathlib.Path]:
     return [p for _, p in files[:limit]]
 
 
-def parse_session_file_for_repo(path: pathlib.Path, repo_root: pathlib.Path) -> Optional[SessionContext]:
+def parse_session_file_for_repo(path: pathlib.Path, repo_root: pathlib.Path, as_of: Optional[dt.datetime] = None) -> Optional[SessionContext]:
     session_id = ""
     session_ts: Optional[str] = None
     session_cwd = ""
-    user_msgs: List[str] = []
-    agent_msgs: List[str] = []
     meta_seen = False
+    timeline_messages: List[TimelineMessage] = []
+    pending_push_call_ids: Dict[str, bool] = {}
+    last_successful_push_ts: Optional[str] = None
+    last_successful_push_dt: Optional[dt.datetime] = None
+    as_of_dt = as_of.astimezone() if as_of else None
     try:
         with path.open("r", encoding="utf-8") as fh:
             for raw_line in fh:
@@ -340,6 +431,10 @@ def parse_session_file_for_repo(path: pathlib.Path, repo_root: pathlib.Path) -> 
                 try:
                     obj = json.loads(line)
                 except json.JSONDecodeError:
+                    continue
+                event_ts = obj.get("timestamp")
+                event_ts_dt = parse_iso_timestamp(event_ts)
+                if as_of_dt and event_ts_dt and event_ts_dt > as_of_dt:
                     continue
                 typ = obj.get("type")
                 payload = obj.get("payload") or {}
@@ -358,12 +453,24 @@ def parse_session_file_for_repo(path: pathlib.Path, repo_root: pathlib.Path) -> 
                     if ptype == "user_message":
                         msg = normalize_message(str(payload.get("message") or ""))
                         if not looks_like_noise_user_message(msg):
-                            user_msgs.append(msg)
+                            timeline_messages.append(TimelineMessage(timestamp=event_ts, timestamp_dt=event_ts_dt, role="user", text=msg))
                     elif ptype == "agent_message":
                         msg = normalize_message(str(payload.get("message") or ""))
                         if not looks_like_noise_agent_message(msg):
-                            agent_msgs.append(msg)
+                            timeline_messages.append(TimelineMessage(timestamp=event_ts, timestamp_dt=event_ts_dt, role="assistant", text=msg))
                 elif typ == "response_item":
+                    if payload.get("type") == "function_call":
+                        call_id = str(payload.get("call_id") or "")
+                        for cmd in extract_exec_command_candidates_from_function_call(payload):
+                            if command_looks_like_git_push_for_repo(cmd, repo_root) and call_id:
+                                pending_push_call_ids[call_id] = True
+                    elif payload.get("type") == "function_call_output":
+                        call_id = str(payload.get("call_id") or "")
+                        if call_id and call_id in pending_push_call_ids:
+                            if function_call_output_succeeded(str(payload.get("output") or "")):
+                                last_successful_push_ts = str(event_ts or "")
+                                last_successful_push_dt = event_ts_dt
+                            pending_push_call_ids.pop(call_id, None)
                     if payload.get("type") == "message" and payload.get("role") == "user":
                         # fallback for sessions missing event_msg.user_message
                         texts: List[str] = []
@@ -374,9 +481,23 @@ def parse_session_file_for_repo(path: pathlib.Path, repo_root: pathlib.Path) -> 
                                     texts.append(txt)
                         joined = "\n\n".join(texts).strip()
                         if joined and not looks_like_noise_user_message(joined):
-                            user_msgs.append(joined)
+                            timeline_messages.append(TimelineMessage(timestamp=event_ts, timestamp_dt=event_ts_dt, role="user", text=joined))
         if not meta_seen or not session_cwd:
             return None
+
+        boundary_dt = last_successful_push_dt
+        boundary_ts = last_successful_push_ts or None
+        window_reason = "after-last-successful-push" if boundary_dt else "session-start"
+
+        filtered_messages: List[TimelineMessage] = []
+        for item in timeline_messages:
+            if boundary_dt and item.timestamp_dt and item.timestamp_dt <= boundary_dt:
+                continue
+            filtered_messages.append(item)
+
+        user_msgs = [m.text for m in filtered_messages if m.role == "user"]
+        agent_msgs = [m.text for m in filtered_messages if m.role == "assistant"]
+
         # de-duplicate while preserving order
         def dedupe(items: List[str]) -> List[str]:
             seen = set()
@@ -391,8 +512,6 @@ def parse_session_file_for_repo(path: pathlib.Path, repo_root: pathlib.Path) -> 
 
         user_msgs = dedupe(user_msgs)
         agent_msgs = dedupe(agent_msgs)
-        if not user_msgs and not agent_msgs:
-            return None
         return SessionContext(
             session_id=session_id or path.stem,
             file_path=path,
@@ -400,15 +519,19 @@ def parse_session_file_for_repo(path: pathlib.Path, repo_root: pathlib.Path) -> 
             cwd=session_cwd,
             user_messages=user_msgs[-MAX_USER_MSGS:],
             agent_messages=agent_msgs[-MAX_AGENT_MSGS:],
+            context_window_reason=window_reason,
+            context_window_start_timestamp=boundary_ts or session_ts,
+            context_window_end_timestamp=as_of_dt.isoformat(timespec="seconds") if as_of_dt else None,
+            last_successful_push_timestamp=boundary_ts,
         )
     except OSError:
         return None
 
 
-def load_recent_codex_context(repo_root: pathlib.Path) -> Optional[SessionContext]:
+def load_recent_codex_context(repo_root: pathlib.Path, as_of: Optional[dt.datetime] = None) -> Optional[SessionContext]:
     for path in iter_recent_session_files():
-        ctx = parse_session_file_for_repo(path, repo_root)
-        if ctx and (ctx.user_messages or ctx.agent_messages):
+        ctx = parse_session_file_for_repo(path, repo_root, as_of=as_of)
+        if ctx:
             return ctx
     return None
 
@@ -561,6 +684,14 @@ def build_journal_markdown(
             session_meta.append(f"- 会话 ID：`{ctx.session_id}`")
         if ctx.session_timestamp:
             session_meta.append(f"- 会话开始时间：`{ctx.session_timestamp}`")
+        if ctx.context_window_reason == "after-last-successful-push":
+            session_meta.append(
+                f"- 上下文截取范围：最近一次成功 `git push` 之后到本次文档生成前（起点：`{ctx.context_window_start_timestamp or 'unknown'}`，终点：`{ctx.context_window_end_timestamp or generated_iso}`）"
+            )
+        else:
+            session_meta.append(
+                f"- 上下文截取范围：当前会话开始到本次文档生成前（未检测到成功 `git push`，起点：`{ctx.context_window_start_timestamp or 'unknown'}`，终点：`{ctx.context_window_end_timestamp or generated_iso}`）"
+            )
     else:
         session_meta.append("- 未找到匹配当前仓库的 Codex 会话日志（`~/.codex/sessions`）")
 
@@ -673,8 +804,8 @@ def generate_journal(repo_root: pathlib.Path, commit_message: Optional[str], mod
     snapshot = collect_staged_snapshot(repo_root)
     if not has_non_journal_changes(snapshot):
         raise JournalError("Only docs/changes files are staged; skip auto journal generation to avoid recursive journals.")
-    ctx = load_recent_codex_context(repo_root)
     generated_at = now_local()
+    ctx = load_recent_codex_context(repo_root, as_of=generated_at)
     markdown = build_journal_markdown(repo_root, snapshot, ctx, commit_message, generated_at, mode)
     path = write_journal_file(repo_root, markdown, commit_message, generated_at)
     if stage:
