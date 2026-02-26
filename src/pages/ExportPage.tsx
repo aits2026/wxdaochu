@@ -4768,6 +4768,7 @@ function ExportPage() {
     }
 
     const sessionsMissingImageCount = bulkExportEligibleSessions.filter(session => !hasKnownImageCount(session))
+    const preloadedImageCountMap: Record<string, number> = {}
     if (sessionsMissingImageCount.length > 0) {
       taskCenterPatchTask(batchTaskId, {
         phase: '准备排序...',
@@ -4775,23 +4776,54 @@ function ExportPage() {
       })
 
       let resolvedCount = 0
-      for (const session of sessionsMissingImageCount) {
-        try {
-          await ensureSessionCardStats(session)
-        } catch {
-          // 排序统计失败时不阻塞导出，后续会按未知数量放后
-        }
-        resolvedCount += 1
+      const chunkSize = 12
+      for (let offset = 0; offset < sessionsMissingImageCount.length; offset += chunkSize) {
+        const chunk = sessionsMissingImageCount.slice(offset, offset + chunkSize)
 
-        if (resolvedCount <= 3 || resolvedCount === sessionsMissingImageCount.length || resolvedCount % 20 === 0) {
+        await Promise.all(chunk.map(async (session) => {
+          try {
+            const detailResult = await window.electronAPI.chat.getSessionDetail(session.username, { includeGroupInfo: false })
+            const imageCount = detailResult.success ? detailResult.detail?.imageCount : undefined
+            if (typeof imageCount === 'number' && Number.isFinite(imageCount) && imageCount >= 0) {
+              preloadedImageCountMap[session.username] = imageCount
+            }
+          } catch {
+            // 排序统计失败时不阻塞导出，后续会按未知数量放后
+          } finally {
+            resolvedCount += 1
+          }
+        }))
+
+        if (resolvedCount <= 3 || resolvedCount === sessionsMissingImageCount.length || resolvedCount % 24 === 0) {
           taskCenterPatchTask(batchTaskId, {
             phase: '准备排序...',
             detail: `正在统计图片数量 ${resolvedCount.toLocaleString()} / ${sessionsMissingImageCount.length.toLocaleString()} 个会话`
           })
         }
-        if (resolvedCount % 6 === 0) {
+
+        if (resolvedCount < sessionsMissingImageCount.length) {
           await yieldToMainThread()
         }
+      }
+
+      const preloadedEntries = Object.entries(preloadedImageCountMap)
+      if (preloadedEntries.length > 0) {
+        setSessionCardStatsMap(prev => {
+          let changed = false
+          const next = { ...prev }
+          const now = Date.now()
+          for (const [username, imageCount] of preloadedEntries) {
+            const current = next[username]
+            if (current?.imageCount === imageCount) continue
+            changed = true
+            next[username] = {
+              ...(current || { status: 'idle' as const }),
+              imageCount,
+              updatedAt: now
+            }
+          }
+          return changed ? next : prev
+        })
       }
     }
 
@@ -4805,8 +4837,9 @@ function ExportPage() {
         )
           ? sessionDetail.imageCount
           : undefined
+        const preloadedCount = preloadedImageCountMap[session.username]
         const statCount = sessionCardStatsMap[session.username]?.imageCount
-        const count = selectedDetailCount ?? statCount
+        const count = selectedDetailCount ?? preloadedCount ?? statCount
         return {
           session,
           index,
@@ -4853,7 +4886,6 @@ function ExportPage() {
   }, [
     bulkExportEligibleSessions,
     enqueueBatchImageExportJobsChunked,
-    ensureSessionCardStats,
     exportFolder,
     imageExportFolder,
     imageCardExportOrder,
