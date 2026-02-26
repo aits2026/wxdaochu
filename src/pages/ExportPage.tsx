@@ -910,15 +910,19 @@ function ExportPage() {
   const [hideImageDecryptExportTip, setHideImageDecryptExportTip] = useState(false)
   const [runningChatExportSessionId, setRunningChatExportSessionId] = useState<string | null>(null)
   const [queuedChatExportSessionIds, setQueuedChatExportSessionIds] = useState<Set<string>>(new Set())
+  const [chatTextCardLiveExportedSessionIds, setChatTextCardLiveExportedSessionIds] = useState<Set<string>>(new Set())
   const [runningEmojiExportSessionId, setRunningEmojiExportSessionId] = useState<string | null>(null)
   const [queuedEmojiExportSessionIds, setQueuedEmojiExportSessionIds] = useState<Set<string>>(new Set())
   const [sessionEmojiBatchOutcomeMap, setSessionEmojiBatchOutcomeMap] = useState<Record<string, EmojiBatchSessionOutcome>>({})
+  const [emojiCardLiveExportedSessionIds, setEmojiCardLiveExportedSessionIds] = useState<Set<string>>(new Set())
   const [runningImageExportSessionId, setRunningImageExportSessionId] = useState<string | null>(null)
   const [queuedImageExportSessionIds, setQueuedImageExportSessionIds] = useState<Set<string>>(new Set())
   const [sessionImageBatchOutcomeMap, setSessionImageBatchOutcomeMap] = useState<Record<string, ImageBatchSessionOutcome>>({})
   const [imageBatchCurrentSessionProgress, setImageBatchCurrentSessionProgress] = useState<ImageBatchSessionLiveProgress | null>(null)
+  const [imageCardLiveExportedSessionIds, setImageCardLiveExportedSessionIds] = useState<Set<string>>(new Set())
   const [runningVoiceExportSessionId, setRunningVoiceExportSessionId] = useState<string | null>(null)
   const [queuedVoiceExportSessionIds, setQueuedVoiceExportSessionIds] = useState<Set<string>>(new Set())
+  const [voiceCardLiveExportedSessionIds, setVoiceCardLiveExportedSessionIds] = useState<Set<string>>(new Set())
   const hasRunningChatExportTask = Boolean(runningChatExportSessionId)
   const hasPendingChatExportTask = queuedChatExportSessionIds.size > 0
   const chatTextExportFolder = useMemo(
@@ -3115,6 +3119,13 @@ function ExportPage() {
         : count
     }, 0)
   ), [bulkExportEligibleSessions, sessionLatestExportTimeMap])
+  const chatTextCardDisplayedExportedSessions = useMemo(() => (
+    bulkExportEligibleSessions.reduce((count, session) => {
+      const latestExportTime = sessionLatestExportTimeMap[session.username]
+      const hasHistorical = typeof latestExportTime === 'number' && Number.isFinite(latestExportTime) && latestExportTime > 0
+      return (hasHistorical || chatTextCardLiveExportedSessionIds.has(session.username)) ? count + 1 : count
+    }, 0)
+  ), [bulkExportEligibleSessions, chatTextCardLiveExportedSessionIds, sessionLatestExportTimeMap])
   const chatTextStatusRows = useMemo(() => {
     const statusPriority: Record<'running' | 'queued' | 'not-exported' | 'exported', number> = {
       running: 0,
@@ -3175,6 +3186,13 @@ function ExportPage() {
         : count
     }, 0)
   ), [bulkExportEligibleSessions, sessionEmojiLatestExportTimeMap])
+  const sessionEmojiCardDisplayedExportedSessions = useMemo(() => (
+    bulkExportEligibleSessions.reduce((count, session) => {
+      const latestExportTime = sessionEmojiLatestExportTimeMap[session.username]
+      const hasHistorical = typeof latestExportTime === 'number' && Number.isFinite(latestExportTime) && latestExportTime > 0
+      return (hasHistorical || emojiCardLiveExportedSessionIds.has(session.username)) ? count + 1 : count
+    }, 0)
+  ), [bulkExportEligibleSessions, emojiCardLiveExportedSessionIds, sessionEmojiLatestExportTimeMap])
   const emojiStatusRows = useMemo(() => {
     type EmojiStatus = 'running' | 'queued' | 'not-exported' | 'exported' | 'skipped'
     const statusPriority: Record<EmojiStatus, number> = {
@@ -3247,6 +3265,13 @@ function ExportPage() {
         : count
     }, 0)
   ), [bulkExportEligibleSessions, sessionImageLatestExportTimeMap])
+  const imageCardDisplayedExportedSessions = useMemo(() => (
+    bulkExportEligibleSessions.reduce((count, session) => {
+      const latestExportTime = sessionImageLatestExportTimeMap[session.username]
+      const hasHistorical = typeof latestExportTime === 'number' && Number.isFinite(latestExportTime) && latestExportTime > 0
+      return (hasHistorical || imageCardLiveExportedSessionIds.has(session.username)) ? count + 1 : count
+    }, 0)
+  ), [bulkExportEligibleSessions, imageCardLiveExportedSessionIds, sessionImageLatestExportTimeMap])
   const imageStatusRows = useMemo(() => {
     type ImageStatus = 'running' | 'queued' | 'not-exported' | 'exported' | 'skipped'
     const statusPriority: Record<ImageStatus, number> = {
@@ -3320,6 +3345,17 @@ function ExportPage() {
         : count
     }, 0)
   ), [bulkExportEligibleSessions, sessionVoiceLatestExportTimeMap])
+  const voiceCardDisplayedExportedSessions = useMemo(() => (
+    bulkExportEligibleSessions.reduce((count, session) => {
+      const latestExportTime = sessionVoiceLatestExportTimeMap[session.username]
+      const hasHistorical = typeof latestExportTime === 'number' && Number.isFinite(latestExportTime) && latestExportTime > 0
+      return (hasHistorical || voiceCardLiveExportedSessionIds.has(session.username)) ? count + 1 : count
+    }, 0)
+  ), [bulkExportEligibleSessions, sessionVoiceLatestExportTimeMap, voiceCardLiveExportedSessionIds])
+  const isChatTextCardExporting = hasRunningChatExportTask || hasPendingChatExportTask
+  const isEmojiCardExporting = runningEmojiExportSessionId !== null || queuedEmojiExportSessionIds.size > 0
+  const isImageCardExporting = runningImageExportSessionId !== null || queuedImageExportSessionIds.size > 0
+  const isVoiceCardExporting = runningVoiceExportSessionId !== null || queuedVoiceExportSessionIds.size > 0
   const voiceStatusRows = useMemo(() => {
     const statusPriority: Record<'running' | 'queued' | 'not-exported' | 'exported', number> = {
       running: 0,
@@ -4193,6 +4229,14 @@ function ExportPage() {
               setSessionVoiceLatestExportTimeMap(prev => ({ ...prev, [job.sessionId]: Date.now() }))
             }
           }
+          if (job.batchTaskId) {
+            setChatTextCardLiveExportedSessionIds(prev => {
+              if (prev.has(job.sessionId)) return prev
+              const next = new Set(prev)
+              next.add(job.sessionId)
+              return next
+            })
+          }
           finishBatchJob(true)
         } else {
           patchSingleJobTask({
@@ -4552,6 +4596,12 @@ function ExportPage() {
             ...prev,
             [job.sessionId]: { status: 'exported', at: now }
           }))
+          setImageCardLiveExportedSessionIds(prev => {
+            if (prev.has(job.sessionId)) return prev
+            const next = new Set(prev)
+            next.add(job.sessionId)
+            return next
+          })
         } else {
           const shouldMarkAsExported = skipReason !== 'image-empty-session'
           if (shouldMarkAsExported) {
@@ -4566,6 +4616,14 @@ function ExportPage() {
             ...prev,
             [job.sessionId]: { status: 'skipped', at: Date.now() }
           }))
+          if (shouldMarkAsExported) {
+            setImageCardLiveExportedSessionIds(prev => {
+              if (prev.has(job.sessionId)) return prev
+              const next = new Set(prev)
+              next.add(job.sessionId)
+              return next
+            })
+          }
         }
 
         finishBatchJob(true)
@@ -4732,6 +4790,7 @@ function ExportPage() {
     }
     setSessionImageBatchOutcomeMap({})
     setImageBatchCurrentSessionProgress(null)
+    setImageCardLiveExportedSessionIds(new Set())
     taskCenterUpsertTask({
       id: batchTaskId,
       kind: 'image-export-batch',
@@ -4978,6 +5037,12 @@ function ExportPage() {
             ...prev,
             [job.sessionId]: { status: 'exported', at: now }
           }))
+          setEmojiCardLiveExportedSessionIds(prev => {
+            if (prev.has(job.sessionId)) return prev
+            const next = new Set(prev)
+            next.add(job.sessionId)
+            return next
+          })
         } else {
           const shouldMarkAsExported = skipReason !== 'emoji-empty-session'
           if (shouldMarkAsExported) {
@@ -4993,6 +5058,14 @@ function ExportPage() {
             ...prev,
             [job.sessionId]: { status: 'skipped', at: Date.now() }
           }))
+          if (shouldMarkAsExported) {
+            setEmojiCardLiveExportedSessionIds(prev => {
+              if (prev.has(job.sessionId)) return prev
+              const next = new Set(prev)
+              next.add(job.sessionId)
+              return next
+            })
+          }
         }
 
         finishBatchJob(true)
@@ -5140,6 +5213,7 @@ function ExportPage() {
       failCount: 0
     }
     setSessionEmojiBatchOutcomeMap({})
+    setEmojiCardLiveExportedSessionIds(new Set())
     taskCenterUpsertTask({
       id: batchTaskId,
       kind: 'emoji-export-batch',
@@ -5272,6 +5346,12 @@ function ExportPage() {
             }
           )
           setSessionVoiceLatestExportTimeMap(prev => ({ ...prev, [job.sessionId]: Date.now() }))
+          setVoiceCardLiveExportedSessionIds(prev => {
+            if (prev.has(job.sessionId)) return prev
+            const next = new Set(prev)
+            next.add(job.sessionId)
+            return next
+          })
         } else if (skipReason !== 'voice-empty-session') {
           setSessionVoiceLatestExportTimeMap(prev => ({
             ...prev,
@@ -5279,6 +5359,12 @@ function ExportPage() {
               ? prev[job.sessionId]
               : Date.now()
           }))
+          setVoiceCardLiveExportedSessionIds(prev => {
+            if (prev.has(job.sessionId)) return prev
+            const next = new Set(prev)
+            next.add(job.sessionId)
+            return next
+          })
         }
 
         finishBatchJob(true)
@@ -5421,6 +5507,7 @@ function ExportPage() {
       successCount: 0,
       failCount: 0
     }
+    setVoiceCardLiveExportedSessionIds(new Set())
     taskCenterUpsertTask({
       id: batchTaskId,
       kind: 'voice-export-batch',
@@ -5635,6 +5722,7 @@ function ExportPage() {
       successCount: 0,
       failCount: 0
     }
+    setChatTextCardLiveExportedSessionIds(new Set())
     taskCenterUpsertTask({
       id: batchTaskId,
       kind: 'chat-export-batch',
@@ -5942,7 +6030,7 @@ function ExportPage() {
                   </div>
                   <div className="emoji-overview-trigger-summary">
                     <strong>
-                      {chatTextCardExportedSessions.toLocaleString()} / {chatTextCardTotalSessions.toLocaleString()}
+                      {chatTextCardDisplayedExportedSessions.toLocaleString()} / {chatTextCardTotalSessions.toLocaleString()}
                     </strong>
                   </div>
                   <div className="emoji-overview-trigger-actions">
@@ -5953,10 +6041,10 @@ function ExportPage() {
                         e.stopPropagation()
                         openChatTextCardExportModal()
                       }}
-                      disabled={bulkExportEligibleSessions.length === 0}
+                      disabled={bulkExportEligibleSessions.length === 0 || isChatTextCardExporting}
                       title="导出全部会话聊天文本"
                     >
-                      导出
+                      {isChatTextCardExporting ? '导出中' : '导出'}
                     </button>
                   </div>
                 </div>
@@ -5980,7 +6068,7 @@ function ExportPage() {
                   </div>
                   <div className="emoji-overview-trigger-summary">
                     <strong>
-                      {sessionEmojiCardExportedSessions.toLocaleString()} / {sessionEmojiCardTotalSessions.toLocaleString()}
+                      {sessionEmojiCardDisplayedExportedSessions.toLocaleString()} / {sessionEmojiCardTotalSessions.toLocaleString()}
                     </strong>
                   </div>
                   <div className="emoji-overview-trigger-actions">
@@ -5991,10 +6079,10 @@ function ExportPage() {
                         e.stopPropagation()
                         openEmojiCardExportModal()
                       }}
-                      disabled={bulkExportEligibleSessions.length === 0}
+                      disabled={bulkExportEligibleSessions.length === 0 || isEmojiCardExporting}
                       title="导出全部会话表情包"
                     >
-                      导出
+                      {isEmojiCardExporting ? '导出中' : '导出'}
                     </button>
                   </div>
                 </div>
@@ -6018,7 +6106,7 @@ function ExportPage() {
                   </div>
                   <div className="emoji-overview-trigger-summary">
                     <strong>
-                      {voiceCardExportedSessions.toLocaleString()} / {voiceCardTotalSessions.toLocaleString()}
+                      {voiceCardDisplayedExportedSessions.toLocaleString()} / {voiceCardTotalSessions.toLocaleString()}
                     </strong>
                   </div>
                   <div className="emoji-overview-trigger-actions">
@@ -6029,10 +6117,10 @@ function ExportPage() {
                         e.stopPropagation()
                         openVoiceCardExportModal()
                       }}
-                      disabled={bulkExportEligibleSessions.length === 0}
+                      disabled={bulkExportEligibleSessions.length === 0 || isVoiceCardExporting}
                       title="导出全部会话语音"
                     >
-                      导出
+                      {isVoiceCardExporting ? '导出中' : '导出'}
                     </button>
                   </div>
                 </div>
@@ -6056,7 +6144,7 @@ function ExportPage() {
                   </div>
                   <div className="emoji-overview-trigger-summary">
                     <strong>
-                      {imageCardExportedSessions.toLocaleString()} / {imageCardTotalSessions.toLocaleString()}
+                      {imageCardDisplayedExportedSessions.toLocaleString()} / {imageCardTotalSessions.toLocaleString()}
                     </strong>
                   </div>
                   <div className="emoji-overview-trigger-actions">
@@ -6067,10 +6155,10 @@ function ExportPage() {
                         e.stopPropagation()
                         openImageCardExportModal()
                       }}
-                      disabled={bulkExportEligibleSessions.length === 0}
+                      disabled={bulkExportEligibleSessions.length === 0 || isImageCardExporting}
                       title="导出全部会话图片"
                     >
-                      导出
+                      {isImageCardExporting ? '导出中' : '导出'}
                     </button>
                   </div>
                 </div>
