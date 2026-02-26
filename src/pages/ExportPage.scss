@@ -714,15 +714,15 @@
     margin-left: auto;
     min-width: 150px;
     max-width: 196px;
-    border: 1px solid rgba(var(--primary-rgb), 0.18);
+    border: 1px solid rgba(15, 23, 42, 0.08);
     background:
-      linear-gradient(180deg, rgba(var(--primary-rgb), 0.06), rgba(var(--primary-rgb), 0.02)),
+      linear-gradient(180deg, rgba(var(--primary-rgb), 0.04), rgba(var(--primary-rgb), 0.015)),
       var(--bg-primary);
     border-radius: 10px;
-    padding: 7px 9px;
+    padding: 8px 10px;
     display: flex;
     flex-direction: column;
-    gap: 5px;
+    gap: 6px;
     cursor: pointer;
     text-align: left;
     transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
@@ -737,7 +737,7 @@
       cursor: default;
 
       &:hover {
-        border-color: rgba(var(--primary-rgb), 0.18);
+        border-color: rgba(15, 23, 42, 0.08);
         box-shadow: none;
         transform: none;
       }
@@ -783,69 +783,20 @@
   .emoji-overview-trigger-summary {
     min-width: 0;
     display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 8px;
+    align-items: center;
+    justify-content: center;
     font-variant-numeric: tabular-nums;
 
-    .label {
-      font-size: 10px;
-      color: var(--text-tertiary);
-      line-height: 1.1;
-      white-space: nowrap;
-      flex-shrink: 0;
-    }
-
     strong {
-      font-size: 12px;
+      font-size: 13px;
       color: var(--text-primary);
-      line-height: 1.1;
+      line-height: 1.2;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
       min-width: 0;
+      font-weight: 600;
     }
-  }
-
-  .emoji-overview-trigger-progress {
-    min-width: 0;
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    font-variant-numeric: tabular-nums;
-  }
-
-  .emoji-overview-trigger-progress-bar {
-    flex: 1;
-    min-width: 0;
-    height: 5px;
-    border-radius: 999px;
-    background: rgba(var(--primary-rgb), 0.12);
-    overflow: hidden;
-    position: relative;
-  }
-
-  .emoji-overview-trigger-progress-fill {
-    height: 100%;
-    border-radius: inherit;
-    background: linear-gradient(90deg, rgba(var(--primary-rgb), 0.7), rgba(var(--primary-rgb), 0.95));
-    transition: width 0.2s ease;
-  }
-
-  .emoji-overview-trigger-progress-text {
-    font-size: 10px;
-    color: var(--text-secondary);
-    line-height: 1;
-    min-width: 30px;
-    text-align: right;
-    flex-shrink: 0;
-  }
-
-  .emoji-overview-trigger-hint {
-    font-size: 10px;
-    color: var(--text-tertiary);
-    line-height: 1.2;
-    font-variant-numeric: tabular-nums;
   }
 
   // 会话类型筛选按钮组
