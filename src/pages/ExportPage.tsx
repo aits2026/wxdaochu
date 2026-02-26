@@ -3356,6 +3356,46 @@ function ExportPage() {
   const isEmojiCardExporting = runningEmojiExportSessionId !== null || queuedEmojiExportSessionIds.size > 0
   const isImageCardExporting = runningImageExportSessionId !== null || queuedImageExportSessionIds.size > 0
   const isVoiceCardExporting = runningVoiceExportSessionId !== null || queuedVoiceExportSessionIds.size > 0
+  const getBulkExportStatusModalAction = useCallback((params: {
+    total: number
+    exported: number
+    exporting: boolean
+  }) => {
+    const { total, exported, exporting } = params
+    if (exporting) {
+      return { label: '正在导出中', disabled: true }
+    }
+    if (total <= 0) {
+      return { label: '暂无可导出会话', disabled: true }
+    }
+    if (exported <= 0) {
+      return { label: '开始批量导出', disabled: false }
+    }
+    if (exported >= total) {
+      return { label: '再次导出', disabled: false }
+    }
+    return { label: '继续导出', disabled: false }
+  }, [])
+  const chatTextStatusModalAction = getBulkExportStatusModalAction({
+    total: chatTextCardTotalSessions,
+    exported: chatTextCardDisplayedExportedSessions,
+    exporting: isChatTextCardExporting
+  })
+  const imageStatusModalAction = getBulkExportStatusModalAction({
+    total: imageCardTotalSessions,
+    exported: imageCardDisplayedExportedSessions,
+    exporting: isImageCardExporting
+  })
+  const emojiStatusModalAction = getBulkExportStatusModalAction({
+    total: sessionEmojiCardTotalSessions,
+    exported: sessionEmojiCardDisplayedExportedSessions,
+    exporting: isEmojiCardExporting
+  })
+  const voiceStatusModalAction = getBulkExportStatusModalAction({
+    total: voiceCardTotalSessions,
+    exported: voiceCardDisplayedExportedSessions,
+    exporting: isVoiceCardExporting
+  })
   const voiceStatusRows = useMemo(() => {
     const statusPriority: Record<'running' | 'queued' | 'not-exported' | 'exported', number> = {
       running: 0,
@@ -8702,7 +8742,7 @@ function ExportPage() {
             <div className="chat-text-card-status-summary">
               <span className="chat-text-card-status-summary-item compact">
                 <span className="label">已导出</span>
-                <strong>{chatTextCardExportedSessions.toLocaleString()} / {chatTextStatusSummary.total.toLocaleString()}</strong>
+                <strong>{chatTextCardDisplayedExportedSessions.toLocaleString()} / {chatTextStatusSummary.total.toLocaleString()}</strong>
               </span>
               <span className="chat-text-card-status-summary-item compact">
                 <span className="label">导出中</span>
@@ -8773,10 +8813,11 @@ function ExportPage() {
             <div className="chat-text-card-modal-actions">
               <button
                 type="button"
-                className="chat-text-card-modal-btn"
-                onClick={() => setShowChatTextCardStatusModal(false)}
+                className="chat-text-card-modal-btn primary"
+                onClick={openChatTextCardExportModal}
+                disabled={chatTextStatusModalAction.disabled}
               >
-                关闭
+                {chatTextStatusModalAction.label}
               </button>
             </div>
           </div>
@@ -8898,7 +8939,7 @@ function ExportPage() {
             <div className="chat-text-card-status-summary">
               <span className="chat-text-card-status-summary-item compact">
                 <span className="label">已导出</span>
-                <strong>{imageStatusSummary.exported.toLocaleString()} / {imageStatusSummary.total.toLocaleString()}</strong>
+                <strong>{imageCardDisplayedExportedSessions.toLocaleString()} / {imageStatusSummary.total.toLocaleString()}</strong>
               </span>
               <span className="chat-text-card-status-summary-item compact">
                 <span className="label">导出中</span>
@@ -8991,10 +9032,11 @@ function ExportPage() {
             <div className="chat-text-card-modal-actions">
               <button
                 type="button"
-                className="chat-text-card-modal-btn"
-                onClick={() => setShowImageCardStatusModal(false)}
+                className="chat-text-card-modal-btn primary"
+                onClick={openImageCardExportModal}
+                disabled={imageStatusModalAction.disabled}
               >
-                关闭
+                {imageStatusModalAction.label}
               </button>
             </div>
           </div>
@@ -9092,7 +9134,7 @@ function ExportPage() {
             <div className="chat-text-card-status-summary">
               <span className="chat-text-card-status-summary-item compact">
                 <span className="label">已导出</span>
-                <strong>{emojiStatusSummary.exported.toLocaleString()} / {emojiStatusSummary.total.toLocaleString()}</strong>
+                <strong>{sessionEmojiCardDisplayedExportedSessions.toLocaleString()} / {emojiStatusSummary.total.toLocaleString()}</strong>
               </span>
               <span className="chat-text-card-status-summary-item compact">
                 <span className="label">导出中</span>
@@ -9169,10 +9211,11 @@ function ExportPage() {
             <div className="chat-text-card-modal-actions">
               <button
                 type="button"
-                className="chat-text-card-modal-btn"
-                onClick={() => setShowEmojiCardStatusModal(false)}
+                className="chat-text-card-modal-btn primary"
+                onClick={openEmojiCardExportModal}
+                disabled={emojiStatusModalAction.disabled}
               >
-                关闭
+                {emojiStatusModalAction.label}
               </button>
             </div>
           </div>
@@ -9261,7 +9304,7 @@ function ExportPage() {
             <div className="chat-text-card-status-summary">
               <span className="chat-text-card-status-summary-item compact">
                 <span className="label">已导出</span>
-                <strong>{voiceStatusSummary.exported.toLocaleString()} / {voiceStatusSummary.total.toLocaleString()}</strong>
+                <strong>{voiceCardDisplayedExportedSessions.toLocaleString()} / {voiceStatusSummary.total.toLocaleString()}</strong>
               </span>
               <span className="chat-text-card-status-summary-item compact">
                 <span className="label">导出中</span>
@@ -9332,10 +9375,11 @@ function ExportPage() {
             <div className="chat-text-card-modal-actions">
               <button
                 type="button"
-                className="chat-text-card-modal-btn"
-                onClick={() => setShowVoiceCardStatusModal(false)}
+                className="chat-text-card-modal-btn primary"
+                onClick={openVoiceCardExportModal}
+                disabled={voiceStatusModalAction.disabled}
               >
-                关闭
+                {voiceStatusModalAction.label}
               </button>
             </div>
           </div>
