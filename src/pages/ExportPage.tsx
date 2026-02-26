@@ -284,12 +284,12 @@ const getSessionTableLayoutClass = (filter: SessionTypeFilter) => {
 
 const getSessionTableHeaderColumns = (filter: SessionTypeFilter) => {
   if (filter === 'private') {
-    return ['会话信息', '总消息', '共同群聊', '最早时间', '最新时间', '图片', '视频', '表情包', '语音', '导出']
+    return ['会话信息', '总消息', '语音', '表情包', '图片', '视频', '共同群聊', '最早时间', '最新时间', '导出']
   }
   if (filter === 'group') {
-    return ['会话信息', '总消息', '群人数', '群内好友数', '我发消息', '最早时间', '最新时间', '图片', '视频', '表情包', '语音', '导出']
+    return ['会话信息', '总消息', '语音', '表情包', '图片', '视频', '群人数', '群内好友数', '我发消息', '最早时间', '最新时间', '导出']
   }
-  return ['会话信息', '总消息', '最早时间', '最新时间', '图片', '视频', '表情包', '语音', '导出']
+  return ['会话信息', '总消息', '语音', '表情包', '图片', '视频', '最早时间', '最新时间', '导出']
 }
 
 const SESSION_TABLE_HEADER_SORT_KEY_MAP: Partial<Record<string, SessionListSortKey>> = {
@@ -305,9 +305,9 @@ const SESSION_TABLE_HEADER_SORT_KEY_MAP: Partial<Record<string, SessionListSortK
 }
 
 const SESSION_TABLE_SORT_KEYS_BY_FILTER: Record<SessionTypeFilter, SessionListSortKey[]> = {
-  private: ['messageCount', 'commonGroupCount', 'imageCount', 'videoCount', 'voiceCount', 'emojiCount'],
-  group: ['messageCount', 'groupMemberCount', 'groupFriendMemberCount', 'groupSelfMessageCount', 'imageCount', 'videoCount', 'voiceCount', 'emojiCount'],
-  official: ['messageCount', 'imageCount', 'videoCount', 'voiceCount', 'emojiCount']
+  private: ['messageCount', 'voiceCount', 'emojiCount', 'imageCount', 'videoCount', 'commonGroupCount'],
+  group: ['messageCount', 'voiceCount', 'emojiCount', 'imageCount', 'videoCount', 'groupMemberCount', 'groupFriendMemberCount', 'groupSelfMessageCount'],
+  official: ['messageCount', 'voiceCount', 'emojiCount', 'imageCount', 'videoCount']
 }
 
 const getSessionTableHeaderSortKey = (filter: SessionTypeFilter, label: string): SessionListSortKey | null => {
@@ -392,10 +392,10 @@ const ExportSessionRow = (props: RowComponentProps<ExportSessionRowData>) => {
   const isOfficial = session.accountType === 'official'
   const statsLoading = cardStats?.status === 'loading' || (isGroup && cardStats?.groupInfoLoading)
   const mediaStats = [
-    { label: '图片', count: cardStats?.imageCount },
-    { label: '视频', count: cardStats?.videoCount },
+    { label: '语音', count: cardStats?.voiceCount },
     { label: '表情包', count: cardStats?.emojiCount },
-    { label: '语音', count: cardStats?.voiceCount }
+    { label: '图片', count: cardStats?.imageCount },
+    { label: '视频', count: cardStats?.videoCount }
   ] as const
   const gridClass = getSessionTableLayoutClass(sessionTypeFilter)
   const primaryName = (cardStats?.remark || cardStats?.nickName || session.displayName || session.username || '').trim()
@@ -465,6 +465,38 @@ const ExportSessionRow = (props: RowComponentProps<ExportSessionRowData>) => {
             </button>
           </div>
 
+          {mediaStats.map(item => {
+            const hasMediaCount = typeof item.count === 'number' && item.count > 0
+            const mediaValueText = item.count !== undefined ? item.count.toLocaleString() : '--'
+            const mediaContent = (
+              <span className={`session-media-metric-inline ${hasMediaCount ? '' : 'is-empty'}`}>
+                <span className="session-media-metric-icon" aria-hidden="true">
+                  {SESSION_TABLE_ROW_MEDIA_ICONS[item.label]}
+                </span>
+                <span className="media-value">{mediaValueText}</span>
+              </span>
+            )
+
+            return (
+              <div key={item.label} className="session-table-cell session-cell-metric session-cell-media" title={item.label}>
+                {item.label === '图片' ? (
+                  <button
+                    type="button"
+                    className={`session-media-count-link ${hasMediaCount ? '' : 'is-disabled'}`}
+                    disabled={!hasMediaCount}
+                    onClick={async (e) => {
+                      e.stopPropagation()
+                      if (!hasMediaCount) return
+                      await onOpenImageAssets(session)
+                    }}
+                  >
+                    {mediaContent}
+                  </button>
+                ) : mediaContent}
+              </div>
+            )
+          })}
+
           {isPrivate && (
             <>
               <div className="session-table-cell session-cell-kpi">
@@ -509,38 +541,6 @@ const ExportSessionRow = (props: RowComponentProps<ExportSessionRowData>) => {
               <div className="session-table-cell session-cell-metric session-cell-time">{formatSessionCardDate((cardStats?.latestMessageTime ?? session.lastTimestamp) || undefined)}</div>
             </>
           )}
-
-          {mediaStats.map(item => {
-            const hasMediaCount = typeof item.count === 'number' && item.count > 0
-            const mediaValueText = item.count !== undefined ? item.count.toLocaleString() : '--'
-            const mediaContent = (
-              <span className={`session-media-metric-inline ${hasMediaCount ? '' : 'is-empty'}`}>
-                <span className="session-media-metric-icon" aria-hidden="true">
-                  {SESSION_TABLE_ROW_MEDIA_ICONS[item.label]}
-                </span>
-                <span className="media-value">{mediaValueText}</span>
-              </span>
-            )
-
-            return (
-              <div key={item.label} className="session-table-cell session-cell-metric session-cell-media" title={item.label}>
-                {item.label === '图片' ? (
-                  <button
-                    type="button"
-                    className={`session-media-count-link ${hasMediaCount ? '' : 'is-disabled'}`}
-                    disabled={!hasMediaCount}
-                    onClick={async (e) => {
-                      e.stopPropagation()
-                      if (!hasMediaCount) return
-                      await onOpenImageAssets(session)
-                    }}
-                  >
-                    {mediaContent}
-                  </button>
-                ) : mediaContent}
-              </div>
-            )
-          })}
 
           <div className="session-table-cell session-cell-action session-cell-sticky-right">
             <div className="session-cell-action-stack">
