@@ -232,11 +232,9 @@ function applyPendingProfileResets(registry: ProfileRegistry): ProfileRegistry {
   const now = Date.now()
 
   for (const profileId of dedupedIds) {
-    const cachePathFromConfig = readProfileCachePath(profileId)
-    const fallbackCachePath = getSuggestedCacheBasePath(profileId)
     const profileDir = getProfileDir(profileId)
 
-    const targets = [profileDir, cachePathFromConfig || fallbackCachePath]
+    const targets = [profileDir]
     if (profileId === DEFAULT_PROFILE_ID) {
       targets.push(getLegacyConfigDbPath())
     }
@@ -245,8 +243,7 @@ function applyPendingProfileResets(registry: ProfileRegistry): ProfileRegistry {
       if (!target) continue
       const resolved = path.resolve(target)
       if (deletedPaths.has(resolved)) continue
-      const isCacheTarget = resolved === path.resolve(cachePathFromConfig || fallbackCachePath)
-      safeRemovePath(resolved, isCacheTarget ? 'cachePath' : 'generic')
+      safeRemovePath(resolved, 'generic')
       deletedPaths.add(resolved)
     }
 

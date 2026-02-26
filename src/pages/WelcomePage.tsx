@@ -80,7 +80,8 @@ function WelcomePage({ standalone = false }: WelcomePageProps) {
     }
 
     // 从缓存加载配置
-    const loadCachedConfig = () => {
+    const loadCachedConfig = (): string => {
+      let cachedCachePath = ''
       try {
         const cached = localStorage.getItem('welcomeConfig')
         if (cached) {
@@ -90,6 +91,7 @@ function WelcomePage({ standalone = false }: WelcomePageProps) {
             setHasCache(true)
           }
           if (config.cachePath) {
+            cachedCachePath = config.cachePath
             setCachePath(config.cachePath)
           }
           if (config.wxid) {
@@ -108,20 +110,33 @@ function WelcomePage({ standalone = false }: WelcomePageProps) {
       } catch (e) {
         console.error('加载缓存配置失败:', e)
       }
+      return cachedCachePath
     }
-    loadCachedConfig()
+    const cachedCachePath = loadCachedConfig()
 
-    // 自动检测最佳缓存路径（如果缓存中没有）
+    // 优先使用本机共享缓存目录；若未配置，再自动检测最佳默认路径
     const initCachePath = async () => {
-      if (!cachePath) {
-        try {
-          const result = await window.electronAPI.dbPath.getBestCachePath()
-          if (result.success && result.path) {
-            setCachePath(result.path)
-          }
-        } catch (e) {
-          console.error('获取缓存路径失败:', e)
+      let sharedCachePathFetchFailed = false
+      try {
+        const sharedCachePath = await configService.getCachePath()
+        if (sharedCachePath && sharedCachePath.trim().length > 0) {
+          setCachePath(sharedCachePath)
+          return
         }
+      } catch (e) {
+        sharedCachePathFetchFailed = true
+        console.error('获取本机共享缓存路径失败:', e)
+      }
+
+      if (sharedCachePathFetchFailed && cachedCachePath) return
+
+      try {
+        const result = await window.electronAPI.dbPath.getBestCachePath()
+        if (result.success && result.path) {
+          setCachePath(result.path)
+        }
+      } catch (e) {
+        console.error('获取缓存路径失败:', e)
       }
     }
     initCachePath()
@@ -756,7 +771,7 @@ function WelcomePage({ standalone = false }: WelcomePageProps) {
 
               {currentStep.id === 'cache' && (
                 <div className="setup-body">
-                  <label className="field-label">缓存目录</label>
+                  <label className="field-label">缓存目录（本机共用）</label>
                   <input
                     type="text"
                     className="field-input"
@@ -772,7 +787,8 @@ function WelcomePage({ standalone = false }: WelcomePageProps) {
                       <RotateCcw size={16} /> 恢复默认
                     </button>
                   </div>
-                  <div className="field-hint">用于头像、表情与图片缓存，已自动选择最佳磁盘</div>
+                  <div className="field-hint">用于头像、表情与图片缓存；本机所有账号共用该目录</div>
+                  <div className="field-hint">后续新增账号将自动沿用此目录；修改后会影响本机所有账号</div>
                 </div>
               )}
 
@@ -942,7 +958,7 @@ function WelcomePage({ standalone = false }: WelcomePageProps) {
                       <span className="summary-value">{dbPath || '未设置'}</span>
                     </div>
                     <div className="summary-item">
-                      <span className="summary-label">缓存目录：</span>
+                      <span className="summary-label">缓存目录（本机共用）：</span>
                       <span className="summary-value">{cachePath || '未设置'}</span>
                     </div>
                     <div className="summary-item">

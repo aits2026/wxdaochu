@@ -517,10 +517,10 @@ function SettingsPage() {
 
   const handleSelectCachePath = async () => {
     try {
-      const result = await dialog.openFile({ title: '选择缓存目录', properties: ['openDirectory'] })
+      const result = await dialog.openFile({ title: '选择缓存目录（本机所有账号共用）', properties: ['openDirectory'] })
       if (!result.canceled && result.filePaths.length > 0) {
         setCachePath(result.filePaths[0])
-        showMessage('已选择缓存目录', true)
+        showMessage('已选择缓存目录（本机所有账号共用）', true)
       }
     } catch (e) {
       showMessage('选择目录失败', false)
@@ -865,8 +865,8 @@ function SettingsPage() {
       </div>
 
       <div className="form-group">
-        <label>缓存目录 <span className="optional">(可选)</span></label>
-        <span className="form-hint">留空使用默认目录，尽可能不选择C盘</span>
+        <label>缓存目录（本机所有账号共用） <span className="optional">(可选)</span></label>
+        <span className="form-hint">留空使用默认目录，尽可能不选择C盘；修改后会影响本机所有账号</span>
         <input type="text" placeholder="留空使用默认目录" value={cachePath} onChange={(e) => setCachePath(e.target.value)} />
         <div className="btn-row">
           <button className="btn btn-secondary" onClick={handleSelectCachePath}><FolderOpen size={16} /> 浏览选择</button>

@@ -114,6 +114,13 @@ const SENSITIVE_CONFIG_KEYS: SensitiveConfigKey[] = [
 
 const SECURE_SECRETS_ENVELOPE_KEY = '__secureSecretsEnvelope'
 const SECURE_SECRETS_VERSION = 1
+const SHARED_MACHINE_CONFIG_FILENAME = 'vxdaochu-machine-config.json'
+const SHARED_MACHINE_CONFIG_VERSION = 1
+
+interface SharedMachineConfig {
+  version: number
+  cachePath?: string
+}
 
 interface SecureSecretsEnvelope {
   version: number
@@ -155,6 +162,65 @@ export class ConfigService {
     this.profileId = profileId || getActiveProfileId()
     this.dbPath = getProfileConfigDbPath(this.profileId)
     this.initDatabase()
+  }
+
+  private static getSharedMachineConfigPath(): string {
+    return path.join(app.getPath('userData'), SHARED_MACHINE_CONFIG_FILENAME)
+  }
+
+  private static readSharedMachineConfig(): SharedMachineConfig {
+    const filePath = ConfigService.getSharedMachineConfigPath()
+    if (!fs.existsSync(filePath)) {
+      return { version: SHARED_MACHINE_CONFIG_VERSION }
+    }
+    try {
+      const raw = fs.readFileSync(filePath, 'utf-8')
+      const parsed = JSON.parse(raw) as Partial<SharedMachineConfig>
+      const next: SharedMachineConfig = {
+        version: SHARED_MACHINE_CONFIG_VERSION
+      }
+      if (typeof parsed?.cachePath === 'string') {
+        next.cachePath = parsed.cachePath
+      }
+      return next
+    } catch {
+      return { version: SHARED_MACHINE_CONFIG_VERSION }
+    }
+  }
+
+  private static writeSharedMachineConfig(config: SharedMachineConfig): void {
+    try {
+      const filePath = ConfigService.getSharedMachineConfigPath()
+      fs.mkdirSync(path.dirname(filePath), { recursive: true })
+      const payload: SharedMachineConfig = {
+        version: SHARED_MACHINE_CONFIG_VERSION
+      }
+      if (typeof config.cachePath === 'string') {
+        payload.cachePath = config.cachePath
+      }
+      fs.writeFileSync(filePath, JSON.stringify(payload), 'utf-8')
+    } catch (e) {
+      console.error('[Config] 写入本机共享配置失败:', e)
+    }
+  }
+
+  private static hasSharedCachePath(): boolean {
+    const config = ConfigService.readSharedMachineConfig()
+    return Object.prototype.hasOwnProperty.call(config, 'cachePath')
+  }
+
+  private static getSharedCachePathValue(): string | undefined {
+    const config = ConfigService.readSharedMachineConfig()
+    if (!Object.prototype.hasOwnProperty.call(config, 'cachePath')) {
+      return undefined
+    }
+    return typeof config.cachePath === 'string' ? config.cachePath : ''
+  }
+
+  private static setSharedCachePathValue(nextPath: string): void {
+    const config = ConfigService.readSharedMachineConfig()
+    config.cachePath = typeof nextPath === 'string' ? nextPath : ''
+    ConfigService.writeSharedMachineConfig(config)
   }
 
   getProfileId(): string {
@@ -333,11 +399,42 @@ export class ConfigService {
   }
 
   static getSuggestedCacheBasePath(profileId?: string): string {
-    const resolvedProfileId = profileId || getActiveProfileId()
-    if (resolvedProfileId === DEFAULT_PROFILE_ID) {
-      return path.join(app.getPath('documents'), 'VXdaochu')
+    void profileId
+    return path.join(app.getPath('documents'), 'VXdaochu')
+  }
+
+  private readLegacyCachePathFromConfigDb(configDbPath: string): string | null {
+    if (!fs.existsSync(configDbPath)) return null
+    let db: Database.Database | null = null
+    try {
+      db = new Database(configDbPath, { readonly: true })
+      const row = db.prepare("SELECT value FROM config WHERE key = 'cachePath'").get() as { value: string } | undefined
+      if (!row) return null
+      const parsed = JSON.parse(row.value)
+      if (typeof parsed !== 'string') return null
+      return parsed
+    } catch {
+      return null
+    } finally {
+      db?.close()
     }
-    return path.join(app.getPath('documents'), 'VXdaochuProfiles', resolvedProfileId)
+  }
+
+  private ensureSharedCachePathInitialized(): void {
+    if (ConfigService.hasSharedCachePath()) return
+
+    const currentProfileCachePath = this.readLegacyCachePathFromConfigDb(this.dbPath)
+    if (typeof currentProfileCachePath === 'string' && currentProfileCachePath.trim().length > 0) {
+      ConfigService.setSharedCachePathValue(currentProfileCachePath)
+      return
+    }
+
+    if (this.profileId !== DEFAULT_PROFILE_ID) {
+      const defaultProfileCachePath = this.readLegacyCachePathFromConfigDb(getProfileConfigDbPath(DEFAULT_PROFILE_ID))
+      if (typeof defaultProfileCachePath === 'string' && defaultProfileCachePath.trim().length > 0) {
+        ConfigService.setSharedCachePathValue(defaultProfileCachePath)
+      }
+    }
   }
 
   private initDatabase(): void {
@@ -378,15 +475,11 @@ export class ConfigService {
         insertStmt.run(key, JSON.stringify(value))
       }
 
-      // 为非默认 profile 自动分配独立缓存目录，避免与其他账号串数据
+      // 兼容迁移：将旧版本账号级 cachePath 提升为本机共享配置（仅迁移一次）
       try {
-        const cachePathRow = this.db.prepare("SELECT value FROM config WHERE key = 'cachePath'").get() as { value: string } | undefined
-        const cachePath = cachePathRow ? JSON.parse(cachePathRow.value) : ''
-        if ((!cachePath || String(cachePath).trim().length === 0) && this.profileId !== DEFAULT_PROFILE_ID) {
-          this.db.prepare("UPDATE config SET value = ? WHERE key = 'cachePath'").run(JSON.stringify(ConfigService.getSuggestedCacheBasePath(this.profileId)))
-        }
+        this.ensureSharedCachePathInitialized()
       } catch (e) {
-        console.error('初始化 profile 独立缓存目录失败:', e)
+        console.error('迁移本机共享缓存目录配置失败:', e)
       }
 
       // 迁移：修复旧版本产生的空 STT 语言配置，默认为中文
@@ -440,6 +533,21 @@ export class ConfigService {
 
   get<K extends keyof ConfigSchema>(key: K): ConfigSchema[K] {
     try {
+      if (String(key) === 'cachePath') {
+        const sharedCachePath = ConfigService.getSharedCachePathValue()
+        if (sharedCachePath !== undefined) {
+          return sharedCachePath as ConfigSchema[K]
+        }
+
+        const legacyCachePath = this.readLegacyCachePathFromConfigDb(this.dbPath)
+        if (typeof legacyCachePath === 'string' && legacyCachePath.trim().length > 0) {
+          ConfigService.setSharedCachePathValue(legacyCachePath)
+          return legacyCachePath as ConfigSchema[K]
+        }
+
+        return defaults[key]
+      }
+
       if (!this.db) {
         return defaults[key]
       }
@@ -471,6 +579,11 @@ export class ConfigService {
 
   set<K extends keyof ConfigSchema>(key: K, value: ConfigSchema[K]): void {
     try {
+      if (String(key) === 'cachePath') {
+        ConfigService.setSharedCachePathValue(typeof value === 'string' ? value : '')
+        return
+      }
+
       if (!this.db) return
 
       if (isSensitiveConfigKey(String(key)) && this.getSecureSecretsEnvelope()) {
@@ -494,7 +607,10 @@ export class ConfigService {
   getAll(): ConfigSchema {
     try {
       if (!this.db) {
-        return { ...defaults }
+        return {
+          ...defaults,
+          cachePath: this.get('cachePath')
+        }
       }
       const rows = this.db.prepare('SELECT key, value FROM config').all() as { key: string; value: string }[]
       const result = { ...defaults }
@@ -503,6 +619,7 @@ export class ConfigService {
           (result as any)[row.key] = JSON.parse(row.value)
         }
       }
+      result.cachePath = this.get('cachePath')
       const envelope = this.getSecureSecretsEnvelope()
       if (envelope) {
         const unlocked = this.getUnlockedSecureSecrets()
@@ -722,6 +839,6 @@ export class ConfigService {
     if (configured && configured.trim().length > 0) {
       return configured
     }
-    return ConfigService.getSuggestedCacheBasePath(this.profileId)
+    return ConfigService.getSuggestedCacheBasePath()
   }
 }

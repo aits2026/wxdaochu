@@ -1,7 +1,7 @@
 import { app } from 'electron'
 import path from 'path'
 import fs from 'fs'
-import { getActiveProfileId, getProfileDir } from './profileStorage'
+import { DEFAULT_PROFILE_ID, getActiveProfileId, getProfileDir } from './profileStorage'
 
 export interface ExportRecord {
   exportTime: number   // Unix ms
@@ -25,11 +25,16 @@ export class ExportRecordService {
   private store: RecordStore = {}
 
   constructor() {
-    const profileDir = getProfileDir(getActiveProfileId())
+    const activeProfileId = getActiveProfileId()
+    const profileDir = getProfileDir(activeProfileId)
     fs.mkdirSync(profileDir, { recursive: true })
     this.filePath = path.join(profileDir, 'export-records.json')
     const legacyPath = path.join(app.getPath('userData'), 'export-records.json')
-    if (!fs.existsSync(this.filePath) && fs.existsSync(legacyPath)) {
+    if (
+      activeProfileId === DEFAULT_PROFILE_ID &&
+      !fs.existsSync(this.filePath) &&
+      fs.existsSync(legacyPath)
+    ) {
       try {
         fs.copyFileSync(legacyPath, this.filePath)
       } catch (e) {

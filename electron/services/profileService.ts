@@ -82,16 +82,9 @@ class ProfileService {
       lastUsedAt: now
     })
 
-    // 初始化配置库，并为新 profile 设置独立默认缓存目录，避免串数据
+    // 初始化配置库（cachePath 已改为本机共享配置，不在 profile 级别写入）
     const cfg = new ConfigService(profileId)
-    try {
-      const cachePath = cfg.get('cachePath')
-      if (!cachePath) {
-        cfg.set('cachePath', ConfigService.getSuggestedCacheBasePath(profileId) as any)
-      }
-    } finally {
-      cfg.close()
-    }
+    cfg.close()
 
     return this.getProfileById(profileId) || this.toSummary({
       id: profileId,
@@ -137,9 +130,6 @@ class ProfileService {
       }
       // 仅保留注册表项，等待用户重新登录后复用该 profile 身份信息
       fs.mkdirSync(dir, { recursive: true })
-      const cfg = new ConfigService(profileId)
-      cfg.set('cachePath', ConfigService.getSuggestedCacheBasePath(profileId) as any)
-      cfg.close()
       return { success: true }
     } catch (e) {
       return { success: false, error: String(e) }
