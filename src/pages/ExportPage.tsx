@@ -305,6 +305,10 @@ const appendPathSegment = (baseDir: string, segment: string) => {
   return `${baseDir}${separator}${segment}`
 }
 
+const yieldToMainThread = () => new Promise<void>(resolve => {
+  window.setTimeout(resolve, 0)
+})
+
 const SESSION_TABLE_HEADER_MEDIA_ICONS: Record<string, JSX.Element> = {
   图片: <Image size={11} />,
   视频: <Video size={11} />,
@@ -3721,6 +3725,99 @@ function ExportPage() {
     taskCenterUpsertTask
   ])
 
+  const enqueueBatchChatTextExportJobsChunked = useCallback(async (params: {
+    sessionIds: string[]
+    exportOptions: ExportOptions
+    batchTaskId: string
+    chunkSize?: number
+  }) => {
+    const {
+      sessionIds,
+      exportOptions,
+      batchTaskId,
+      chunkSize = 120
+    } = params
+
+    if (!exportFolder || !chatTextExportFolder || sessionIds.length === 0) return 0
+
+    const queueStartedAt = Date.now()
+    let queuedCount = 0
+    let hasStartedWorker = false
+
+    setExportResult(null)
+    taskCenterHighlightTask(batchTaskId)
+    taskCenterOpen()
+
+    for (let offset = 0; offset < sessionIds.length; offset += chunkSize) {
+      const chunk = sessionIds.slice(offset, offset + chunkSize)
+      if (chunk.length === 0) continue
+
+      const jobs: QueuedChatExportJob[] = chunk.map((sessionId, index) => {
+        const absoluteIndex = offset + index
+        const sessionMeta = sessionByUsername.get(sessionId)
+        const sessionName =
+          (sessionDetail?.wxid === sessionId ? (sessionDetail?.remark || sessionDetail?.nickName || sessionDetail?.alias) : undefined) ||
+          sessionMeta?.displayName ||
+          sessionId
+        const messageCount =
+          (sessionDetail?.wxid === sessionId ? sessionDetail.messageCount : undefined) ??
+          sessionMessageCounts[sessionId] ??
+          0
+        const queuedAt = queueStartedAt + absoluteIndex
+
+        return {
+          taskId: `chat-export:${sessionId}:${queuedAt}`,
+          sessionId,
+          sessionName,
+          messageCount,
+          outputDir: chatTextExportFolder,
+          options: { ...exportOptions },
+          queuedAt,
+          suppressResultModal: true,
+          batchTaskId
+        }
+      })
+
+      chatExportQueueRef.current = [...chatExportQueueRef.current, ...jobs]
+      queuedCount += jobs.length
+
+      taskCenterPatchTask(batchTaskId, {
+        phase: queuedCount < sessionIds.length ? '准备队列...' : '等待执行',
+        detail: queuedCount < sessionIds.length
+          ? `正在准备导出队列 ${queuedCount.toLocaleString()} / ${sessionIds.length.toLocaleString()} 个会话`
+          : `共 ${sessionIds.length.toLocaleString()} 个会话，已加入队列`
+      })
+
+      syncChatExportQueueStatus(chatExportWorkerRunningRef.current ? runningChatExportSessionId : null)
+      if (!hasStartedWorker) {
+        hasStartedWorker = true
+        void processNextQueuedChatExport()
+      }
+
+      if (queuedCount < sessionIds.length) {
+        await yieldToMainThread()
+      }
+    }
+
+    return queuedCount
+  }, [
+    chatTextExportFolder,
+    exportFolder,
+    processNextQueuedChatExport,
+    runningChatExportSessionId,
+    sessionByUsername,
+    sessionDetail?.alias,
+    sessionDetail?.messageCount,
+    sessionDetail?.nickName,
+    sessionDetail?.remark,
+    sessionDetail?.wxid,
+    sessionMessageCounts,
+    syncChatExportQueueStatus,
+    taskCenterHighlightTask,
+    taskCenterOpen,
+    taskCenterPatchTask
+  ])
+
   // 导出聊天记录（支持排队）
   const startExport = useCallback(async () => {
     if (!selectedSession || !exportFolder) return
@@ -3748,7 +3845,7 @@ function ExportPage() {
     setShowChatTextCardStatusModal(true)
   }, [])
 
-  const startChatTextCardExportAll = useCallback(() => {
+  const startChatTextCardExportAll = useCallback(async () => {
     if (!exportFolder) {
       alert('请先在顶部设置导出目录')
       return
@@ -3778,13 +3875,17 @@ function ExportPage() {
       format: batchFormat,
       outputDir: chatTextExportFolder,
       outputTargetType: 'directory',
-      phase: '等待执行',
-      detail: `共 ${totalSessions.toLocaleString()} 个会话，已加入队列`,
+      phase: '准备队列...',
+      detail: `正在准备导出队列 0 / ${totalSessions.toLocaleString()} 个会话`,
       createdAt: Date.now(),
       updatedAt: Date.now()
     })
+    setShowChatTextCardExportModal(false)
+    setShowChatTextCardExportFormatPicker(false)
 
-    const queuedCount = enqueueChatExportJobs({
+    await yieldToMainThread()
+
+    const queuedCount = await enqueueBatchChatTextExportJobsChunked({
       sessionIds: sessions.map(session => session.username),
       exportOptions: {
         ...chatTextCardExportOptions,
@@ -3793,17 +3894,27 @@ function ExportPage() {
         exportEmojis: false,
         exportVoices: false
       },
-      suppressResultModal: true,
       batchTaskId
     })
 
-    if (queuedCount > 0) {
-      setShowChatTextCardExportModal(false)
-      setShowChatTextCardExportFormatPicker(false)
-    } else {
+    if (queuedCount <= 0) {
       delete chatExportBatchTaskProgressRef.current[batchTaskId]
+      taskCenterPatchTask(batchTaskId, {
+        status: 'error',
+        phase: '导出失败',
+        detail: '未能创建导出队列',
+        error: '未能创建导出队列'
+      })
     }
-  }, [chatTextCardExportOptions, chatTextExportFolder, enqueueChatExportJobs, exportFolder, sessions, taskCenterUpsertTask])
+  }, [
+    chatTextCardExportOptions,
+    chatTextExportFolder,
+    enqueueBatchChatTextExportJobsChunked,
+    exportFolder,
+    sessions,
+    taskCenterPatchTask,
+    taskCenterUpsertTask
+  ])
 
   // 导出通讯录
   const startContactExport = async () => {
