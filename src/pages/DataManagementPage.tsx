@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { useLocation } from 'react-router-dom'
-import { Database, Check, Circle, Unlock, RefreshCw, RefreshCcw, Image as ImageIcon, Smile, Download, Trash2 } from 'lucide-react'
+import { useLocation, useNavigate } from 'react-router-dom'
+import { Database, Check, Circle, Unlock, RefreshCw, RefreshCcw, Image as ImageIcon, Smile, Download, Trash2, ArrowLeft } from 'lucide-react'
 import './DataManagementPage.scss'
 
 interface DatabaseFile {
@@ -42,6 +42,7 @@ function DataManagementPage() {
   const [progress, setProgress] = useState<any>(null)
   const [deleteConfirm, setDeleteConfirm] = useState<DeleteConfirmData>({ image: null as any, show: false })
   const location = useLocation()
+  const navigate = useNavigate()
   
   // 懒加载相关状态
   const [displayedImageCount, setDisplayedImageCount] = useState(20)
@@ -591,7 +592,18 @@ function DataManagementPage() {
       )}
 
       <div className="page-header">
-        <h1>数据管理</h1>
+        <div className="page-header-main">
+          <button
+            type="button"
+            className="btn btn-secondary page-back-btn"
+            onClick={() => navigate('/export')}
+            title="返回主页面"
+          >
+            <ArrowLeft size={16} />
+            返回主页面
+          </button>
+          <h1>数据管理</h1>
+        </div>
         <div className="header-tabs">
           <button
             className={`tab-btn ${activeTab === 'database' ? 'active' : ''}`}

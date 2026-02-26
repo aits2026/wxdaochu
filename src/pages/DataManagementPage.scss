@@ -3,6 +3,19 @@
   align-items: center;
   justify-content: space-between;
   margin-bottom: 24px;
+
+  .page-header-main {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+  }
+
+  .page-back-btn {
+    padding: 7px 12px;
+    font-size: 13px;
+    flex-shrink: 0;
+  }
   
   h1 {
     font-size: 24px;
