@@ -327,6 +327,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('export:getLatestEmojiExportTimes', sessionUsernames),
     getLatestImageExportTimes: (sessionUsernames: string[]) =>
       ipcRenderer.invoke('export:getLatestImageExportTimes', sessionUsernames),
+    getLatestVideoExportTimes: (sessionUsernames: string[]) =>
+      ipcRenderer.invoke('export:getLatestVideoExportTimes', sessionUsernames),
     getLatestVoiceExportTimes: (sessionUsernames: string[]) =>
       ipcRenderer.invoke('export:getLatestVoiceExportTimes', sessionUsernames),
     saveExportRecord: (
@@ -337,8 +339,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
       outputTargetType?: 'file' | 'directory',
       exportEmojisIncluded?: boolean,
       extra?: {
-        exportKind?: 'chat' | 'image-assets' | 'emoji-assets' | 'voice-assets'
+        exportKind?: 'chat' | 'image-assets' | 'video-assets' | 'emoji-assets' | 'voice-assets'
         exportImagesIncluded?: boolean
+        exportVideosIncluded?: boolean
         exportVoicesIncluded?: boolean
         sourceLatestMessageTimestamp?: number
         emojiItemCount?: number

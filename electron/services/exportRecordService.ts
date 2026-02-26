@@ -9,9 +9,10 @@ export interface ExportRecord {
   outputDir?: string   // 导出位置（兼容旧数据；新数据可能为文件或目录路径）
   outputTargetType?: 'file' | 'directory'
   exportImagesIncluded?: boolean
+  exportVideosIncluded?: boolean
   exportEmojisIncluded?: boolean
   exportVoicesIncluded?: boolean
-  exportKind?: 'chat' | 'image-assets' | 'emoji-assets' | 'voice-assets'
+  exportKind?: 'chat' | 'image-assets' | 'video-assets' | 'emoji-assets' | 'voice-assets'
   sourceLatestMessageTimestamp?: number // Unix 秒
   emojiItemCount?: number
 }
@@ -107,6 +108,23 @@ export class ExportRecordService {
     return result
   }
 
+  getLatestVideoExportTimes(sessionUsernames: string[]): Record<string, number> {
+    const result: Record<string, number> = {}
+    for (const sessionUsername of sessionUsernames) {
+      const records = this.store[sessionUsername]
+      if (!records || records.length === 0) continue
+      for (let i = records.length - 1; i >= 0; i--) {
+        const record = records[i]
+        if (!record) continue
+        if (record.exportVideosIncluded === true || record.exportKind === 'video-assets') {
+          if (record.exportTime) result[sessionUsername] = record.exportTime
+          break
+        }
+      }
+    }
+    return result
+  }
+
   getLatestVoiceExportTimes(sessionUsernames: string[]): Record<string, number> {
     const result: Record<string, number> = {}
     for (const sessionUsername of sessionUsernames) {
@@ -147,8 +165,9 @@ export class ExportRecordService {
     outputTargetType?: 'file' | 'directory',
     exportEmojisIncluded?: boolean,
     extra?: {
-      exportKind?: 'chat' | 'image-assets' | 'emoji-assets' | 'voice-assets'
+      exportKind?: 'chat' | 'image-assets' | 'video-assets' | 'emoji-assets' | 'voice-assets'
       exportImagesIncluded?: boolean
+      exportVideosIncluded?: boolean
       exportVoicesIncluded?: boolean
       sourceLatestMessageTimestamp?: number
       emojiItemCount?: number
@@ -164,6 +183,7 @@ export class ExportRecordService {
       outputDir,
       outputTargetType,
       exportImagesIncluded: extra?.exportImagesIncluded,
+      exportVideosIncluded: extra?.exportVideosIncluded,
       exportEmojisIncluded,
       exportVoicesIncluded: extra?.exportVoicesIncluded,
       exportKind: extra?.exportKind,

@@ -95,6 +95,8 @@ export interface ExportOptions {
   exportVoices?: boolean
   // 仅导出图片资源（不生成聊天文本文件）
   imageOnlyMode?: boolean
+  // 仅导出视频资源（不生成聊天文本文件）
+  videoOnlyMode?: boolean
   // 仅导出表情包资源（不生成聊天文本文件）
   emojiOnlyMode?: boolean
   // 仅导出语音资源（不生成聊天文本文件）
@@ -110,6 +112,7 @@ export interface ExportOptions {
   latestMessageTimestampHint?: number
   currentEmojiCountHint?: number
   currentImageCountHint?: number
+  currentVideoCountHint?: number
   currentVoiceCountHint?: number
 }
 
@@ -2448,7 +2451,14 @@ class ExportService {
           !options.exportEmojis &&
           !options.exportVoices
         )
-        const mediaOnlyMode = imageOnlyMode || emojiOnlyMode || voiceOnlyMode
+        const videoOnlyMode = Boolean(
+          options.videoOnlyMode &&
+          options.exportVideos &&
+          !options.exportImages &&
+          !options.exportEmojis &&
+          !options.exportVoices
+        )
+        const mediaOnlyMode = imageOnlyMode || videoOnlyMode || emojiOnlyMode || voiceOnlyMode
         const hasMedia = Boolean(options.exportImages || options.exportVideos || options.exportEmojis || options.exportVoices)
         const sessionOutputDir = hasMedia ? path.join(outputDir, safeName) : outputDir
         if (hasMedia && !mediaOnlyMode && !fs.existsSync(sessionOutputDir)) {
@@ -2581,6 +2591,47 @@ class ExportService {
           }
         }
 
+        const canTrySkipVideoUnchanged = Boolean(
+          options.skipIfUnchanged &&
+          videoOnlyMode &&
+          Number.isFinite(options.currentVideoCountHint) &&
+          Number.isFinite(options.latestMessageTimestampHint) &&
+          Number(options.currentVideoCountHint) >= 0 &&
+          Number(options.latestMessageTimestampHint) > 0
+        )
+        if (canTrySkipVideoUnchanged) {
+          const latestVideoRecord = exportRecordService.getLatestRecord(sessionId, 'video-assets')
+          const currentVideoCount = Number(options.currentVideoCountHint ?? -1)
+          const currentLatestMessageTimestamp = Number(options.latestMessageTimestampHint || 0)
+          const sessionFolderHasFiles = this.dirHasAnyFile(sessionOutputDir)
+          const hasNoVideoDataChange = Boolean(
+            latestVideoRecord &&
+            latestVideoRecord.messageCount === currentVideoCount &&
+            Number(latestVideoRecord.sourceLatestMessageTimestamp || 0) >= currentLatestMessageTimestamp
+          )
+
+          if (hasNoVideoDataChange && sessionFolderHasFiles) {
+            emitProgress({
+              current: 100,
+              total: 100,
+              currentSession: sessionInfo.displayName,
+              phase: 'complete',
+              detail: '已导出（无新增，已跳过）'
+            })
+            successCount++
+            sessionOutputs.push({
+              sessionId,
+              outputPath: sessionOutputDir,
+              openTargetPath: sessionOutputDir,
+              openTargetType: 'directory',
+              skipped: true,
+              skipReason: 'video-unchanged-existing-folder'
+            })
+            await new Promise(resolve => setImmediate(resolve))
+            continue
+          }
+        }
+
         if (
           imageOnlyMode &&
           Number.isFinite(options.currentImageCountHint) &&
@@ -2601,6 +2652,31 @@ class ExportService {
             openTargetType: 'directory',
             skipped: true,
             skipReason: 'image-empty-session'
+          })
+          await new Promise(resolve => setImmediate(resolve))
+          continue
+        }
+
+        if (
+          videoOnlyMode &&
+          Number.isFinite(options.currentVideoCountHint) &&
+          Number(options.currentVideoCountHint) === 0
+        ) {
+          emitProgress({
+            current: 100,
+            total: 100,
+            currentSession: sessionInfo.displayName,
+            phase: 'complete',
+            detail: '无视频，已跳过'
+          })
+          successCount++
+          sessionOutputs.push({
+            sessionId,
+            outputPath: sessionOutputDir,
+            openTargetPath: outputDir,
+            openTargetType: 'directory',
+            skipped: true,
+            skipReason: 'video-empty-session'
           })
           await new Promise(resolve => setImmediate(resolve))
           continue
@@ -2664,7 +2740,7 @@ class ExportService {
         const exportOpts = mediaPathMap ? { ...options, mediaPathMap } : options
 
         let result: { success: boolean; error?: string }
-        if (imageOnlyMode || emojiOnlyMode || voiceOnlyMode) {
+        if (imageOnlyMode || videoOnlyMode || emojiOnlyMode || voiceOnlyMode) {
           if (!this.dirHasAnyFile(sessionOutputDir)) {
             try {
               if (fs.existsSync(sessionOutputDir)) {
@@ -2681,7 +2757,11 @@ class ExportService {
               total: 100,
               currentSession: sessionInfo.displayName,
               phase: 'complete',
-              detail: imageOnlyMode ? '无图片，已跳过' : (emojiOnlyMode ? '无表情包，已跳过' : '无语音，已跳过')
+              detail: imageOnlyMode
+                ? '无图片，已跳过'
+                : (videoOnlyMode
+                    ? '无视频，已跳过'
+                    : (emojiOnlyMode ? '无表情包，已跳过' : '无语音，已跳过'))
             })
             successCount++
             sessionOutputs.push({
@@ -2690,7 +2770,11 @@ class ExportService {
               openTargetPath: outputDir,
               openTargetType: 'directory',
               skipped: true,
-              skipReason: imageOnlyMode ? 'image-empty-session' : (emojiOnlyMode ? 'emoji-empty-session' : 'voice-empty-session')
+              skipReason: imageOnlyMode
+                ? 'image-empty-session'
+                : (videoOnlyMode
+                    ? 'video-empty-session'
+                    : (emojiOnlyMode ? 'emoji-empty-session' : 'voice-empty-session'))
             })
             await new Promise(resolve => setImmediate(resolve))
             continue
@@ -2700,7 +2784,11 @@ class ExportService {
             total: 100,
             currentSession: sessionInfo.displayName,
             phase: 'complete',
-            detail: imageOnlyMode ? '图片导出完成' : (emojiOnlyMode ? '表情包导出完成' : '语音导出完成')
+            detail: imageOnlyMode
+              ? '图片导出完成'
+              : (videoOnlyMode
+                  ? '视频导出完成'
+                  : (emojiOnlyMode ? '表情包导出完成' : '语音导出完成'))
           })
           result = { success: true }
         } else if (options.format === 'json') {

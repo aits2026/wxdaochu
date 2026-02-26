@@ -52,6 +52,7 @@ function TaskCard({
     task.kind === 'chat-export-batch' ||
     task.kind === 'image-export-batch' ||
     task.kind === 'emoji-export-batch' ||
+    task.kind === 'video-export-batch' ||
     task.kind === 'voice-export-batch'
   ) && Boolean(onInspect)
 
@@ -242,6 +243,7 @@ function GlobalTaskCenter({ variant = 'titlebar', label = '任务中心' }: Glob
       task.kind !== 'chat-export-batch' &&
       task.kind !== 'image-export-batch' &&
       task.kind !== 'emoji-export-batch' &&
+      task.kind !== 'video-export-batch' &&
       task.kind !== 'voice-export-batch'
     ) return
     setTaskCenterOpen(false)

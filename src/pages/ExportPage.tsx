@@ -39,6 +39,7 @@ interface ExportOptions {
   exportEmojis: boolean
   exportVoices: boolean
   imageOnlyMode?: boolean
+  videoOnlyMode?: boolean
   emojiOnlyMode?: boolean
   voiceOnlyMode?: boolean
   skipIfUnchanged?: boolean
@@ -46,6 +47,7 @@ interface ExportOptions {
   latestMessageTimestampHint?: number
   currentEmojiCountHint?: number
   currentImageCountHint?: number
+  currentVideoCountHint?: number
   currentVoiceCountHint?: number
 }
 
@@ -95,6 +97,7 @@ const SESSION_SORT_STATS_WARMUP_START_DELAY_MS = 160
 const SESSION_SORT_STATS_WARMUP_YIELD_EVERY = 6
 const CHAT_TEXT_EXPORT_SUBDIR_NAME = 'chat-text'
 const IMAGE_EXPORT_SUBDIR_NAME = 'images'
+const VIDEO_EXPORT_SUBDIR_NAME = 'videos'
 const EMOJI_EXPORT_SUBDIR_NAME = 'emojis'
 const VOICE_EXPORT_SUBDIR_NAME = 'voices'
 const OPEN_EXPORT_OVERVIEW_EVENT = 'vxdaochu:open-export-overview'
@@ -308,6 +311,24 @@ interface ImageBatchSessionLiveProgress {
   rawDetail?: string
 }
 
+interface QueuedVideoExportJob {
+  taskId: string
+  sessionId: string
+  sessionName: string
+  videoCount?: number
+  latestMessageTimestamp?: number
+  outputDir: string
+  queuedAt: number
+  batchTaskId: string
+}
+
+interface VideoExportBatchTaskProgress {
+  total: number
+  completed: number
+  successCount: number
+  failCount: number
+}
+
 interface QueuedVoiceExportJob {
   taskId: string
   sessionId: string
@@ -333,7 +354,9 @@ interface SessionExportRecord {
   outputDir?: string
   outputTargetType?: 'file' | 'directory'
   exportImagesIncluded?: boolean
+  exportVideosIncluded?: boolean
   exportEmojisIncluded?: boolean
+  exportVoicesIncluded?: boolean
 }
 
 interface SessionCardGroupInfo {
@@ -794,6 +817,7 @@ function ExportPage() {
   const [sessionEmojiExportFlagMap, setSessionEmojiExportFlagMap] = useState<Record<string, boolean | null>>({})
   const [sessionEmojiLatestExportTimeMap, setSessionEmojiLatestExportTimeMap] = useState<Record<string, number | null>>({})
   const [sessionImageLatestExportTimeMap, setSessionImageLatestExportTimeMap] = useState<Record<string, number | null>>({})
+  const [sessionVideoLatestExportTimeMap, setSessionVideoLatestExportTimeMap] = useState<Record<string, number | null>>({})
   const [sessionVoiceLatestExportTimeMap, setSessionVoiceLatestExportTimeMap] = useState<Record<string, number | null>>({})
   const [searchKeyword, setSearchKeyword] = useState('')
   const [sessionTypeFilter, setSessionTypeFilter] = useState<SessionTypeFilter>('private')
@@ -893,6 +917,8 @@ function ExportPage() {
   const [showImageCardExportModal, setShowImageCardExportModal] = useState(false)
   const [showImageCardStatusModal, setShowImageCardStatusModal] = useState(false)
   const [imageCardExportOrder, setImageCardExportOrder] = useState<ImageBatchExportOrder>('few-first')
+  const [showVideoCardExportModal, setShowVideoCardExportModal] = useState(false)
+  const [showVideoCardStatusModal, setShowVideoCardStatusModal] = useState(false)
   const [showEmojiCardExportModal, setShowEmojiCardExportModal] = useState(false)
   const [showEmojiCardStatusModal, setShowEmojiCardStatusModal] = useState(false)
   const [showVoiceCardExportModal, setShowVoiceCardExportModal] = useState(false)
@@ -920,6 +946,9 @@ function ExportPage() {
   const [sessionImageBatchOutcomeMap, setSessionImageBatchOutcomeMap] = useState<Record<string, ImageBatchSessionOutcome>>({})
   const [imageBatchCurrentSessionProgress, setImageBatchCurrentSessionProgress] = useState<ImageBatchSessionLiveProgress | null>(null)
   const [imageCardLiveExportedSessionIds, setImageCardLiveExportedSessionIds] = useState<Set<string>>(new Set())
+  const [runningVideoExportSessionId, setRunningVideoExportSessionId] = useState<string | null>(null)
+  const [queuedVideoExportSessionIds, setQueuedVideoExportSessionIds] = useState<Set<string>>(new Set())
+  const [videoCardLiveExportedSessionIds, setVideoCardLiveExportedSessionIds] = useState<Set<string>>(new Set())
   const [runningVoiceExportSessionId, setRunningVoiceExportSessionId] = useState<string | null>(null)
   const [queuedVoiceExportSessionIds, setQueuedVoiceExportSessionIds] = useState<Set<string>>(new Set())
   const [voiceCardLiveExportedSessionIds, setVoiceCardLiveExportedSessionIds] = useState<Set<string>>(new Set())
@@ -935,6 +964,10 @@ function ExportPage() {
   )
   const imageExportFolder = useMemo(
     () => appendPathSegment(exportFolder, IMAGE_EXPORT_SUBDIR_NAME),
+    [exportFolder]
+  )
+  const videoExportFolder = useMemo(
+    () => appendPathSegment(exportFolder, VIDEO_EXPORT_SUBDIR_NAME),
     [exportFolder]
   )
   const voiceExportFolder = useMemo(
@@ -988,6 +1021,7 @@ function ExportPage() {
   const sessionEmojiExportFlagsRequestIdRef = useRef(0)
   const sessionEmojiLatestExportTimesRequestIdRef = useRef(0)
   const sessionImageLatestExportTimesRequestIdRef = useRef(0)
+  const sessionVideoLatestExportTimesRequestIdRef = useRef(0)
   const sessionVoiceLatestExportTimesRequestIdRef = useRef(0)
   const chatExportQueueRef = useRef<QueuedChatExportJob[]>([])
   const chatExportWorkerRunningRef = useRef(false)
@@ -996,6 +1030,9 @@ function ExportPage() {
   const imageExportWorkerRunningRef = useRef(false)
   const imageExportBatchTaskProgressRef = useRef<Record<string, ImageExportBatchTaskProgress>>({})
   const imageExportCurrentJobRef = useRef<{ batchTaskId: string; sessionId: string; sessionName: string } | null>(null)
+  const videoExportQueueRef = useRef<QueuedVideoExportJob[]>([])
+  const videoExportWorkerRunningRef = useRef(false)
+  const videoExportBatchTaskProgressRef = useRef<Record<string, VideoExportBatchTaskProgress>>({})
   const emojiExportQueueRef = useRef<QueuedEmojiExportJob[]>([])
   const emojiExportWorkerRunningRef = useRef(false)
   const emojiExportBatchTaskProgressRef = useRef<Record<string, EmojiExportBatchTaskProgress>>({})
@@ -1040,6 +1077,16 @@ function ExportPage() {
       nextQueued.add(job.sessionId)
     }
     setQueuedImageExportSessionIds(nextQueued)
+  }, [])
+
+  const syncVideoExportQueueStatus = useCallback((nextRunningSessionId: string | null) => {
+    setRunningVideoExportSessionId(nextRunningSessionId)
+    const nextQueued = new Set<string>()
+    for (const job of videoExportQueueRef.current) {
+      if (nextRunningSessionId && job.sessionId === nextRunningSessionId) continue
+      nextQueued.add(job.sessionId)
+    }
+    setQueuedVideoExportSessionIds(nextQueued)
   }, [])
 
   const syncVoiceExportQueueStatus = useCallback((nextRunningSessionId: string | null) => {
@@ -1933,6 +1980,43 @@ function ExportPage() {
       }
     })()
   }, [activeTab, sessions, sessionImageLatestExportTimeMap])
+
+  useEffect(() => {
+    if (activeTab !== 'chat' || sessions.length === 0) return
+
+    const missingUsernames = sessions
+      .map(session => session.username)
+      .filter(username => !(username in sessionVideoLatestExportTimeMap))
+
+    if (missingUsernames.length === 0) return
+
+    const requestId = ++sessionVideoLatestExportTimesRequestIdRef.current
+
+    void (async () => {
+      try {
+        const latestMap = await window.electronAPI.export.getLatestVideoExportTimes(missingUsernames)
+        if (requestId !== sessionVideoLatestExportTimesRequestIdRef.current) return
+
+        setSessionVideoLatestExportTimeMap(prev => {
+          const next = { ...prev }
+          for (const username of missingUsernames) {
+            next[username] = typeof latestMap?.[username] === 'number' ? latestMap[username] : null
+          }
+          return next
+        })
+      } catch (e) {
+        console.error('加载会话视频最近导出时间失败:', e)
+        if (requestId !== sessionVideoLatestExportTimesRequestIdRef.current) return
+        setSessionVideoLatestExportTimeMap(prev => {
+          const next = { ...prev }
+          for (const username of missingUsernames) {
+            if (!(username in next)) next[username] = null
+          }
+          return next
+        })
+      }
+    })()
+  }, [activeTab, sessions, sessionVideoLatestExportTimeMap])
 
   useEffect(() => {
     if (activeTab !== 'chat' || sessions.length === 0) return
@@ -3336,6 +3420,70 @@ function ExportPage() {
     }
     return { running, queued, exported, skipped, notExported, total: imageCardTotalSessions }
   }, [imageCardTotalSessions, imageStatusRows])
+  const videoCardTotalSessions = bulkExportEligibleSessions.length
+  const videoCardExportedSessions = useMemo(() => (
+    bulkExportEligibleSessions.reduce((count, session) => {
+      const latestExportTime = sessionVideoLatestExportTimeMap[session.username]
+      return (typeof latestExportTime === 'number' && Number.isFinite(latestExportTime) && latestExportTime > 0)
+        ? count + 1
+        : count
+    }, 0)
+  ), [bulkExportEligibleSessions, sessionVideoLatestExportTimeMap])
+  const videoCardDisplayedExportedSessions = useMemo(() => (
+    bulkExportEligibleSessions.reduce((count, session) => {
+      const latestExportTime = sessionVideoLatestExportTimeMap[session.username]
+      const hasHistorical = typeof latestExportTime === 'number' && Number.isFinite(latestExportTime) && latestExportTime > 0
+      return (hasHistorical || videoCardLiveExportedSessionIds.has(session.username)) ? count + 1 : count
+    }, 0)
+  ), [bulkExportEligibleSessions, sessionVideoLatestExportTimeMap, videoCardLiveExportedSessionIds])
+  const videoStatusRows = useMemo(() => {
+    const statusPriority: Record<'running' | 'queued' | 'not-exported' | 'exported', number> = {
+      running: 0,
+      queued: 1,
+      'not-exported': 2,
+      exported: 3
+    }
+    return bulkExportEligibleSessions
+      .map((session) => {
+        const latestExportTime = sessionVideoLatestExportTimeMap[session.username]
+        const hasExported = typeof latestExportTime === 'number' && Number.isFinite(latestExportTime) && latestExportTime > 0
+        const status: 'running' | 'queued' | 'not-exported' | 'exported' =
+          runningVideoExportSessionId === session.username
+            ? 'running'
+            : queuedVideoExportSessionIds.has(session.username)
+              ? 'queued'
+              : hasExported
+                ? 'exported'
+                : 'not-exported'
+
+        return {
+          session,
+          status,
+          latestExportTime: hasExported ? latestExportTime : null
+        }
+      })
+      .sort((a, b) => {
+        const statusDiff = statusPriority[a.status] - statusPriority[b.status]
+        if (statusDiff !== 0) return statusDiff
+        if (a.status === 'exported' && b.status === 'exported') {
+          return (b.latestExportTime || 0) - (a.latestExportTime || 0)
+        }
+        return (b.session.lastTimestamp || 0) - (a.session.lastTimestamp || 0)
+      })
+  }, [bulkExportEligibleSessions, queuedVideoExportSessionIds, runningVideoExportSessionId, sessionVideoLatestExportTimeMap])
+  const videoStatusSummary = useMemo(() => {
+    let running = 0
+    let queued = 0
+    let exported = 0
+    let notExported = 0
+    for (const row of videoStatusRows) {
+      if (row.status === 'running') running += 1
+      else if (row.status === 'queued') queued += 1
+      else if (row.status === 'exported') exported += 1
+      else notExported += 1
+    }
+    return { running, queued, exported, notExported, total: videoCardTotalSessions }
+  }, [videoCardTotalSessions, videoStatusRows])
   const voiceCardTotalSessions = bulkExportEligibleSessions.length
   const voiceCardExportedSessions = useMemo(() => (
     bulkExportEligibleSessions.reduce((count, session) => {
@@ -3355,6 +3503,7 @@ function ExportPage() {
   const isChatTextCardExporting = hasRunningChatExportTask || hasPendingChatExportTask
   const isEmojiCardExporting = runningEmojiExportSessionId !== null || queuedEmojiExportSessionIds.size > 0
   const isImageCardExporting = runningImageExportSessionId !== null || queuedImageExportSessionIds.size > 0
+  const isVideoCardExporting = runningVideoExportSessionId !== null || queuedVideoExportSessionIds.size > 0
   const isVoiceCardExporting = runningVoiceExportSessionId !== null || queuedVoiceExportSessionIds.size > 0
   const getBulkExportStatusModalAction = useCallback((params: {
     total: number
@@ -3390,6 +3539,11 @@ function ExportPage() {
     total: sessionEmojiCardTotalSessions,
     exported: sessionEmojiCardDisplayedExportedSessions,
     exporting: isEmojiCardExporting
+  })
+  const videoStatusModalAction = getBulkExportStatusModalAction({
+    total: videoCardTotalSessions,
+    exported: videoCardDisplayedExportedSessions,
+    exporting: isVideoCardExporting
   })
   const voiceStatusModalAction = getBulkExportStatusModalAction({
     total: voiceCardTotalSessions,
@@ -4250,6 +4404,7 @@ function ExportPage() {
               job.options.exportEmojis,
               {
                 exportImagesIncluded: job.options.exportImages,
+                exportVideosIncluded: job.options.exportVideos,
                 exportVoicesIncluded: job.options.exportVoices
               }
             )
@@ -4264,6 +4419,9 @@ function ExportPage() {
             }
             if (job.options.exportImages) {
               setSessionImageLatestExportTimeMap(prev => ({ ...prev, [job.sessionId]: Date.now() }))
+            }
+            if (job.options.exportVideos) {
+              setSessionVideoLatestExportTimeMap(prev => ({ ...prev, [job.sessionId]: Date.now() }))
             }
             if (job.options.exportVoices) {
               setSessionVoiceLatestExportTimeMap(prev => ({ ...prev, [job.sessionId]: Date.now() }))
@@ -5314,6 +5472,302 @@ function ExportPage() {
     taskCenterUpsertTask
   ])
 
+  const executeQueuedVideoExportJob = useCallback(async (job: QueuedVideoExportJob) => {
+    const finishBatchJob = (ok: boolean, errorMessage?: string) => {
+      const batch = videoExportBatchTaskProgressRef.current[job.batchTaskId]
+      if (!batch) return
+      batch.completed += 1
+      if (ok) batch.successCount += 1
+      else batch.failCount += 1
+
+      const isComplete = batch.completed >= batch.total
+      const hasAnySuccess = batch.successCount > 0
+      taskCenterPatchTask(job.batchTaskId, {
+        status: isComplete ? (hasAnySuccess ? 'success' : 'error') : 'running',
+        progressCurrent: batch.completed,
+        progressTotal: batch.total,
+        successCount: batch.successCount,
+        failCount: batch.failCount,
+        phase: isComplete ? '导出完成' : '正在导出...',
+        detail: isComplete
+          ? `共 ${batch.total.toLocaleString()} 个会话，成功 ${batch.successCount.toLocaleString()}，失败 ${batch.failCount.toLocaleString()}`
+          : `共 ${batch.total.toLocaleString()} 个会话，可继续操作页面`,
+        currentName: isComplete ? '' : job.sessionName,
+        error: isComplete && !hasAnySuccess ? (errorMessage || '批量导出失败') : undefined
+      })
+      if (isComplete) {
+        delete videoExportBatchTaskProgressRef.current[job.batchTaskId]
+      }
+    }
+
+    const exportOptions: ExportOptions = {
+      format: 'json',
+      startDate: '',
+      endDate: '',
+      exportAvatars: false,
+      exportImages: false,
+      exportVideos: true,
+      exportEmojis: false,
+      exportVoices: false,
+      videoOnlyMode: true,
+      skipIfUnchanged: true,
+      latestMessageTimestampHint: job.latestMessageTimestamp
+    }
+    if (typeof job.videoCount === 'number' && Number.isFinite(job.videoCount) && job.videoCount >= 0) {
+      exportOptions.currentVideoCountHint = job.videoCount
+    }
+
+    try {
+      const result = await window.electronAPI.export.exportSessions(
+        [job.sessionId],
+        job.outputDir,
+        exportOptions
+      )
+
+      if (result.success) {
+        const sessionOutput = result.sessionOutputs?.find(item => item.sessionId === job.sessionId) || result.sessionOutputs?.[0]
+        const exportOpenTargetPath = sessionOutput?.openTargetPath || job.outputDir
+        const exportOpenTargetType = sessionOutput?.openTargetType || 'directory'
+        const wasSkipped = sessionOutput?.skipped === true
+        const skipReason = sessionOutput?.skipReason
+
+        if (!wasSkipped) {
+          await window.electronAPI.export.saveExportRecord(
+            job.sessionId,
+            'video-assets',
+            typeof job.videoCount === 'number' ? job.videoCount : 0,
+            exportOpenTargetPath,
+            exportOpenTargetType,
+            false,
+            {
+              exportKind: 'video-assets',
+              exportVideosIncluded: true,
+              sourceLatestMessageTimestamp: job.latestMessageTimestamp
+            }
+          )
+          setSessionVideoLatestExportTimeMap(prev => ({ ...prev, [job.sessionId]: Date.now() }))
+          setVideoCardLiveExportedSessionIds(prev => {
+            if (prev.has(job.sessionId)) return prev
+            const next = new Set(prev)
+            next.add(job.sessionId)
+            return next
+          })
+        } else if (skipReason !== 'video-empty-session') {
+          setSessionVideoLatestExportTimeMap(prev => ({
+            ...prev,
+            [job.sessionId]: (typeof prev[job.sessionId] === 'number' && Number.isFinite(prev[job.sessionId]) && (prev[job.sessionId] || 0) > 0)
+              ? prev[job.sessionId]
+              : Date.now()
+          }))
+          setVideoCardLiveExportedSessionIds(prev => {
+            if (prev.has(job.sessionId)) return prev
+            const next = new Set(prev)
+            next.add(job.sessionId)
+            return next
+          })
+        }
+
+        finishBatchJob(true)
+        return
+      }
+
+      finishBatchJob(false, result.error || '导出失败')
+    } catch (e) {
+      console.error('批量导出视频失败:', e)
+      const errorMessage = e instanceof Error ? e.message : String(e)
+      finishBatchJob(false, errorMessage)
+    }
+  }, [taskCenterPatchTask])
+
+  const processNextQueuedVideoExport = useCallback(async () => {
+    if (videoExportWorkerRunningRef.current) return
+    const nextJob = videoExportQueueRef.current[0]
+    if (!nextJob) return
+
+    videoExportWorkerRunningRef.current = true
+    syncVideoExportQueueStatus(nextJob.sessionId)
+    taskCenterPatchTask(nextJob.batchTaskId, {
+      status: 'running',
+      phase: '正在导出...',
+      detail: `共 ${(videoExportBatchTaskProgressRef.current[nextJob.batchTaskId]?.total || 0).toLocaleString()} 个会话，可继续操作页面`,
+      currentName: nextJob.sessionName
+    })
+    taskCenterSetActiveExportTaskId(null)
+
+    try {
+      await executeQueuedVideoExportJob(nextJob)
+    } finally {
+      videoExportQueueRef.current = videoExportQueueRef.current.filter(job => job.taskId !== nextJob.taskId)
+      videoExportWorkerRunningRef.current = false
+      taskCenterSetActiveExportTaskId(null)
+      syncVideoExportQueueStatus(null)
+      window.setTimeout(() => { void processNextQueuedVideoExport() }, 0)
+    }
+  }, [executeQueuedVideoExportJob, syncVideoExportQueueStatus, taskCenterPatchTask, taskCenterSetActiveExportTaskId])
+
+  const enqueueBatchVideoExportJobsChunked = useCallback(async (params: {
+    sessionIds: string[]
+    batchTaskId: string
+    chunkSize?: number
+  }) => {
+    const { sessionIds, batchTaskId, chunkSize = 120 } = params
+
+    if (!exportFolder || !videoExportFolder || sessionIds.length === 0) return 0
+
+    const queueStartedAt = Date.now()
+    let queuedCount = 0
+    let hasStartedWorker = false
+
+    taskCenterHighlightTask(batchTaskId)
+    taskCenterOpen()
+
+    for (let offset = 0; offset < sessionIds.length; offset += chunkSize) {
+      const chunk = sessionIds.slice(offset, offset + chunkSize)
+      if (chunk.length === 0) continue
+
+      const jobs: QueuedVideoExportJob[] = chunk.map((sessionId, index) => {
+        const absoluteIndex = offset + index
+        const sessionMeta = sessionByUsername.get(sessionId)
+        const sessionName =
+          (sessionDetail?.wxid === sessionId ? (sessionDetail?.remark || sessionDetail?.nickName || sessionDetail?.alias) : undefined) ||
+          sessionMeta?.displayName ||
+          sessionId
+        const videoCount =
+          (sessionDetail?.wxid === sessionId ? sessionDetail.videoCount : undefined) ??
+          sessionCardStatsMap[sessionId]?.videoCount
+        const queuedAt = queueStartedAt + absoluteIndex
+
+        return {
+          taskId: `video-export:${sessionId}:${queuedAt}`,
+          sessionId,
+          sessionName,
+          videoCount,
+          latestMessageTimestamp: sessionMeta?.lastTimestamp,
+          outputDir: videoExportFolder,
+          queuedAt,
+          batchTaskId
+        }
+      })
+
+      videoExportQueueRef.current = [...videoExportQueueRef.current, ...jobs]
+      queuedCount += jobs.length
+
+      taskCenterPatchTask(batchTaskId, {
+        phase: queuedCount < sessionIds.length ? '准备队列...' : '等待执行',
+        detail: queuedCount < sessionIds.length
+          ? `正在准备导出队列 ${queuedCount.toLocaleString()} / ${sessionIds.length.toLocaleString()} 个会话`
+          : `共 ${sessionIds.length.toLocaleString()} 个会话，已加入队列`
+      })
+
+      syncVideoExportQueueStatus(videoExportWorkerRunningRef.current ? runningVideoExportSessionId : null)
+      if (!hasStartedWorker) {
+        hasStartedWorker = true
+        void processNextQueuedVideoExport()
+      }
+
+      if (queuedCount < sessionIds.length) {
+        await yieldToMainThread()
+      }
+    }
+
+    return queuedCount
+  }, [
+    exportFolder,
+    processNextQueuedVideoExport,
+    runningVideoExportSessionId,
+    sessionByUsername,
+    sessionCardStatsMap,
+    sessionDetail?.alias,
+    sessionDetail?.nickName,
+    sessionDetail?.remark,
+    sessionDetail?.videoCount,
+    sessionDetail?.wxid,
+    syncVideoExportQueueStatus,
+    taskCenterHighlightTask,
+    taskCenterOpen,
+    taskCenterPatchTask,
+    videoExportFolder
+  ])
+
+  const startVideoCardExportAll = useCallback(async () => {
+    if (!exportFolder) {
+      alert('请先在顶部设置导出目录')
+      return
+    }
+    if (bulkExportEligibleSessions.length === 0) {
+      alert('暂无可导出的私聊或群聊会话')
+      return
+    }
+
+    const totalSessions = bulkExportEligibleSessions.length
+    const batchTaskId = `video-export-batch:${Date.now()}`
+    videoExportBatchTaskProgressRef.current[batchTaskId] = {
+      total: totalSessions,
+      completed: 0,
+      successCount: 0,
+      failCount: 0
+    }
+    setVideoCardLiveExportedSessionIds(new Set())
+    taskCenterUpsertTask({
+      id: batchTaskId,
+      kind: 'video-export-batch',
+      typeLabel: '视频批量导出',
+      sessionName: '全部会话',
+      status: 'pending',
+      progressCurrent: 0,
+      progressTotal: totalSessions,
+      successCount: 0,
+      failCount: 0,
+      unitLabel: '个会话',
+      outputDir: videoExportFolder,
+      outputTargetType: 'directory',
+      phase: '准备队列...',
+      detail: `正在准备导出队列 0 / ${totalSessions.toLocaleString()} 个会话`,
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    })
+    setShowVideoCardExportModal(false)
+
+    await yieldToMainThread()
+
+    const orderedSessionIds = bulkExportEligibleSessions
+      .map((session, index) => ({ session, index }))
+      .sort((a, b) => {
+        const priority = (accountType?: ChatSession['accountType']) => {
+          if (accountType === 'friend') return 0
+          if (accountType === 'group') return 1
+          if (accountType === 'official') return 2
+          return 3
+        }
+        const diff = priority(a.session.accountType) - priority(b.session.accountType)
+        if (diff !== 0) return diff
+        return a.index - b.index
+      })
+      .map(item => item.session.username)
+
+    const queuedCount = await enqueueBatchVideoExportJobsChunked({
+      sessionIds: orderedSessionIds,
+      batchTaskId
+    })
+
+    if (queuedCount <= 0) {
+      delete videoExportBatchTaskProgressRef.current[batchTaskId]
+      taskCenterPatchTask(batchTaskId, {
+        status: 'error',
+        phase: '导出失败',
+        detail: '未能创建导出队列',
+        error: '未能创建导出队列'
+      })
+    }
+  }, [
+    bulkExportEligibleSessions,
+    enqueueBatchVideoExportJobsChunked,
+    exportFolder,
+    taskCenterPatchTask,
+    taskCenterUpsertTask,
+    videoExportFolder
+  ])
+
   const executeQueuedVoiceExportJob = useCallback(async (job: QueuedVoiceExportJob) => {
     const finishBatchJob = (ok: boolean, errorMessage?: string) => {
       const batch = voiceExportBatchTaskProgressRef.current[job.batchTaskId]
@@ -5626,6 +6080,8 @@ function ExportPage() {
   const openChatTextCardExportModal = useCallback(() => {
     setShowImageCardExportModal(false)
     setShowImageCardStatusModal(false)
+    setShowVideoCardExportModal(false)
+    setShowVideoCardStatusModal(false)
     setShowVoiceCardExportModal(false)
     setShowVoiceCardStatusModal(false)
     setShowEmojiCardExportModal(false)
@@ -5638,6 +6094,8 @@ function ExportPage() {
   const openChatTextCardStatusModal = useCallback(() => {
     setShowImageCardExportModal(false)
     setShowImageCardStatusModal(false)
+    setShowVideoCardExportModal(false)
+    setShowVideoCardStatusModal(false)
     setShowVoiceCardExportModal(false)
     setShowVoiceCardStatusModal(false)
     setShowEmojiCardExportModal(false)
@@ -5653,6 +6111,8 @@ function ExportPage() {
     setShowChatTextCardExportFormatPicker(false)
     setShowEmojiCardExportModal(false)
     setShowEmojiCardStatusModal(false)
+    setShowVideoCardExportModal(false)
+    setShowVideoCardStatusModal(false)
     setShowVoiceCardExportModal(false)
     setShowVoiceCardStatusModal(false)
     setShowImageCardStatusModal(false)
@@ -5665,6 +6125,8 @@ function ExportPage() {
     setShowChatTextCardExportFormatPicker(false)
     setShowEmojiCardExportModal(false)
     setShowEmojiCardStatusModal(false)
+    setShowVideoCardExportModal(false)
+    setShowVideoCardStatusModal(false)
     setShowVoiceCardExportModal(false)
     setShowVoiceCardStatusModal(false)
     setShowImageCardExportModal(false)
@@ -5674,6 +6136,8 @@ function ExportPage() {
   const openEmojiCardExportModal = useCallback(() => {
     setShowImageCardExportModal(false)
     setShowImageCardStatusModal(false)
+    setShowVideoCardExportModal(false)
+    setShowVideoCardStatusModal(false)
     setShowVoiceCardExportModal(false)
     setShowVoiceCardStatusModal(false)
     setShowChatTextCardExportModal(false)
@@ -5686,6 +6150,8 @@ function ExportPage() {
   const openEmojiCardStatusModal = useCallback(() => {
     setShowImageCardExportModal(false)
     setShowImageCardStatusModal(false)
+    setShowVideoCardExportModal(false)
+    setShowVideoCardStatusModal(false)
     setShowVoiceCardExportModal(false)
     setShowVoiceCardStatusModal(false)
     setShowChatTextCardExportModal(false)
@@ -5693,6 +6159,34 @@ function ExportPage() {
     setShowChatTextCardExportFormatPicker(false)
     setShowEmojiCardExportModal(false)
     setShowEmojiCardStatusModal(true)
+  }, [])
+
+  const openVideoCardExportModal = useCallback(() => {
+    setShowImageCardExportModal(false)
+    setShowImageCardStatusModal(false)
+    setShowChatTextCardExportModal(false)
+    setShowChatTextCardStatusModal(false)
+    setShowChatTextCardExportFormatPicker(false)
+    setShowEmojiCardExportModal(false)
+    setShowEmojiCardStatusModal(false)
+    setShowVoiceCardExportModal(false)
+    setShowVoiceCardStatusModal(false)
+    setShowVideoCardStatusModal(false)
+    setShowVideoCardExportModal(true)
+  }, [])
+
+  const openVideoCardStatusModal = useCallback(() => {
+    setShowImageCardExportModal(false)
+    setShowImageCardStatusModal(false)
+    setShowChatTextCardExportModal(false)
+    setShowChatTextCardStatusModal(false)
+    setShowChatTextCardExportFormatPicker(false)
+    setShowEmojiCardExportModal(false)
+    setShowEmojiCardStatusModal(false)
+    setShowVoiceCardExportModal(false)
+    setShowVoiceCardStatusModal(false)
+    setShowVideoCardExportModal(false)
+    setShowVideoCardStatusModal(true)
   }, [])
 
   const openVoiceCardExportModal = useCallback(() => {
@@ -5703,6 +6197,8 @@ function ExportPage() {
     setShowChatTextCardExportFormatPicker(false)
     setShowEmojiCardExportModal(false)
     setShowEmojiCardStatusModal(false)
+    setShowVideoCardExportModal(false)
+    setShowVideoCardStatusModal(false)
     setShowVoiceCardStatusModal(false)
     setShowVoiceCardExportModal(true)
   }, [])
@@ -5715,6 +6211,8 @@ function ExportPage() {
     setShowChatTextCardExportFormatPicker(false)
     setShowEmojiCardExportModal(false)
     setShowEmojiCardStatusModal(false)
+    setShowVideoCardExportModal(false)
+    setShowVideoCardStatusModal(false)
     setShowVoiceCardExportModal(false)
     setShowVoiceCardStatusModal(true)
   }, [])
@@ -5731,6 +6229,10 @@ function ExportPage() {
         openEmojiCardStatusModal()
         return
       }
+      if (detail?.taskKind === 'video-export-batch') {
+        openVideoCardStatusModal()
+        return
+      }
       if (detail?.taskKind === 'voice-export-batch') {
         openVoiceCardStatusModal()
         return
@@ -5741,7 +6243,7 @@ function ExportPage() {
     return () => {
       window.removeEventListener(OPEN_EXPORT_OVERVIEW_EVENT, handleOpenFromTaskCenter as EventListener)
     }
-  }, [openChatTextCardStatusModal, openEmojiCardStatusModal, openImageCardStatusModal, openVoiceCardStatusModal])
+  }, [openChatTextCardStatusModal, openEmojiCardStatusModal, openImageCardStatusModal, openVideoCardStatusModal, openVoiceCardStatusModal])
 
   const startChatTextCardExportAll = useCallback(async () => {
     if (!exportFolder) {
@@ -6199,6 +6701,44 @@ function ExportPage() {
                       title="导出全部会话图片"
                     >
                       {isImageCardExporting ? '导出中' : '导出'}
+                    </button>
+                  </div>
+                </div>
+                <div
+                  className="emoji-overview-trigger-card is-emoji-card"
+                  title="点击查看全部会话视频导出状态"
+                  role="button"
+                  tabIndex={0}
+                  onClick={openVideoCardStatusModal}
+                  onKeyDown={(e) => {
+                    if (e.key !== 'Enter' && e.key !== ' ') return
+                    e.preventDefault()
+                    openVideoCardStatusModal()
+                  }}
+                >
+                  <div className="emoji-overview-trigger-head">
+                    <span className="emoji-overview-trigger-icon" aria-hidden="true">
+                      <Video size={14} />
+                    </span>
+                    <span className="emoji-overview-trigger-title">视频</span>
+                  </div>
+                  <div className="emoji-overview-trigger-summary">
+                    <strong>
+                      {videoCardDisplayedExportedSessions.toLocaleString()} / {videoCardTotalSessions.toLocaleString()}
+                    </strong>
+                  </div>
+                  <div className="emoji-overview-trigger-actions">
+                    <button
+                      type="button"
+                      className="emoji-overview-trigger-action-btn"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        openVideoCardExportModal()
+                      }}
+                      disabled={bulkExportEligibleSessions.length === 0 || isVideoCardExporting}
+                      title="导出全部会话视频"
+                    >
+                      {isVideoCardExporting ? '导出中' : '导出'}
                     </button>
                   </div>
                 </div>
@@ -9037,6 +9577,188 @@ function ExportPage() {
                 disabled={imageStatusModalAction.disabled}
               >
                 {imageStatusModalAction.label}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showVideoCardExportModal && (
+        <div
+          className="export-overlay"
+          onClick={() => setShowVideoCardExportModal(false)}
+        >
+          <div className="chat-text-card-export-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="chat-text-card-modal-header">
+              <div>
+                <h3>导出视频</h3>
+                <p>范围：全部会话（仅私聊、群聊；不包含公众号，使用顶部统一导出目录）</p>
+              </div>
+              <button
+                type="button"
+                className="group-friends-close-btn"
+                onClick={() => setShowVideoCardExportModal(false)}
+                aria-label="关闭视频导出弹窗"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="chat-text-card-modal-body">
+              <div className="chat-text-card-setting-block">
+                <div className="chat-text-card-setting-row">
+                  <h4>导出内容</h4>
+                  <div className="chat-text-card-setting-row-value">
+                    <Video size={16} />
+                    <span>全部私聊/群聊视频</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="chat-text-card-setting-block">
+                <div className="chat-text-card-setting-row">
+                  <h4>跳过规则</h4>
+                  <div className="chat-text-card-setting-row-value">
+                    <span>无新增且目标文件夹有内容时跳过</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="chat-text-card-setting-block">
+                <div className="chat-text-card-setting-row">
+                  <h4>去重规则</h4>
+                  <div className="chat-text-card-setting-row-value">
+                    <span>按 videoMd5 去重，减少重复文件</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className={`chat-text-card-export-path-note ${exportFolder ? '' : 'is-empty'}`}>
+                <span className="label">导出目录</span>
+                <span className="path" title={videoExportFolder || '未设置导出目录'}>{videoExportFolder || '未设置导出目录'}</span>
+              </div>
+            </div>
+
+            <div className="chat-text-card-modal-actions">
+              <button
+                type="button"
+                className="chat-text-card-modal-btn"
+                onClick={() => setShowVideoCardExportModal(false)}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                className="chat-text-card-modal-btn primary"
+                onClick={startVideoCardExportAll}
+                disabled={!exportFolder || bulkExportEligibleSessions.length === 0}
+              >
+                开始导出
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showVideoCardStatusModal && (
+        <div
+          className="export-overlay"
+          onClick={() => setShowVideoCardStatusModal(false)}
+        >
+          <div className="chat-text-card-status-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="chat-text-card-modal-header">
+              <div>
+                <h3>视频导出状态</h3>
+              </div>
+              <button
+                type="button"
+                className="group-friends-close-btn"
+                onClick={() => setShowVideoCardStatusModal(false)}
+                aria-label="关闭视频导出状态弹窗"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="chat-text-card-status-summary">
+              <span className="chat-text-card-status-summary-item compact">
+                <span className="label">已导出</span>
+                <strong>{videoCardDisplayedExportedSessions.toLocaleString()} / {videoStatusSummary.total.toLocaleString()}</strong>
+              </span>
+              <span className="chat-text-card-status-summary-item compact">
+                <span className="label">导出中</span>
+                <strong>{videoStatusSummary.running.toLocaleString()}</strong>
+              </span>
+              <span className="chat-text-card-status-summary-item compact">
+                <span className="label">排队中</span>
+                <strong>{videoStatusSummary.queued.toLocaleString()}</strong>
+              </span>
+              <span className="chat-text-card-status-summary-item compact">
+                <span className="label">未导出</span>
+                <strong>{videoStatusSummary.notExported.toLocaleString()}</strong>
+              </span>
+            </div>
+
+            <div className="chat-text-card-status-list" role="list" aria-label="全部会话视频导出状态">
+              {videoStatusRows.length === 0 ? (
+                <div className="chat-text-card-status-empty">暂无会话</div>
+              ) : (
+                videoStatusRows.map(({ session, status, latestExportTime }) => {
+                  const statusLabel = status === 'running'
+                    ? '导出中'
+                    : status === 'queued'
+                      ? '排队中'
+                      : status === 'exported'
+                        ? '已导出'
+                        : '未导出'
+                  const statusClass = status === 'running'
+                    ? 'running'
+                    : status === 'queued'
+                      ? 'checking'
+                      : status === 'exported'
+                        ? 'success'
+                        : 'warning'
+                  const recentLabel = latestExportTime ? formatRecentExportTime(latestExportTime) : '--'
+                  const accountTypeLabel = session.accountType === 'group'
+                    ? '群聊'
+                    : session.accountType === 'official'
+                      ? '公众号'
+                      : '私聊'
+
+                  return (
+                    <div key={session.username} className="chat-text-card-status-card" role="listitem" title={session.username}>
+                      <div className="chat-text-card-status-card-head">
+                        <span className="chat-text-card-status-session-name" title={session.displayName || session.username}>
+                          {session.displayName || session.username}
+                        </span>
+                        <span className={`session-media-status-pill ${statusClass}`}>
+                          {status === 'running' && <Loader2 size={11} className="spin" />}
+                          <span>{statusLabel}</span>
+                        </span>
+                      </div>
+                      <div className="chat-text-card-status-card-meta">
+                        <span className="chat-text-card-status-type-pill">{accountTypeLabel}</span>
+                        <span
+                          className="chat-text-card-status-time"
+                          title={latestExportTime ? new Date(latestExportTime).toLocaleString('zh-CN') : '未导出'}
+                        >
+                          {recentLabel || '--'}
+                        </span>
+                      </div>
+                    </div>
+                  )
+                })
+              )}
+            </div>
+
+            <div className="chat-text-card-modal-actions">
+              <button
+                type="button"
+                className="chat-text-card-modal-btn primary"
+                onClick={openVideoCardExportModal}
+                disabled={videoStatusModalAction.disabled}
+              >
+                {videoStatusModalAction.label}
               </button>
             </div>
           </div>
