@@ -222,6 +222,7 @@ interface QueuedChatExportJob {
   outputDir: string
   options: ExportOptions
   queuedAt: number
+  suppressResultModal?: boolean
 }
 
 interface SessionExportRecord {
@@ -759,6 +760,19 @@ function ExportPage() {
   const [snsUserPostCountsStatus, setSnsUserPostCountsStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
   const [copiedIdentityChip, setCopiedIdentityChip] = useState<'wxid' | 'alias' | null>(null)
   const [options, setOptions] = useState<ExportOptions>({
+    format: 'json',
+    startDate: '',
+    endDate: '',
+    exportAvatars: true,
+    exportImages: false,
+    exportVideos: false,
+    exportEmojis: false,
+    exportVoices: false
+  })
+  const [showChatTextCardExportModal, setShowChatTextCardExportModal] = useState(false)
+  const [showChatTextCardStatusModal, setShowChatTextCardStatusModal] = useState(false)
+  const [showChatTextCardExportFormatPicker, setShowChatTextCardExportFormatPicker] = useState(false)
+  const [chatTextCardExportOptions, setChatTextCardExportOptions] = useState<ExportOptions>({
     format: 'json',
     startDate: '',
     endDate: '',
@@ -2635,6 +2649,54 @@ function ExportPage() {
         : count
     }, 0)
   ), [sessionLatestExportTimeMap, sessions])
+  const chatTextStatusRows = useMemo(() => {
+    const statusPriority: Record<'running' | 'queued' | 'not-exported' | 'exported', number> = {
+      running: 0,
+      queued: 1,
+      'not-exported': 2,
+      exported: 3
+    }
+    return sessions
+      .map((session) => {
+        const latestExportTime = sessionLatestExportTimeMap[session.username]
+        const hasExported = typeof latestExportTime === 'number' && Number.isFinite(latestExportTime) && latestExportTime > 0
+        const status: 'running' | 'queued' | 'not-exported' | 'exported' =
+          runningChatExportSessionId === session.username
+            ? 'running'
+            : queuedChatExportSessionIds.has(session.username)
+              ? 'queued'
+              : hasExported
+                ? 'exported'
+                : 'not-exported'
+
+        return {
+          session,
+          status,
+          latestExportTime: hasExported ? latestExportTime : null
+        }
+      })
+      .sort((a, b) => {
+        const statusDiff = statusPriority[a.status] - statusPriority[b.status]
+        if (statusDiff !== 0) return statusDiff
+        if (a.status === 'exported' && b.status === 'exported') {
+          return (b.latestExportTime || 0) - (a.latestExportTime || 0)
+        }
+        return (b.session.lastTimestamp || 0) - (a.session.lastTimestamp || 0)
+      })
+  }, [queuedChatExportSessionIds, runningChatExportSessionId, sessionLatestExportTimeMap, sessions])
+  const chatTextStatusSummary = useMemo(() => {
+    let running = 0
+    let queued = 0
+    let exported = 0
+    let notExported = 0
+    for (const row of chatTextStatusRows) {
+      if (row.status === 'running') running += 1
+      else if (row.status === 'queued') queued += 1
+      else if (row.status === 'exported') exported += 1
+      else notExported += 1
+    }
+    return { running, queued, exported, notExported, total: chatTextCardTotalSessions }
+  }, [chatTextCardTotalSessions, chatTextStatusRows])
   const sessionEmojiCardTotalSessions = sessions.length
   const sessionEmojiCardExportedSessions = useMemo(() => (
     sessions.reduce((count, session) => {
@@ -3373,7 +3435,9 @@ function ExportPage() {
           job.outputDir,
           exportOptions
         )
-        setExportResult(result)
+        if (!job.suppressResultModal) {
+          setExportResult(result)
+        }
         if (result.success) {
           const sessionOutput = result.sessionOutputs?.find(item => item.sessionId === job.sessionId) || result.sessionOutputs?.[0]
           const exportOpenTargetPath = sessionOutput?.openTargetPath || job.outputDir
@@ -3422,7 +3486,9 @@ function ExportPage() {
         }
       } else {
         const errorMessage = `${job.options.format.toUpperCase()} 格式导出功能开发中...`
-        setExportResult({ success: false, error: errorMessage })
+        if (!job.suppressResultModal) {
+          setExportResult({ success: false, error: errorMessage })
+        }
         taskCenterPatchTask(job.taskId, {
           status: 'error',
           progressCurrent: 1,
@@ -3435,7 +3501,9 @@ function ExportPage() {
     } catch (e) {
       console.error('导出失败:', e)
       const errorMessage = e instanceof Error ? e.message : String(e)
-      setExportResult({ success: false, error: errorMessage })
+      if (!job.suppressResultModal) {
+        setExportResult({ success: false, error: errorMessage })
+      }
       taskCenterPatchTask(job.taskId, {
         status: 'error',
         progressCurrent: 1,
@@ -3472,74 +3540,148 @@ function ExportPage() {
     }
   }, [executeQueuedChatExportJob, taskCenterPatchTask, taskCenterSetActiveExportTaskId])
 
-  // 导出聊天记录（支持排队）
-  const startExport = useCallback(async () => {
-    if (!selectedSession || !exportFolder) return
+  const enqueueChatExportJobs = useCallback((params: {
+    sessionIds: string[]
+    exportOptions: ExportOptions
+    suppressResultModal?: boolean
+    closeSingleSessionSettings?: boolean
+  }) => {
+    const {
+      sessionIds,
+      exportOptions,
+      suppressResultModal = false,
+      closeSingleSessionSettings = false
+    } = params
 
-    const targetSessionId = selectedSession
-    const targetSessionName =
-      (sessionDetail?.wxid === targetSessionId ? (sessionDetail?.remark || sessionDetail?.nickName || sessionDetail?.alias) : undefined) ||
-      sessionByUsername.get(targetSessionId)?.displayName ||
-      targetSessionId
-    const targetMessageCount =
-      (sessionDetail?.wxid === targetSessionId ? sessionDetail.messageCount : undefined) ??
-      sessionMessageCounts[targetSessionId] ??
-      0
-    const formatLabel = options.format.toUpperCase()
-    const exportTaskId = `chat-export:${targetSessionId}:${Date.now()}`
-    const now = Date.now()
-    const hasRunningOrQueuedBeforeEnqueue = chatExportWorkerRunningRef.current || chatExportQueueRef.current.length > 0
+    if (!exportFolder || sessionIds.length === 0) return 0
 
-    const job: QueuedChatExportJob = {
-      taskId: exportTaskId,
-      sessionId: targetSessionId,
-      sessionName: targetSessionName,
-      messageCount: targetMessageCount,
-      outputDir: exportFolder,
-      options: { ...options },
-      queuedAt: now
-    }
+    const queueStartedAt = Date.now()
+    const queueLengthBefore = chatExportQueueRef.current.length
+    const hasRunningBefore = chatExportWorkerRunningRef.current
+    const jobs: QueuedChatExportJob[] = sessionIds.map((sessionId, index) => {
+      const sessionMeta = sessionByUsername.get(sessionId)
+      const sessionName =
+        (sessionDetail?.wxid === sessionId ? (sessionDetail?.remark || sessionDetail?.nickName || sessionDetail?.alias) : undefined) ||
+        sessionMeta?.displayName ||
+        sessionId
+      const messageCount =
+        (sessionDetail?.wxid === sessionId ? sessionDetail.messageCount : undefined) ??
+        sessionMessageCounts[sessionId] ??
+        0
+      const queuedAt = queueStartedAt + index
 
-    setExportResult(null)
-    taskCenterUpsertTask({
-      id: exportTaskId,
-      kind: 'chat-export',
-      typeLabel: '聊天导出',
-      sessionId: targetSessionId,
-      sessionName: targetSessionName,
-      status: 'pending',
-      progressCurrent: 0,
-      progressTotal: 1,
-      unitLabel: '个会话',
-      format: formatLabel,
-      outputDir: exportFolder,
-      phase: hasRunningOrQueuedBeforeEnqueue ? '等待执行' : '准备执行',
-      detail: hasRunningOrQueuedBeforeEnqueue ? '已加入队列，等待前序任务完成' : '等待执行',
-      createdAt: now,
-      updatedAt: now
+      return {
+        taskId: `chat-export:${sessionId}:${queuedAt}`,
+        sessionId,
+        sessionName,
+        messageCount,
+        outputDir: exportFolder,
+        options: { ...exportOptions },
+        queuedAt,
+        suppressResultModal
+      }
     })
 
-    chatExportQueueRef.current = [...chatExportQueueRef.current, job]
-    taskCenterHighlightTask(exportTaskId)
-    setShowExportSettings(false)
+    if (jobs.length === 0) return 0
+
+    setExportResult(null)
+
+    jobs.forEach((job, index) => {
+      const hasRunningOrQueuedBeforeEnqueue = hasRunningBefore || (queueLengthBefore + index) > 0
+      taskCenterUpsertTask({
+        id: job.taskId,
+        kind: 'chat-export',
+        typeLabel: '聊天导出',
+        sessionId: job.sessionId,
+        sessionName: job.sessionName,
+        status: 'pending',
+        progressCurrent: 0,
+        progressTotal: 1,
+        unitLabel: '个会话',
+        format: job.options.format.toUpperCase(),
+        outputDir: exportFolder,
+        phase: hasRunningOrQueuedBeforeEnqueue ? '等待执行' : '准备执行',
+        detail: hasRunningOrQueuedBeforeEnqueue ? '已加入队列，等待前序任务完成' : '等待执行',
+        createdAt: job.queuedAt,
+        updatedAt: job.queuedAt
+      })
+    })
+
+    chatExportQueueRef.current = [...chatExportQueueRef.current, ...jobs]
+    taskCenterHighlightTask(jobs[0].taskId)
+    if (closeSingleSessionSettings) {
+      setShowExportSettings(false)
+    }
     taskCenterOpen()
     void processNextQueuedChatExport()
+
+    return jobs.length
   }, [
     exportFolder,
-    options,
     processNextQueuedChatExport,
-    selectedSession,
+    sessionByUsername,
     sessionDetail?.alias,
     sessionDetail?.messageCount,
     sessionDetail?.nickName,
     sessionDetail?.remark,
     sessionDetail?.wxid,
-    sessionByUsername,
     sessionMessageCounts,
-    taskCenterOpen,
     taskCenterHighlightTask,
+    taskCenterOpen,
     taskCenterUpsertTask
   ])
+
+  // 导出聊天记录（支持排队）
+  const startExport = useCallback(async () => {
+    if (!selectedSession || !exportFolder) return
+    enqueueChatExportJobs({
+      sessionIds: [selectedSession],
+      exportOptions: options,
+      closeSingleSessionSettings: true
+    })
+  }, [
+    enqueueChatExportJobs,
+    options,
+    selectedSession,
+    exportFolder
+  ])
+
+  const openChatTextCardExportModal = useCallback(() => {
+    setShowChatTextCardStatusModal(false)
+    setShowChatTextCardExportFormatPicker(false)
+    setShowChatTextCardExportModal(true)
+  }, [])
+
+  const openChatTextCardStatusModal = useCallback(() => {
+    setShowChatTextCardExportModal(false)
+    setShowChatTextCardExportFormatPicker(false)
+    setShowChatTextCardStatusModal(true)
+  }, [])
+
+  const startChatTextCardExportAll = useCallback(() => {
+    if (!exportFolder) {
+      alert('请先在顶部设置导出目录')
+      return
+    }
+    if (sessions.length === 0) return
+
+    const queuedCount = enqueueChatExportJobs({
+      sessionIds: sessions.map(session => session.username),
+      exportOptions: {
+        ...chatTextCardExportOptions,
+        exportImages: false,
+        exportVideos: false,
+        exportEmojis: false,
+        exportVoices: false
+      },
+      suppressResultModal: true
+    })
+
+    if (queuedCount > 0) {
+      setShowChatTextCardExportModal(false)
+      setShowChatTextCardExportFormatPicker(false)
+    }
+  }, [chatTextCardExportOptions, enqueueChatExportJobs, exportFolder, sessions])
 
   // 导出通讯录
   const startContactExport = async () => {
@@ -3781,8 +3923,16 @@ function ExportPage() {
               </div>
               <div className="session-account-side-cards">
                 <div
-                  className="emoji-overview-trigger-card is-static"
-                  title="按会话去重统计：已导出过聊天记录文本的会话数"
+                  className="emoji-overview-trigger-card is-chat-text-card"
+                  title="点击查看全部会话聊天文本导出状态"
+                  role="button"
+                  tabIndex={0}
+                  onClick={openChatTextCardStatusModal}
+                  onKeyDown={(e) => {
+                    if (e.key !== 'Enter' && e.key !== ' ') return
+                    e.preventDefault()
+                    openChatTextCardStatusModal()
+                  }}
                 >
                   <div className="emoji-overview-trigger-head">
                     <span className="emoji-overview-trigger-icon" aria-hidden="true">
@@ -3794,6 +3944,20 @@ function ExportPage() {
                     <strong>
                       {chatTextCardExportedSessions.toLocaleString()} / {chatTextCardTotalSessions.toLocaleString()}
                     </strong>
+                  </div>
+                  <div className="emoji-overview-trigger-actions">
+                    <button
+                      type="button"
+                      className="emoji-overview-trigger-action-btn"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        openChatTextCardExportModal()
+                      }}
+                      disabled={sessions.length === 0}
+                      title="导出全部会话聊天文本"
+                    >
+                      导出
+                    </button>
                   </div>
                 </div>
                 <div
@@ -6173,6 +6337,266 @@ function ExportPage() {
                   )}
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showChatTextCardExportModal && (
+        <div
+          className="export-overlay"
+          onClick={() => {
+            setShowChatTextCardExportModal(false)
+            setShowChatTextCardExportFormatPicker(false)
+          }}
+        >
+          <div className="chat-text-card-export-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="chat-text-card-modal-header">
+              <div>
+                <h3>导出聊天文本</h3>
+                <p>范围：全部会话（使用顶部统一导出目录）</p>
+              </div>
+              <button
+                type="button"
+                className="group-friends-close-btn"
+                onClick={() => {
+                  setShowChatTextCardExportModal(false)
+                  setShowChatTextCardExportFormatPicker(false)
+                }}
+                aria-label="关闭聊天文本导出弹窗"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="chat-text-card-modal-body">
+              {(() => {
+                const currentFmt = chatFormatOptions.find(f => f.value === chatTextCardExportOptions.format) || chatFormatOptions[2]
+                return (
+                  <div className="chat-text-card-setting-block" style={{ position: 'relative' }}>
+                    <div
+                      className="chat-text-card-setting-row"
+                      onClick={() => setShowChatTextCardExportFormatPicker(!showChatTextCardExportFormatPicker)}
+                    >
+                      <h4>导出格式</h4>
+                      <div className="chat-text-card-setting-row-value">
+                        <currentFmt.icon size={16} />
+                        <span>{currentFmt.label}</span>
+                        <ChevronDown
+                          size={16}
+                          style={{
+                            transition: 'transform 0.2s',
+                            transform: showChatTextCardExportFormatPicker ? 'rotate(180deg)' : 'rotate(0deg)'
+                          }}
+                        />
+                      </div>
+                    </div>
+                    {showChatTextCardExportFormatPicker && (
+                      <>
+                        <div
+                          style={{ position: 'fixed', inset: 0, zIndex: 1101 }}
+                          onClick={() => setShowChatTextCardExportFormatPicker(false)}
+                        />
+                        <div
+                          style={{
+                            position: 'absolute',
+                            right: 0,
+                            top: '100%',
+                            zIndex: 1102,
+                            background: 'var(--bg-primary, #fff)',
+                            border: '1px solid var(--border-color, #e0e0e0)',
+                            borderRadius: 8,
+                            boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
+                            padding: 4,
+                            minWidth: 280,
+                            maxHeight: 360,
+                            overflowY: 'auto'
+                          }}
+                        >
+                          {chatFormatOptions.map(fmt => (
+                            <div
+                              key={fmt.value}
+                              style={{
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: 2,
+                                padding: '10px 12px',
+                                borderRadius: 6,
+                                cursor: 'pointer',
+                                background: chatTextCardExportOptions.format === fmt.value ? 'var(--bg-active, #f0f0f0)' : 'transparent'
+                              }}
+                              onMouseEnter={e => {
+                                if (chatTextCardExportOptions.format !== fmt.value) e.currentTarget.style.background = 'var(--bg-hover, #f5f5f5)'
+                              }}
+                              onMouseLeave={e => {
+                                if (chatTextCardExportOptions.format !== fmt.value) e.currentTarget.style.background = 'transparent'
+                              }}
+                              onClick={() => {
+                                setChatTextCardExportOptions(prev => ({ ...prev, format: fmt.value as ExportOptions['format'] }))
+                                setShowChatTextCardExportFormatPicker(false)
+                              }}
+                            >
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                <fmt.icon size={16} />
+                                <span style={{ fontWeight: 500 }}>{fmt.label}</span>
+                              </div>
+                              <span style={{ fontSize: 12, opacity: 0.6, paddingLeft: 24 }}>{fmt.desc}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )
+              })()}
+
+              <div className="chat-text-card-setting-block">
+                <DateRangePicker
+                  variant="setting-row"
+                  label="时间范围"
+                  emptyText="全部时间"
+                  showClearButton={false}
+                  startDate={chatTextCardExportOptions.startDate}
+                  endDate={chatTextCardExportOptions.endDate}
+                  onStartDateChange={(date) => setChatTextCardExportOptions(prev => ({ ...prev, startDate: date }))}
+                  onEndDateChange={(date) => setChatTextCardExportOptions(prev => ({ ...prev, endDate: date }))}
+                />
+              </div>
+
+              <div className={`chat-text-card-export-path-note ${exportFolder ? '' : 'is-empty'}`}>
+                <span className="label">导出目录</span>
+                <span className="path" title={exportFolder || '未设置导出目录'}>{exportFolder || '未设置导出目录'}</span>
+              </div>
+            </div>
+
+            <div className="chat-text-card-modal-actions">
+              <button
+                type="button"
+                className="chat-text-card-modal-btn"
+                onClick={() => {
+                  setShowChatTextCardExportModal(false)
+                  setShowChatTextCardExportFormatPicker(false)
+                }}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                className="chat-text-card-modal-btn primary"
+                onClick={startChatTextCardExportAll}
+                disabled={!exportFolder || sessions.length === 0}
+              >
+                开始导出
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showChatTextCardStatusModal && (
+        <div
+          className="export-overlay"
+          onClick={() => setShowChatTextCardStatusModal(false)}
+        >
+          <div className="chat-text-card-status-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="chat-text-card-modal-header">
+              <div>
+                <h3>聊天文本导出状态</h3>
+                <p>全部会话快速总览</p>
+              </div>
+              <button
+                type="button"
+                className="group-friends-close-btn"
+                onClick={() => setShowChatTextCardStatusModal(false)}
+                aria-label="关闭聊天文本导出状态弹窗"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="chat-text-card-status-summary">
+              <div className="chat-text-card-status-summary-item">
+                <span className="label">已导出</span>
+                <strong>{chatTextCardExportedSessions.toLocaleString()} / {chatTextStatusSummary.total.toLocaleString()}</strong>
+              </div>
+              <div className="chat-text-card-status-summary-item">
+                <span className="label">导出中</span>
+                <strong>{chatTextStatusSummary.running.toLocaleString()}</strong>
+              </div>
+              <div className="chat-text-card-status-summary-item">
+                <span className="label">排队中</span>
+                <strong>{chatTextStatusSummary.queued.toLocaleString()}</strong>
+              </div>
+              <div className="chat-text-card-status-summary-item">
+                <span className="label">未导出</span>
+                <strong>{chatTextStatusSummary.notExported.toLocaleString()}</strong>
+              </div>
+            </div>
+
+            <div className="chat-text-card-status-list" role="table" aria-label="全部会话聊天文本导出状态">
+              <div className="chat-text-card-status-head" role="row">
+                <span role="columnheader">会话</span>
+                <span role="columnheader">状态</span>
+                <span role="columnheader">最近导出</span>
+              </div>
+              {chatTextStatusRows.length === 0 ? (
+                <div className="chat-text-card-status-empty">暂无会话</div>
+              ) : (
+                chatTextStatusRows.map(({ session, status, latestExportTime }) => {
+                  const statusLabel = status === 'running'
+                    ? '导出中'
+                    : status === 'queued'
+                      ? '排队中'
+                      : status === 'exported'
+                        ? '已导出'
+                        : '未导出'
+                  const statusClass = status === 'running'
+                    ? 'running'
+                    : status === 'queued'
+                      ? 'checking'
+                      : status === 'exported'
+                        ? 'success'
+                        : 'warning'
+                  const recentLabel = latestExportTime ? formatRecentExportTime(latestExportTime) : '--'
+                  const accountTypeLabel = session.accountType === 'group'
+                    ? '群聊'
+                    : session.accountType === 'official'
+                      ? '公众号'
+                      : '私聊'
+
+                  return (
+                    <div key={session.username} className="chat-text-card-status-row" role="row">
+                      <div className="chat-text-card-status-session" role="cell">
+                        <span className="chat-text-card-status-session-name" title={session.displayName || session.username}>
+                          {session.displayName || session.username}
+                        </span>
+                        <span className="chat-text-card-status-session-meta" title={session.username}>
+                          {accountTypeLabel} · {session.username}
+                        </span>
+                      </div>
+                      <div className="chat-text-card-status-cell" role="cell">
+                        <span className={`session-media-status-pill ${statusClass}`}>
+                          {status === 'running' && <Loader2 size={11} className="spin" />}
+                          <span>{statusLabel}</span>
+                        </span>
+                      </div>
+                      <div className="chat-text-card-status-cell time" role="cell" title={latestExportTime ? new Date(latestExportTime).toLocaleString('zh-CN') : '未导出'}>
+                        {recentLabel || '--'}
+                      </div>
+                    </div>
+                  )
+                })
+              )}
+            </div>
+
+            <div className="chat-text-card-modal-actions">
+              <button
+                type="button"
+                className="chat-text-card-modal-btn"
+                onClick={() => setShowChatTextCardStatusModal(false)}
+              >
+                关闭
+              </button>
             </div>
           </div>
         </div>
