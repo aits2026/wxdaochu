@@ -132,6 +132,7 @@ interface SessionEmojiAssetItem {
   previewUrl?: string
   filePath?: string
   exists: boolean
+  status: 'pending' | 'ready' | 'missing'
 }
 
 interface SessionEmojiAssetSummary {
@@ -698,6 +699,7 @@ function ExportPage() {
   const [sessionVideoAssets, setSessionVideoAssets] = useState<SessionVideoAssetItem[]>([])
   const [showSessionEmojiAssetsModal, setShowSessionEmojiAssetsModal] = useState(false)
   const [sessionEmojiAssetsLoading, setSessionEmojiAssetsLoading] = useState(false)
+  const [sessionEmojiAssetsResolving, setSessionEmojiAssetsResolving] = useState(false)
   const [sessionEmojiAssetsError, setSessionEmojiAssetsError] = useState<string | null>(null)
   const [sessionEmojiAssetsSessionId, setSessionEmojiAssetsSessionId] = useState<string | null>(null)
   const [sessionEmojiAssetsSessionName, setSessionEmojiAssetsSessionName] = useState('')
@@ -1916,13 +1918,14 @@ function ExportPage() {
   }
 
   const getSessionDisplayName = useCallback((sessionId: string) => {
+    const detailMatchesTarget = sessionDetail?.wxid === sessionId
     return (
-      sessionDetail?.remark ||
-      sessionDetail?.nickName ||
+      (detailMatchesTarget ? sessionDetail?.remark : undefined) ||
+      (detailMatchesTarget ? sessionDetail?.nickName : undefined) ||
       sessionByUsername.get(sessionId)?.displayName ||
       sessionId
     )
-  }, [sessionByUsername, sessionDetail?.nickName, sessionDetail?.remark])
+  }, [sessionByUsername, sessionDetail?.nickName, sessionDetail?.remark, sessionDetail?.wxid])
 
   const copyIdentityValue = useCallback(async (value: string, chip: 'wxid' | 'alias') => {
     if (!value) return
@@ -2081,50 +2084,18 @@ function ExportPage() {
     const duplicateMessageCount = Number(listResult.stats?.duplicateMessageCount ?? Math.max(0, parsedMessageCount - listResult.emojis.length))
     const parseFailedCount = Number(listResult.stats?.parseFailedCount ?? Math.max(0, rawMessageCount - parsedMessageCount))
 
-    const assets: SessionEmojiAssetItem[] = []
-    let readyCount = 0
-    let missingCount = 0
-
-    for (let i = 0; i < listResult.emojis.length; i++) {
-      const emoji = listResult.emojis[i]
-      let previewUrl: string | undefined
-      let filePath: string | undefined
-
-      try {
-        const emojiResult = await window.electronAPI.chat.downloadEmoji(
-          emoji.emojiCdnUrl || '',
-          emoji.emojiMd5,
-          emoji.productId,
-          emoji.createTime
-        )
-        if (emojiResult.success) {
-          previewUrl = emojiResult.localPath
-          filePath = emojiResult.filePath
-        }
-      } catch {
-        // 单条表情下载/读取失败按缺失处理
-      }
-
-      const exists = Boolean(previewUrl)
-      if (exists) readyCount++
-      else missingCount++
-
-      assets.push({
-        ...emoji,
-        previewUrl,
-        filePath,
-        exists
-      })
-
-      if (i % 12 === 0) {
-        await new Promise(r => setTimeout(r, 0))
-      }
-    }
+    const assets: SessionEmojiAssetItem[] = listResult.emojis.map(emoji => ({
+      ...emoji,
+      previewUrl: undefined,
+      filePath: undefined,
+      exists: false,
+      status: 'pending' as const
+    }))
 
     return {
       total: listResult.emojis.length,
-      readyCount,
-      missingCount,
+      readyCount: 0,
+      missingCount: 0,
       rawMessageCount,
       parsedMessageCount,
       duplicateMessageCount,
@@ -2370,9 +2341,12 @@ function ExportPage() {
     const requestId = ++sessionEmojiAssetsRequestIdRef.current
     setShowSessionEmojiAssetsModal(true)
     setSessionEmojiAssetsLoading(true)
+    setSessionEmojiAssetsResolving(false)
     setSessionEmojiAssetsError(null)
     setSessionEmojiAssetsSessionId(sessionId)
     setSessionEmojiAssetsSessionName(getSessionDisplayName(sessionId))
+    setSessionEmojiAssets([])
+    setSessionEmojiAssetsSummary(null)
 
     try {
       const result = await inspectSessionEmojiAssets(sessionId)
@@ -2388,11 +2362,70 @@ function ExportPage() {
         duplicateMessageCount: result.duplicateMessageCount,
         parseFailedCount: result.parseFailedCount
       })
+      setSessionEmojiAssetsLoading(false)
+      setSessionEmojiAssetsResolving(result.assets.length > 0)
+
+      for (let i = 0; i < result.assets.length; i++) {
+        if (requestId !== sessionEmojiAssetsRequestIdRef.current) return
+        const base = result.assets[i]
+        let previewUrl: string | undefined
+        let filePath: string | undefined
+        let nextStatus: SessionEmojiAssetItem['status'] = 'missing'
+
+        try {
+          const emojiResult = await window.electronAPI.chat.downloadEmoji(
+            base.emojiCdnUrl || '',
+            base.emojiMd5,
+            base.productId,
+            base.createTime
+          )
+          if (emojiResult.success && emojiResult.localPath) {
+            previewUrl = emojiResult.localPath
+            filePath = emojiResult.filePath
+            nextStatus = 'ready'
+          }
+        } catch {
+          nextStatus = 'missing'
+        }
+
+        if (requestId !== sessionEmojiAssetsRequestIdRef.current) return
+
+        setSessionEmojiAssets(prev => {
+          if (!prev[i]) return prev
+          const next = prev.slice()
+          next[i] = {
+            ...next[i],
+            previewUrl,
+            filePath,
+            exists: nextStatus === 'ready',
+            status: nextStatus
+          }
+          return next
+        })
+
+        setSessionEmojiAssetsSummary(prev => {
+          if (!prev) return prev
+          return {
+            ...prev,
+            readyCount: prev.readyCount + (nextStatus === 'ready' ? 1 : 0),
+            missingCount: prev.missingCount + (nextStatus === 'missing' ? 1 : 0)
+          }
+        })
+
+        if (i % 8 === 0) {
+          await new Promise(r => setTimeout(r, 0))
+        }
+      }
+
+      if (requestId === sessionEmojiAssetsRequestIdRef.current) {
+        setSessionEmojiAssetsResolving(false)
+      }
     } catch (e) {
       if (requestId !== sessionEmojiAssetsRequestIdRef.current) return
       setSessionEmojiAssets([])
       setSessionEmojiAssetsSummary(null)
       setSessionEmojiAssetsError(String(e))
+      setSessionEmojiAssetsResolving(false)
     } finally {
       if (requestId === sessionEmojiAssetsRequestIdRef.current) {
         setSessionEmojiAssetsLoading(false)
@@ -2531,11 +2564,15 @@ function ExportPage() {
     [sessionVideoAssets]
   )
   const readySessionEmojiAssets = useMemo(
-    () => sessionEmojiAssets.filter(item => item.exists && item.previewUrl),
+    () => sessionEmojiAssets.filter(item => item.status === 'ready' && item.previewUrl),
+    [sessionEmojiAssets]
+  )
+  const pendingSessionEmojiAssets = useMemo(
+    () => sessionEmojiAssets.filter(item => item.status === 'pending'),
     [sessionEmojiAssets]
   )
   const missingSessionEmojiAssets = useMemo(
-    () => sessionEmojiAssets.filter(item => !item.exists),
+    () => sessionEmojiAssets.filter(item => item.status === 'missing'),
     [sessionEmojiAssets]
   )
   const sessionVideoAssetsOverview = useMemo(() => {
@@ -2559,6 +2596,7 @@ function ExportPage() {
   const sessionEmojiAssetsParseFailedCount = sessionEmojiAssetsSummary?.parseFailedCount ?? Math.max(0, sessionEmojiAssetsRawMessageCount - sessionEmojiAssetsParsedMessageCount)
   const sessionEmojiAssetsReadyCount = sessionEmojiAssetsSummary?.readyCount ?? readySessionEmojiAssets.length
   const sessionEmojiAssetsMissingCount = sessionEmojiAssetsSummary?.missingCount ?? Math.max(0, sessionEmojiAssetsTotalCount - sessionEmojiAssetsReadyCount)
+  const sessionEmojiAssetsPendingCount = Math.max(0, sessionEmojiAssetsTotalCount - sessionEmojiAssetsReadyCount - sessionEmojiAssetsMissingCount)
   const groupFriendMembersForPopup = useMemo(() => {
     const friendMembers = sessionDetail?.groupInfo?.friendMembers || []
     if (friendMembers.length <= 1) return friendMembers
@@ -2813,6 +2851,7 @@ function ExportPage() {
       setSessionEmojiAssetsSummary(null)
       setSessionEmojiAssetsError(null)
       setSessionEmojiAssetsLoading(false)
+      setSessionEmojiAssetsResolving(false)
       setSessionEmojiAssetsSessionId(null)
       setSessionEmojiAssetsSessionName('')
       setSessionDetail(null)
@@ -5670,7 +5709,11 @@ function ExportPage() {
                 差异说明：
                 {sessionEmojiAssetsDuplicateCount > 0 ? ` 重复引用 ${sessionEmojiAssetsDuplicateCount.toLocaleString()} 条；` : ' 无重复引用；'}
                 {sessionEmojiAssetsParseFailedCount > 0 ? ` 无法解析 ${sessionEmojiAssetsParseFailedCount.toLocaleString()} 条；` : ' 无解析失败；'}
-                {sessionEmojiAssetsMissingCount > 0 ? ` 无法预览 ${sessionEmojiAssetsMissingCount.toLocaleString()} 个。` : ' 已全部可预览。'}
+                {sessionEmojiAssetsPendingCount > 0
+                  ? ` 正在加载 ${sessionEmojiAssetsPendingCount.toLocaleString()} 个；`
+                  : (sessionEmojiAssetsMissingCount > 0
+                    ? ` 无法预览 ${sessionEmojiAssetsMissingCount.toLocaleString()} 个。`
+                    : ' 已全部可预览。')}
               </div>
             </div>
 
@@ -5697,7 +5740,12 @@ function ExportPage() {
                 {sessionEmojiAssetsLoading ? (
                   <span className="session-media-status-pill checking">
                     <Loader2 size={11} className="spin" />
-                    <span>加载中</span>
+                    <span>读取列表中</span>
+                  </span>
+                ) : sessionEmojiAssetsResolving ? (
+                  <span className="session-media-status-pill checking">
+                    <Loader2 size={11} className="spin" />
+                    <span>加载中 {sessionEmojiAssetsReadyCount}/{sessionEmojiAssetsTotalCount}</span>
                   </span>
                 ) : sessionEmojiAssetsError ? (
                   <button
@@ -5737,6 +5785,36 @@ function ExportPage() {
                 </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                  {pendingSessionEmojiAssets.length > 0 && (
+                    <div className="session-assets-group">
+                      <div className="session-assets-group-title">加载中（{pendingSessionEmojiAssets.length}）</div>
+                      <div className="session-image-assets-grid">
+                        {pendingSessionEmojiAssets
+                          .slice()
+                          .sort((a, b) => (b.createTime || 0) - (a.createTime || 0))
+                          .map((item, index) => (
+                            <div
+                              key={`${item.emojiMd5 || item.emojiCdnUrl || 'emoji-pending'}:${index}:${item.createTime || 0}`}
+                              className="session-image-assets-item"
+                              title={item.emojiMd5 || item.emojiCdnUrl || '加载中'}
+                            >
+                              <div className="session-image-assets-placeholder">
+                                <Smile size={18} />
+                              </div>
+                              <div className="session-image-assets-item-footer" style={{ justifyContent: 'space-between' }}>
+                                <span>
+                                  {item.createTime
+                                    ? new Date(item.createTime * 1000).toLocaleDateString('zh-CN')
+                                    : '未知时间'}
+                                </span>
+                                <span className="session-assets-preview-badge">加载中</span>
+                              </div>
+                            </div>
+                          ))}
+                      </div>
+                    </div>
+                  )}
+
                   {readySessionEmojiAssets.length > 0 && (
                     <div className="session-assets-group">
                       <div className="session-assets-group-title">可预览表情包（{readySessionEmojiAssets.length}）</div>
