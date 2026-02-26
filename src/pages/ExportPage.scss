@@ -148,9 +148,20 @@
     background: var(--card-bg);
   }
 
-  .session-account-header > .emoji-overview-trigger-card {
+  .session-account-header > .session-account-side-cards {
     margin-left: auto;
     flex-shrink: 0;
+  }
+
+  .session-account-side-cards {
+    display: flex;
+    align-items: stretch;
+    gap: 8px;
+    flex-wrap: wrap;
+
+    .emoji-overview-trigger-card {
+      margin-left: 0;
+    }
   }
 
   .session-account-avatar {
@@ -927,10 +938,16 @@
       flex-basis: calc(100% - 52px);
     }
 
-    .session-account-header > .emoji-overview-trigger-card {
+    .session-account-header > .session-account-side-cards {
       margin-left: 52px;
       width: calc(100% - 52px);
+      flex-direction: column;
+    }
+
+    .session-account-side-cards .emoji-overview-trigger-card {
+      width: 100%;
       max-width: none;
+      min-width: 0;
     }
 
     .session-list-controls {

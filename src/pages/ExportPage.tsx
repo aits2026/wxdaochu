@@ -1475,9 +1475,9 @@ function ExportPage() {
   }, [sessions])
 
   useEffect(() => {
-    if (activeTab !== 'chat' || filteredSessions.length === 0) return
+    if (activeTab !== 'chat' || sessions.length === 0) return
 
-    const missingUsernames = filteredSessions
+    const missingUsernames = sessions
       .map(session => session.username)
       .filter(username => !(username in sessionLatestExportTimeMap))
 
@@ -1509,7 +1509,7 @@ function ExportPage() {
         })
       }
     })()
-  }, [activeTab, filteredSessions, sessionLatestExportTimeMap])
+  }, [activeTab, sessions, sessionLatestExportTimeMap])
 
   const sessionByUsername = useMemo(() => {
     const map = new Map<string, ChatSession>()
@@ -2573,6 +2573,19 @@ function ExportPage() {
   const sessionEmojiAssetsReadyCount = sessionEmojiAssetsSummary?.readyCount ?? readySessionEmojiAssets.length
   const sessionEmojiAssetsMissingCount = sessionEmojiAssetsSummary?.missingCount ?? Math.max(0, sessionEmojiAssetsTotalCount - sessionEmojiAssetsReadyCount)
   const sessionEmojiAssetsPendingCount = Math.max(0, sessionEmojiAssetsTotalCount - sessionEmojiAssetsReadyCount - sessionEmojiAssetsMissingCount)
+  const chatTextCardTotalSessions = sessions.length
+  const chatTextCardExportedSessions = useMemo(() => (
+    sessions.reduce((count, session) => {
+      const latestExportTime = sessionLatestExportTimeMap[session.username]
+      return (typeof latestExportTime === 'number' && Number.isFinite(latestExportTime) && latestExportTime > 0)
+        ? count + 1
+        : count
+    }, 0)
+  ), [sessionLatestExportTimeMap, sessions])
+  const chatTextCardCompletionRatio = chatTextCardTotalSessions > 0
+    ? Math.min(1, Math.max(0, chatTextCardExportedSessions / chatTextCardTotalSessions))
+    : 0
+  const chatTextCardCompletionPercent = Math.round(chatTextCardCompletionRatio * 100)
   const sessionEmojiCardTotalSessions = sessions.length
   const sessionEmojiCardDownloadedSessions = useMemo(() => (
     sessions.reduce((count, session) => {
@@ -3682,32 +3695,62 @@ function ExportPage() {
                   </div>
                 </div>
               </div>
-              <div
-                className="emoji-overview-trigger-card is-static"
-                title="按会话列表中已处理的表情包会话数统计"
-              >
-                <div className="emoji-overview-trigger-head">
-                  <span className="emoji-overview-trigger-icon" aria-hidden="true">
-                    <Smile size={14} />
-                  </span>
-                  <span className="emoji-overview-trigger-title">表情包</span>
-                </div>
-                <div className="emoji-overview-trigger-summary">
-                  <span className="label">已下载</span>
-                  <strong>
-                    {sessionEmojiCardDownloadedSessions.toLocaleString()} / {sessionEmojiCardTotalSessions.toLocaleString()}
-                  </strong>
-                </div>
-                <div className="emoji-overview-trigger-progress" aria-hidden="true">
-                  <div className="emoji-overview-trigger-progress-bar">
-                    <div
-                      className="emoji-overview-trigger-progress-fill"
-                      style={{ width: `${sessionEmojiCardCompletionPercent}%` }}
-                    />
+              <div className="session-account-side-cards">
+                <div
+                  className="emoji-overview-trigger-card is-static"
+                  title="按会话去重统计：已导出过聊天记录文本的会话数"
+                >
+                  <div className="emoji-overview-trigger-head">
+                    <span className="emoji-overview-trigger-icon" aria-hidden="true">
+                      <MessageSquare size={14} />
+                    </span>
+                    <span className="emoji-overview-trigger-title">聊天文本</span>
                   </div>
-                  <span className="emoji-overview-trigger-progress-text">
-                    {sessionEmojiCardCompletionPercent}%
-                  </span>
+                  <div className="emoji-overview-trigger-summary">
+                    <span className="label">已导出</span>
+                    <strong>
+                      {chatTextCardExportedSessions.toLocaleString()} / {chatTextCardTotalSessions.toLocaleString()}
+                    </strong>
+                  </div>
+                  <div className="emoji-overview-trigger-progress" aria-hidden="true">
+                    <div className="emoji-overview-trigger-progress-bar">
+                      <div
+                        className="emoji-overview-trigger-progress-fill"
+                        style={{ width: `${chatTextCardCompletionPercent}%` }}
+                      />
+                    </div>
+                    <span className="emoji-overview-trigger-progress-text">
+                      {chatTextCardCompletionPercent}%
+                    </span>
+                  </div>
+                </div>
+                <div
+                  className="emoji-overview-trigger-card is-static"
+                  title="按会话列表中已处理的表情包会话数统计"
+                >
+                  <div className="emoji-overview-trigger-head">
+                    <span className="emoji-overview-trigger-icon" aria-hidden="true">
+                      <Smile size={14} />
+                    </span>
+                    <span className="emoji-overview-trigger-title">表情包</span>
+                  </div>
+                  <div className="emoji-overview-trigger-summary">
+                    <span className="label">已下载</span>
+                    <strong>
+                      {sessionEmojiCardDownloadedSessions.toLocaleString()} / {sessionEmojiCardTotalSessions.toLocaleString()}
+                    </strong>
+                  </div>
+                  <div className="emoji-overview-trigger-progress" aria-hidden="true">
+                    <div className="emoji-overview-trigger-progress-bar">
+                      <div
+                        className="emoji-overview-trigger-progress-fill"
+                        style={{ width: `${sessionEmojiCardCompletionPercent}%` }}
+                      />
+                    </div>
+                    <span className="emoji-overview-trigger-progress-text">
+                      {sessionEmojiCardCompletionPercent}%
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>
