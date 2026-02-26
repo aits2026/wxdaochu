@@ -1041,18 +1041,8 @@
       margin-top: 2px;
     }
 
-    .chat-text-card-status-summary {
+    .chat-text-card-status-list {
       grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-
-    .chat-text-card-status-head,
-    .chat-text-card-status-row {
-      grid-template-columns: minmax(0, 1fr) auto;
-    }
-
-    .chat-text-card-status-head > span:last-child,
-    .chat-text-card-status-row > .chat-text-card-status-cell.time {
-      display: none;
     }
 
     .session-list-controls {
@@ -3106,35 +3096,40 @@
   }
 
   .chat-text-card-status-summary {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
     gap: 8px;
-    padding: 12px 16px 10px;
+    padding: 8px 16px 9px;
     border-bottom: 1px solid var(--border-color);
-    background: linear-gradient(180deg, rgba(var(--primary-rgb), 0.025), transparent);
+    background: rgba(var(--primary-rgb), 0.018);
   }
 
   .chat-text-card-status-summary-item {
     min-width: 0;
-    border-radius: 10px;
+    border-radius: 999px;
     border: 1px solid rgba(15, 23, 42, 0.06);
-    background: rgba(255, 255, 255, 0.55);
-    padding: 8px 10px;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
+    background: rgba(255, 255, 255, 0.62);
+    padding: 4px 8px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
 
     .label {
       font-size: 11px;
       color: var(--text-tertiary);
-      line-height: 1;
+      line-height: 1.1;
     }
 
     strong {
-      font-size: 13px;
-      line-height: 1.2;
+      font-size: 12px;
+      line-height: 1.1;
       color: var(--text-primary);
       font-variant-numeric: tabular-nums;
+    }
+
+    &.compact {
+      flex: 0 0 auto;
     }
   }
 
@@ -3142,42 +3137,11 @@
     flex: 1;
     min-height: 0;
     overflow: auto;
-    padding: 8px 12px 10px;
-  }
-
-  .chat-text-card-status-head {
+    padding: 10px 12px 12px;
     display: grid;
-    grid-template-columns: minmax(0, 1.8fr) auto 116px;
-    align-items: center;
-    gap: 10px;
-    padding: 0 8px 8px;
-    color: var(--text-tertiary);
-    font-size: 11px;
-    line-height: 1;
-    position: sticky;
-    top: 0;
-    background: var(--bg-primary);
-    z-index: 1;
-  }
-
-  .chat-text-card-status-row {
-    display: grid;
-    grid-template-columns: minmax(0, 1.8fr) auto 116px;
-    align-items: center;
-    gap: 10px;
-    padding: 7px 8px;
-    border-radius: 8px;
-
-    &:hover {
-      background: rgba(var(--primary-rgb), 0.035);
-    }
-  }
-
-  .chat-text-card-status-session {
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    align-content: start;
+    gap: 8px;
   }
 
   .chat-text-card-status-session-name {
@@ -3189,34 +3153,115 @@
     text-overflow: ellipsis;
   }
 
-  .chat-text-card-status-session-meta {
-    font-size: 11px;
-    color: var(--text-tertiary);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .chat-text-card-status-cell {
+  .chat-text-card-status-card {
+    min-width: 0;
+    border-radius: 10px;
+    border: 1px solid rgba(15, 23, 42, 0.07);
+    background: rgba(255, 255, 255, 0.66);
+    padding: 8px 9px;
     display: flex;
-    align-items: center;
-    justify-content: flex-start;
+    flex-direction: column;
+    gap: 7px;
+    transition: border-color 0.15s ease, background-color 0.15s ease;
 
-    &.time {
-      justify-content: flex-end;
-      font-size: 11px;
-      color: var(--text-secondary);
-      line-height: 1.2;
-      font-variant-numeric: tabular-nums;
-      white-space: nowrap;
+    &:hover {
+      background: rgba(var(--primary-rgb), 0.03);
+      border-color: rgba(var(--primary-rgb), 0.12);
     }
   }
 
+  .chat-text-card-status-card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    min-width: 0;
+
+    .session-media-status-pill {
+      flex-shrink: 0;
+      padding: 2px 7px;
+      font-size: 10px;
+    }
+  }
+
+  .chat-text-card-status-card-meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .chat-text-card-status-type-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: var(--bg-secondary);
+    border: 1px solid rgba(15, 23, 42, 0.06);
+    color: var(--text-tertiary);
+    font-size: 10px;
+    line-height: 1.2;
+    flex-shrink: 0;
+  }
+
+  .chat-text-card-status-time {
+    min-width: 0;
+    margin-left: auto;
+    font-size: 11px;
+    color: var(--text-secondary);
+    line-height: 1.1;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
   .chat-text-card-status-empty {
-    padding: 20px 8px;
+    grid-column: 1 / -1;
+    padding: 24px 8px;
     text-align: center;
     font-size: 12px;
     color: var(--text-tertiary);
+  }
+
+  @media (max-width: 1080px) {
+    .chat-text-card-status-list {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  @media (max-width: 680px) {
+    .chat-text-card-status-modal {
+      width: min(560px, calc(100vw - 20px));
+      max-height: min(86vh, 760px);
+    }
+
+    .chat-text-card-status-summary {
+      gap: 6px;
+      padding: 8px 12px 9px;
+    }
+
+    .chat-text-card-status-summary-item {
+      padding: 4px 7px;
+
+      .label {
+        font-size: 10px;
+      }
+
+      strong {
+        font-size: 11px;
+      }
+    }
+
+    .chat-text-card-status-list {
+      grid-template-columns: 1fr;
+      gap: 7px;
+      padding: 9px 10px 10px;
+    }
+
+    .chat-text-card-status-card {
+      padding: 7px 8px;
+      gap: 6px;
+    }
   }
 
   .session-image-assets-modal {

@@ -6728,7 +6728,6 @@ function ExportPage() {
             <div className="chat-text-card-modal-header">
               <div>
                 <h3>聊天文本导出状态</h3>
-                <p>全部会话快速总览</p>
               </div>
               <button
                 type="button"
@@ -6741,30 +6740,25 @@ function ExportPage() {
             </div>
 
             <div className="chat-text-card-status-summary">
-              <div className="chat-text-card-status-summary-item">
+              <span className="chat-text-card-status-summary-item compact">
                 <span className="label">已导出</span>
                 <strong>{chatTextCardExportedSessions.toLocaleString()} / {chatTextStatusSummary.total.toLocaleString()}</strong>
-              </div>
-              <div className="chat-text-card-status-summary-item">
+              </span>
+              <span className="chat-text-card-status-summary-item compact">
                 <span className="label">导出中</span>
                 <strong>{chatTextStatusSummary.running.toLocaleString()}</strong>
-              </div>
-              <div className="chat-text-card-status-summary-item">
+              </span>
+              <span className="chat-text-card-status-summary-item compact">
                 <span className="label">排队中</span>
                 <strong>{chatTextStatusSummary.queued.toLocaleString()}</strong>
-              </div>
-              <div className="chat-text-card-status-summary-item">
+              </span>
+              <span className="chat-text-card-status-summary-item compact">
                 <span className="label">未导出</span>
                 <strong>{chatTextStatusSummary.notExported.toLocaleString()}</strong>
-              </div>
+              </span>
             </div>
 
-            <div className="chat-text-card-status-list" role="table" aria-label="全部会话聊天文本导出状态">
-              <div className="chat-text-card-status-head" role="row">
-                <span role="columnheader">会话</span>
-                <span role="columnheader">状态</span>
-                <span role="columnheader">最近导出</span>
-              </div>
+            <div className="chat-text-card-status-list" role="list" aria-label="全部会话聊天文本导出状态">
               {chatTextStatusRows.length === 0 ? (
                 <div className="chat-text-card-status-empty">暂无会话</div>
               ) : (
@@ -6782,7 +6776,7 @@ function ExportPage() {
                       ? 'checking'
                       : status === 'exported'
                         ? 'success'
-                        : 'warning'
+                      : 'warning'
                   const recentLabel = latestExportTime ? formatRecentExportTime(latestExportTime) : '--'
                   const accountTypeLabel = session.accountType === 'group'
                     ? '群聊'
@@ -6791,23 +6785,24 @@ function ExportPage() {
                       : '私聊'
 
                   return (
-                    <div key={session.username} className="chat-text-card-status-row" role="row">
-                      <div className="chat-text-card-status-session" role="cell">
+                    <div key={session.username} className="chat-text-card-status-card" role="listitem" title={session.username}>
+                      <div className="chat-text-card-status-card-head">
                         <span className="chat-text-card-status-session-name" title={session.displayName || session.username}>
                           {session.displayName || session.username}
                         </span>
-                        <span className="chat-text-card-status-session-meta" title={session.username}>
-                          {accountTypeLabel} · {session.username}
-                        </span>
-                      </div>
-                      <div className="chat-text-card-status-cell" role="cell">
                         <span className={`session-media-status-pill ${statusClass}`}>
                           {status === 'running' && <Loader2 size={11} className="spin" />}
                           <span>{statusLabel}</span>
                         </span>
                       </div>
-                      <div className="chat-text-card-status-cell time" role="cell" title={latestExportTime ? new Date(latestExportTime).toLocaleString('zh-CN') : '未导出'}>
-                        {recentLabel || '--'}
+                      <div className="chat-text-card-status-card-meta">
+                        <span className="chat-text-card-status-type-pill">{accountTypeLabel}</span>
+                        <span
+                          className="chat-text-card-status-time"
+                          title={latestExportTime ? new Date(latestExportTime).toLocaleString('zh-CN') : '未导出'}
+                        >
+                          {recentLabel || '--'}
+                        </span>
                       </div>
                     </div>
                   )
