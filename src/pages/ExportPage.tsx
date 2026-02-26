@@ -2641,12 +2641,6 @@ function ExportPage() {
     }
   }, [ensureSessionCardStats, inspectSessionEmojiDownloadOverview, sessions, sessionByUsername, patchSessionEmojiOverviewItem])
 
-  const handleOpenSessionEmojiFromOverview = useCallback(async (sessionId: string) => {
-    closeSessionEmojiOverviewModal()
-    await selectSession(sessionId)
-    await openSessionEmojiAssetsModal(sessionId)
-  }, [closeSessionEmojiOverviewModal, openSessionEmojiAssetsModal, selectSession])
-
   const handleImageStatCardClick = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     const target = event.target
     if (target instanceof Element && target.closest('button, a, input, select, textarea')) return
@@ -3352,6 +3346,12 @@ function ExportPage() {
       forceReconnect: true
     })
   }, [selectedSession, selectSession])
+
+  const handleOpenSessionEmojiFromOverview = useCallback(async (sessionId: string) => {
+    closeSessionEmojiOverviewModal()
+    await selectSession(sessionId)
+    await openSessionEmojiAssetsModal(sessionId)
+  }, [closeSessionEmojiOverviewModal, openSessionEmojiAssetsModal, selectSession])
 
   const handleOpenChatWindowFromList = useCallback((session: ChatSession) => {
     void window.electronAPI.window.openChatWindow(session.username)
