@@ -4754,6 +4754,47 @@ function ExportPage() {
 
     await yieldToMainThread()
 
+    const hasKnownImageCount = (session: ChatSession) => {
+      if (
+        sessionDetail?.wxid === session.username &&
+        typeof sessionDetail.imageCount === 'number' &&
+        Number.isFinite(sessionDetail.imageCount) &&
+        sessionDetail.imageCount >= 0
+      ) {
+        return true
+      }
+      const statCount = sessionCardStatsMapRef.current[session.username]?.imageCount
+      return typeof statCount === 'number' && Number.isFinite(statCount) && statCount >= 0
+    }
+
+    const sessionsMissingImageCount = bulkExportEligibleSessions.filter(session => !hasKnownImageCount(session))
+    if (sessionsMissingImageCount.length > 0) {
+      taskCenterPatchTask(batchTaskId, {
+        phase: '准备排序...',
+        detail: `正在统计图片数量 0 / ${sessionsMissingImageCount.length.toLocaleString()} 个会话`
+      })
+
+      let resolvedCount = 0
+      for (const session of sessionsMissingImageCount) {
+        try {
+          await ensureSessionCardStats(session)
+        } catch {
+          // 排序统计失败时不阻塞导出，后续会按未知数量放后
+        }
+        resolvedCount += 1
+
+        if (resolvedCount <= 3 || resolvedCount === sessionsMissingImageCount.length || resolvedCount % 20 === 0) {
+          taskCenterPatchTask(batchTaskId, {
+            phase: '准备排序...',
+            detail: `正在统计图片数量 ${resolvedCount.toLocaleString()} / ${sessionsMissingImageCount.length.toLocaleString()} 个会话`
+          })
+        }
+        if (resolvedCount % 6 === 0) {
+          await yieldToMainThread()
+        }
+      }
+    }
+
     const orderedSessionIds = bulkExportEligibleSessions
       .map((session, index) => {
         const selectedDetailCount = (
@@ -4812,6 +4853,7 @@ function ExportPage() {
   }, [
     bulkExportEligibleSessions,
     enqueueBatchImageExportJobsChunked,
+    ensureSessionCardStats,
     exportFolder,
     imageExportFolder,
     imageCardExportOrder,
