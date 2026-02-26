@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useDeferredValue, useMemo, useRef, startTransition } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Search, Download, FolderOpen, RefreshCw, Check, FileJson, FileText, Table, Loader2, X, FileSpreadsheet, Database, FileCode, CheckCircle, XCircle, ExternalLink, MessageSquare, Users, User, Filter, Image, Video, CircleUserRound, Smile, Mic, Newspaper, ChevronDown, MoreHorizontal, ArrowLeft, Eye, Aperture, CircleHelp, Copy } from 'lucide-react'
 import { List, RowComponentProps } from 'react-window'
 import DateRangePicker from '../components/DateRangePicker'
@@ -770,6 +771,7 @@ const ExportSessionRow = (props: RowComponentProps<ExportSessionRowData>) => {
 }
 
 function ExportPage() {
+  const navigate = useNavigate()
   const [activeTab, setActiveTab] = useState<ExportTab>('chat')
   const setTitleBarContent = useTitleBarStore(state => state.setRightContent)
   const isDbConnected = useAppStore(state => state.isDbConnected)
@@ -6670,6 +6672,15 @@ function ExportPage() {
                       <span className="status-dot" />
                       <span>{exportAccountInfo.connected ? '已连接数据库' : '未连接'}</span>
                     </div>
+                    <button
+                      type="button"
+                      className="session-account-status session-account-status-btn"
+                      onClick={() => navigate('/data-management')}
+                      title="前往数据管理"
+                    >
+                      <Database size={12} />
+                      <span>数据管理</span>
+                    </button>
                     <div className="session-account-tips-wrap">
                       <button
                         type="button"

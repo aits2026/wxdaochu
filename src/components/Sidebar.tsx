@@ -1,5 +1,5 @@
 import { NavLink, useLocation } from 'react-router-dom'
-import { Database, Settings, Download, Sun, Moon, Monitor } from 'lucide-react'
+import { Settings, Download, Sun, Moon, Monitor } from 'lucide-react'
 import { useThemeStore } from '../stores/themeStore'
 import GlobalTaskCenter from './GlobalTaskCenter'
 import './Sidebar.scss'
@@ -21,15 +21,6 @@ function Sidebar() {
         >
           <span className="nav-icon"><Download size={20} /></span>
           <span className="nav-label">导出</span>
-        </NavLink>
-
-        {/* 数据管理 */}
-        <NavLink
-          to="/data-management"
-          className={`nav-item ${isActive('/data-management') ? 'active' : ''}`}
-        >
-          <span className="nav-icon"><Database size={20} /></span>
-          <span className="nav-label">DB</span>
         </NavLink>
 
         <GlobalTaskCenter variant="sidebar" label="任务" />
