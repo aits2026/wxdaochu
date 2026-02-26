@@ -2430,7 +2430,7 @@ class ExportService {
         )
         const hasMedia = Boolean(options.exportImages || options.exportVideos || options.exportEmojis || options.exportVoices)
         const sessionOutputDir = hasMedia ? path.join(outputDir, safeName) : outputDir
-        if (hasMedia && !fs.existsSync(sessionOutputDir)) {
+        if (hasMedia && !emojiOnlyMode && !fs.existsSync(sessionOutputDir)) {
           fs.mkdirSync(sessionOutputDir, { recursive: true })
         }
 
@@ -2553,6 +2553,36 @@ class ExportService {
 
         let result: { success: boolean; error?: string }
         if (emojiOnlyMode) {
+          if (!this.dirHasAnyFile(sessionOutputDir)) {
+            try {
+              if (fs.existsSync(sessionOutputDir)) {
+                const entries = fs.readdirSync(sessionOutputDir)
+                if (entries.length === 0) {
+                  fs.rmdirSync(sessionOutputDir)
+                }
+              }
+            } catch {
+              // 忽略清理空目录失败，不影响导出结果
+            }
+            emitProgress({
+              current: 100,
+              total: 100,
+              currentSession: sessionInfo.displayName,
+              phase: 'complete',
+              detail: '无表情包，已跳过'
+            })
+            successCount++
+            sessionOutputs.push({
+              sessionId,
+              outputPath: sessionOutputDir,
+              openTargetPath: outputDir,
+              openTargetType: 'directory',
+              skipped: true,
+              skipReason: 'emoji-empty-session'
+            })
+            await new Promise(resolve => setImmediate(resolve))
+            continue
+          }
           emitProgress({
             current: 100,
             total: 100,
@@ -2639,7 +2669,7 @@ class ExportService {
     if (options.exportVideos && !fs.existsSync(videoOutDir)) {
       fs.mkdirSync(videoOutDir, { recursive: true })
     }
-    if (options.exportEmojis && !fs.existsSync(emojiOutDir)) {
+    if (options.exportEmojis && !options.emojiOnlyMode && !fs.existsSync(emojiOutDir)) {
       fs.mkdirSync(emojiOutDir, { recursive: true })
     }
 
@@ -3036,6 +3066,9 @@ class ExportService {
                 if (encryptUrl) encryptUrl = encryptUrl.replace(/&amp;/g, '&')
 
                 if (emojiMd5 || cdnUrl) {
+                  if (!fs.existsSync(emojiOutDir)) {
+                    fs.mkdirSync(emojiOutDir, { recursive: true })
+                  }
                   const cacheKey = emojiMd5 || this.hashString(cdnUrl)
                   // 确定文件扩展名
                   const ext = cdnUrl.includes('.gif') || content.includes('type="2"') ? '.gif' : '.png'

@@ -4070,6 +4070,8 @@ function ExportPage() {
         const exportOpenTargetType = sessionOutput?.openTargetType || 'directory'
         const wasSkipped = sessionOutput?.skipped === true
 
+        const skipReason = sessionOutput?.skipReason
+
         if (!wasSkipped) {
           await window.electronAPI.export.saveExportRecord(
             job.sessionId,
@@ -4093,13 +4095,16 @@ function ExportPage() {
             [job.sessionId]: { status: 'exported', at: now }
           }))
         } else {
-          setSessionEmojiExportFlagMap(prev => ({ ...prev, [job.sessionId]: true }))
-          setSessionEmojiLatestExportTimeMap(prev => ({
-            ...prev,
-            [job.sessionId]: (typeof prev[job.sessionId] === 'number' && Number.isFinite(prev[job.sessionId]) && (prev[job.sessionId] || 0) > 0)
-              ? prev[job.sessionId]
-              : Date.now()
-          }))
+          const shouldMarkAsExported = skipReason !== 'emoji-empty-session'
+          if (shouldMarkAsExported) {
+            setSessionEmojiExportFlagMap(prev => ({ ...prev, [job.sessionId]: true }))
+            setSessionEmojiLatestExportTimeMap(prev => ({
+              ...prev,
+              [job.sessionId]: (typeof prev[job.sessionId] === 'number' && Number.isFinite(prev[job.sessionId]) && (prev[job.sessionId] || 0) > 0)
+                ? prev[job.sessionId]
+                : Date.now()
+            }))
+          }
           setSessionEmojiBatchOutcomeMap(prev => ({
             ...prev,
             [job.sessionId]: { status: 'skipped', at: Date.now() }
@@ -4270,8 +4275,23 @@ function ExportPage() {
 
     await yieldToMainThread()
 
+    const orderedSessionIds = sessions
+      .map((session, index) => ({ session, index }))
+      .sort((a, b) => {
+        const priority = (accountType?: ChatSession['accountType']) => {
+          if (accountType === 'friend') return 0
+          if (accountType === 'group') return 1
+          if (accountType === 'official') return 2
+          return 3
+        }
+        const diff = priority(a.session.accountType) - priority(b.session.accountType)
+        if (diff !== 0) return diff
+        return a.index - b.index
+      })
+      .map(item => item.session.username)
+
     const queuedCount = await enqueueBatchEmojiExportJobsChunked({
-      sessionIds: sessions.map(session => session.username),
+      sessionIds: orderedSessionIds,
       batchTaskId
     })
 
