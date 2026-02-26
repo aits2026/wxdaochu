@@ -10,6 +10,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
     setTldCache: (tlds: string[]) => ipcRenderer.invoke('config:setTldCache', tlds)
   },
 
+  // 本机多账号（Profile）
+  profile: {
+    list: () => ipcRenderer.invoke('profile:list'),
+    getCurrent: () => ipcRenderer.invoke('profile:getCurrent'),
+    create: () => ipcRenderer.invoke('profile:create'),
+    createAndSwitch: () => ipcRenderer.invoke('profile:createAndSwitch'),
+    switch: (profileId: string) => ipcRenderer.invoke('profile:switch', profileId),
+    resetCurrentAndRelaunch: () => ipcRenderer.invoke('profile:resetCurrentAndRelaunch')
+  },
+
   // 数据库操作
   db: {
     open: (dbPath: string, key?: string) => ipcRenderer.invoke('db:open', dbPath, key),

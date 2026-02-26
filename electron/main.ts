@@ -6,6 +6,7 @@ import { DatabaseService } from './services/database'
 
 import { wechatDecryptService } from './services/decryptService'
 import { ConfigService } from './services/config'
+import { profileService } from './services/profileService'
 import { wxKeyService } from './services/wxKeyService'
 import { dbPathService } from './services/dbPathService'
 import { wcdbService } from './services/wcdbService'
@@ -160,6 +161,7 @@ function createWindow() {
 
   // 初始化服务
   configService = new ConfigService()
+  profileService.touchCurrentProfile()
   dbService = new DatabaseService()
 
   logService = new LogService(configService)
@@ -1083,6 +1085,58 @@ function registerIpcHandlers() {
     return configService?.set(key as any, value)
   })
 
+  // Profile 相关
+  ipcMain.handle('profile:list', async () => {
+    return profileService.listProfiles()
+  })
+
+  ipcMain.handle('profile:getCurrent', async () => {
+    return profileService.getCurrentProfile()
+  })
+
+  ipcMain.handle('profile:create', async () => {
+    return profileService.createProfile()
+  })
+
+  ipcMain.handle('profile:createAndSwitch', async () => {
+    const profile = profileService.createProfile()
+    const switched = profileService.switchProfile(profile.id)
+    if (!switched.success) {
+      return { success: false, error: switched.error || '创建后切换失败' }
+    }
+
+    setTimeout(() => {
+      app.relaunch()
+      app.exit(0)
+    }, 60)
+
+    return { success: true, profile }
+  })
+
+  ipcMain.handle('profile:switch', async (_, profileId: string) => {
+    const result = profileService.switchProfile(profileId)
+    if (!result.success) return result
+
+    setTimeout(() => {
+      app.relaunch()
+      app.exit(0)
+    }, 60)
+
+    return { success: true }
+  })
+
+  ipcMain.handle('profile:resetCurrentAndRelaunch', async () => {
+    const result = profileService.queueResetCurrentProfile()
+    if (!result.success) return result
+
+    setTimeout(() => {
+      app.relaunch()
+      app.exit(0)
+    }, 60)
+
+    return { success: true, profileId: result.profileId }
+  })
+
   // TLD 缓存相关
   ipcMain.handle('config:getTldCache', async () => {
     return configService?.getTldCache()
@@ -1901,6 +1955,14 @@ function registerIpcHandlers() {
 
   ipcMain.handle('chat:getMyUserInfo', async () => {
     const result = chatService.getMyUserInfo()
+    if (result?.success && result.userInfo) {
+      profileService.updateCurrentProfileIdentity({
+        wxid: result.userInfo.wxid,
+        nickName: result.userInfo.nickName,
+        alias: result.userInfo.alias,
+        avatarUrl: result.userInfo.avatarUrl
+      })
+    }
     // 首页会调用这个接口，失败是正常的，不记录错误日志
     return result
   })
@@ -3404,6 +3466,7 @@ async function checkAndConnectOnStartup(): Promise<boolean> {
   // 初始化配置服务（如果还没初始化）
   if (!configService) {
     configService = new ConfigService()
+    profileService.touchCurrentProfile()
   }
 
   // 检查配置是否完整

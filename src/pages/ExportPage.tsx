@@ -7,6 +7,7 @@ import { useAppStore } from '../stores/appStore'
 import { useExportPageCacheStore } from '../stores/exportPageCacheStore'
 import { useTaskCenterStore } from '../stores/taskCenterStore'
 import * as configService from '../services/config'
+import * as localProfileService from '../services/profile'
 import './ExportPage.scss'
 
 type ExportTab = 'chat' | 'contacts'
@@ -79,6 +80,7 @@ interface ExportResult {
 
 type SessionMessageCountMap = Record<string, number>
 type ImageBatchExportOrder = 'few-first' | 'many-first'
+type LocalProfileSummary = localProfileService.LocalProfileSummary
 type LoadSessionsOptions = {
   silent?: boolean
   preserveCounts?: boolean
@@ -898,6 +900,11 @@ function ExportPage() {
   const [showExportSettings, setShowExportSettings] = useState(false)
   const [showMoreMenu, setShowMoreMenu] = useState(false)
   const [showUsageTipsPopover, setShowUsageTipsPopover] = useState(false)
+  const [showProfileSwitcher, setShowProfileSwitcher] = useState(false)
+  const [localProfiles, setLocalProfiles] = useState<LocalProfileSummary[]>([])
+  const [isLoadingProfiles, setIsLoadingProfiles] = useState(false)
+  const [profileActionPending, setProfileActionPending] = useState<{ type: 'switch' | 'create'; profileId?: string } | null>(null)
+  const [profileSwitchHint, setProfileSwitchHint] = useState<string | null>(null)
   const [snsUserPostCounts, setSnsUserPostCounts] = useState<Record<string, number>>({})
   const [snsUserPostCountsStatus, setSnsUserPostCountsStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
   const [copiedIdentityChip, setCopiedIdentityChip] = useState<'wxid' | 'alias' | null>(null)
@@ -6346,6 +6353,90 @@ function ExportPage() {
     }
   }
 
+  const loadLocalProfiles = useCallback(async () => {
+    setIsLoadingProfiles(true)
+    try {
+      const profiles = await localProfileService.listProfiles()
+      setLocalProfiles(profiles)
+    } catch (e) {
+      console.error('加载本机账号列表失败:', e)
+    } finally {
+      setIsLoadingProfiles(false)
+    }
+  }, [])
+
+  const openProfileSwitcher = useCallback(() => {
+    setShowProfileSwitcher(v => {
+      const next = !v
+      if (next) {
+        setShowMoreMenu(false)
+        setShowUsageTipsPopover(false)
+        void loadLocalProfiles()
+      } else {
+        setProfileSwitchHint(null)
+      }
+      return next
+    })
+  }, [loadLocalProfiles])
+
+  const handleSwitchProfile = useCallback(async (profile: LocalProfileSummary) => {
+    if (profile.isCurrent || profileActionPending) return
+
+    const targetName = profile.nickName || profile.wxid || '该账号'
+    const confirmed = window.confirm(
+      `将切换到「${targetName}」。\n\n为确保账号数据完全隔离，应用会先保存当前状态并短暂重载。是否继续？`
+    )
+    if (!confirmed) return
+
+    setProfileActionPending({ type: 'switch', profileId: profile.id })
+    setProfileSwitchHint('正在保存当前状态并切换账号，应用将自动重载以确保数据隔离...')
+
+    try {
+      const result = await localProfileService.switchProfile(profile.id)
+      if (!result.success) {
+        setProfileSwitchHint(null)
+        setProfileActionPending(null)
+        window.alert(result.error || '切换账号失败')
+      }
+    } catch (e) {
+      console.error('切换账号失败:', e)
+      setProfileSwitchHint(null)
+      setProfileActionPending(null)
+      window.alert('切换账号失败，请重试')
+    }
+  }, [profileActionPending])
+
+  const handleCreateAndSwitchProfile = useCallback(async () => {
+    if (profileActionPending) return
+
+    const confirmed = window.confirm(
+      '将创建一个新的本机账号空间，并在重载后进入新账号。\n\n之后请在该账号下重新配置/登录微信数据源。是否继续？'
+    )
+    if (!confirmed) return
+
+    setProfileActionPending({ type: 'create' })
+    setProfileSwitchHint('正在创建新账号空间并重载应用，稍后将进入新的独立账号环境...')
+
+    try {
+      const result = await localProfileService.createAndSwitchProfile()
+      if (!result.success) {
+        setProfileSwitchHint(null)
+        setProfileActionPending(null)
+        window.alert(result.error || '创建账号失败')
+      }
+    } catch (e) {
+      console.error('创建账号失败:', e)
+      setProfileSwitchHint(null)
+      setProfileActionPending(null)
+      window.alert('创建账号失败，请重试')
+    }
+  }, [profileActionPending])
+
+  useEffect(() => {
+    if (!showProfileSwitcher) return
+    void loadLocalProfiles()
+  }, [showProfileSwitcher, loadLocalProfiles, exportAccountInfo.wxid, exportAccountInfo.nickName, exportAccountInfo.avatarUrl])
+
   const chatFormatOptions = [
     { value: 'chatlab', label: 'ChatLab', icon: FileCode, desc: '标准格式，支持其他软件导入' },
     { value: 'chatlab-jsonl', label: 'ChatLab JSONL', icon: FileCode, desc: '流式格式，适合大量消息' },
@@ -6410,6 +6501,8 @@ function ExportPage() {
                           const next = !v
                           if (next) {
                             setShowUsageTipsPopover(false)
+                            setShowProfileSwitcher(false)
+                            setProfileSwitchHint(null)
                           }
                           return next
                         })
@@ -6455,6 +6548,114 @@ function ExportPage() {
                       </>
                     )}
                   </div>
+                  <div className="session-profile-switch-wrap">
+                    <button
+                      type="button"
+                      className={`session-profile-switch-btn ${showProfileSwitcher ? 'active' : ''}`}
+                      onClick={openProfileSwitcher}
+                      title="切换本机账号"
+                    >
+                      <CircleUserRound size={15} />
+                      <span>切换账户</span>
+                      <ChevronDown size={14} />
+                    </button>
+                    {showProfileSwitcher && (
+                      <>
+                        <div className="more-menu-overlay" onClick={() => { setShowProfileSwitcher(false); setProfileSwitchHint(null) }} />
+                        <div className="profile-switcher-dropdown">
+                          <div className="profile-switcher-header">
+                            <div className="profile-switcher-title">本机账号切换</div>
+                            <button
+                              type="button"
+                              className="profile-switcher-refresh-btn"
+                              onClick={() => { void loadLocalProfiles() }}
+                              title="刷新账号列表"
+                              disabled={isLoadingProfiles || !!profileActionPending}
+                            >
+                              <RefreshCw size={13} className={isLoadingProfiles ? 'spin' : ''} />
+                            </button>
+                          </div>
+                          <div className="profile-switcher-list">
+                            {isLoadingProfiles && localProfiles.length === 0 ? (
+                              <div className="profile-switcher-empty">
+                                <Loader2 size={14} className="spin" />
+                                <span>正在加载账号列表...</span>
+                              </div>
+                            ) : localProfiles.length > 0 ? (
+                              localProfiles.map(profile => {
+                                const displayName = profile.nickName || profile.wxid || '未登录账号'
+                                const statusText = profile.isCurrent
+                                  ? (profile.isProtected ? '当前账号 · 已解锁' : '当前账号 · 未设密码')
+                                  : (profile.isProtected ? (profile.authMode === 'biometric' ? '已锁定 · 生物识别' : '已锁定 · 本机密码') : '未设密码')
+                                const isBusy = !!profileActionPending && profileActionPending.profileId === profile.id
+
+                                return (
+                                  <div key={profile.id} className={`profile-switcher-item ${profile.isCurrent ? 'is-current' : ''}`}>
+                                    <div className="profile-switcher-item-avatar">
+                                      {profile.avatarUrl ? (
+                                        <img src={profile.avatarUrl} alt="" />
+                                      ) : (
+                                        <CircleUserRound size={14} />
+                                      )}
+                                    </div>
+                                    <div className="profile-switcher-item-main">
+                                      <div className="profile-switcher-item-name-row">
+                                        <span className="profile-switcher-item-name">{displayName}</span>
+                                        {profile.isCurrent && <span className="profile-switcher-item-badge">当前</span>}
+                                      </div>
+                                      <div className="profile-switcher-item-meta">
+                                        {statusText}
+                                        {profile.wxid ? ` · ${profile.wxid}` : (!profile.isConfigured ? ' · 待配置' : '')}
+                                      </div>
+                                    </div>
+                                    {profile.isCurrent ? (
+                                      <span className="profile-switcher-item-check" title="当前账号">
+                                        <CheckCircle size={16} />
+                                      </span>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        className="profile-switcher-item-action"
+                                        onClick={() => { void handleSwitchProfile(profile) }}
+                                        disabled={!!profileActionPending}
+                                      >
+                                        {isBusy ? <Loader2 size={13} className="spin" /> : null}
+                                        <span>{profile.isProtected ? '切换并解锁' : '切换'}</span>
+                                      </button>
+                                    )}
+                                  </div>
+                                )
+                              })
+                            ) : (
+                              <div className="profile-switcher-empty">
+                                <span>暂无账号档案</span>
+                              </div>
+                            )}
+                          </div>
+                          <div className="profile-switcher-actions">
+                            <button
+                              type="button"
+                              className="profile-switcher-create-btn"
+                              onClick={() => { void handleCreateAndSwitchProfile() }}
+                              disabled={!!profileActionPending}
+                            >
+                              {profileActionPending?.type === 'create' ? <Loader2 size={13} className="spin" /> : <CircleUserRound size={13} />}
+                              <span>添加账号（新建独立空间）</span>
+                            </button>
+                          </div>
+                          <div className="profile-switcher-note">
+                            启动时会直接进入上一次账号；如该账号启用本机密码，将先显示解锁页。
+                          </div>
+                          {profileSwitchHint && (
+                            <div className="profile-switcher-hint">
+                              <Loader2 size={13} className="spin" />
+                              <span>{profileSwitchHint}</span>
+                            </div>
+                          )}
+                        </div>
+                      </>
+                    )}
+                  </div>
                 </div>
                 <div className="session-account-id">
                   {exportAccountInfo.connected
@@ -6479,6 +6680,8 @@ function ExportPage() {
                             const next = !v
                             if (next) {
                               setShowMoreMenu(false)
+                              setShowProfileSwitcher(false)
+                              setProfileSwitchHint(null)
                             }
                             return next
                           })

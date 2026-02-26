@@ -2,6 +2,7 @@ import Database from 'better-sqlite3'
 import { app } from 'electron'
 import path from 'path'
 import fs from 'fs'
+import { DEFAULT_PROFILE_ID, ensureProfileRegistry, getActiveProfileId, getProfileConfigDbPath } from './profileStorage'
 
 interface ConfigSchema {
   // 数据库相关
@@ -104,11 +105,25 @@ const defaults: ConfigSchema = {
 export class ConfigService {
   private db: Database.Database | null = null
   private dbPath: string
+  private profileId: string
 
-  constructor() {
-    const userDataPath = app.getPath('userData')
-    this.dbPath = path.join(userDataPath, 'vxdaochu-config.db')
+  constructor(profileId?: string) {
+    ensureProfileRegistry()
+    this.profileId = profileId || getActiveProfileId()
+    this.dbPath = getProfileConfigDbPath(this.profileId)
     this.initDatabase()
+  }
+
+  getProfileId(): string {
+    return this.profileId
+  }
+
+  static getSuggestedCacheBasePath(profileId?: string): string {
+    const resolvedProfileId = profileId || getActiveProfileId()
+    if (resolvedProfileId === DEFAULT_PROFILE_ID) {
+      return path.join(app.getPath('documents'), 'VXdaochu')
+    }
+    return path.join(app.getPath('documents'), 'VXdaochuProfiles', resolvedProfileId)
   }
 
   private initDatabase(): void {
@@ -147,6 +162,17 @@ export class ConfigService {
 
       for (const [key, value] of Object.entries(defaults)) {
         insertStmt.run(key, JSON.stringify(value))
+      }
+
+      // 为非默认 profile 自动分配独立缓存目录，避免与其他账号串数据
+      try {
+        const cachePathRow = this.db.prepare("SELECT value FROM config WHERE key = 'cachePath'").get() as { value: string } | undefined
+        const cachePath = cachePathRow ? JSON.parse(cachePathRow.value) : ''
+        if ((!cachePath || String(cachePath).trim().length === 0) && this.profileId !== DEFAULT_PROFILE_ID) {
+          this.db.prepare("UPDATE config SET value = ? WHERE key = 'cachePath'").run(JSON.stringify(ConfigService.getSuggestedCacheBasePath(this.profileId)))
+        }
+      } catch (e) {
+        console.error('初始化 profile 独立缓存目录失败:', e)
       }
 
       // 迁移：修复旧版本产生的空 STT 语言配置，默认为中文
@@ -334,6 +360,6 @@ export class ConfigService {
     if (configured && configured.trim().length > 0) {
       return configured
     }
-    return path.join(app.getPath('documents'), 'VXdaochu')
+    return ConfigService.getSuggestedCacheBasePath(this.profileId)
   }
 }

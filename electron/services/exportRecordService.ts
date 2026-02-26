@@ -1,6 +1,7 @@
 import { app } from 'electron'
 import path from 'path'
 import fs from 'fs'
+import { getActiveProfileId, getProfileDir } from './profileStorage'
 
 export interface ExportRecord {
   exportTime: number   // Unix ms
@@ -24,7 +25,17 @@ export class ExportRecordService {
   private store: RecordStore = {}
 
   constructor() {
-    this.filePath = path.join(app.getPath('userData'), 'export-records.json')
+    const profileDir = getProfileDir(getActiveProfileId())
+    fs.mkdirSync(profileDir, { recursive: true })
+    this.filePath = path.join(profileDir, 'export-records.json')
+    const legacyPath = path.join(app.getPath('userData'), 'export-records.json')
+    if (!fs.existsSync(this.filePath) && fs.existsSync(legacyPath)) {
+      try {
+        fs.copyFileSync(legacyPath, this.filePath)
+      } catch (e) {
+        console.warn('[ExportRecord] 迁移旧导出记录失败:', e)
+      }
+    }
     this.load()
   }
 

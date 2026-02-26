@@ -1,7 +1,8 @@
-import { useRef, useState, useEffect } from 'react'
+import { useRef, useState, useEffect, useMemo } from 'react'
 import { useAppStore } from '../stores/appStore'
 import { useAuthStore } from '../stores/authStore'
-import { Lock, Fingerprint, AlertCircle, KeyRound, ChevronRight } from 'lucide-react'
+import { Lock, Fingerprint, AlertCircle, ChevronRight, CircleUserRound, ChevronDown, Loader2, Plus, RefreshCw, RotateCcw } from 'lucide-react'
+import * as localProfileService from '../services/profile'
 import './LockScreen.scss'
 
 export default function LockScreen() {
@@ -10,7 +11,20 @@ export default function LockScreen() {
     const { unlock, verifyPassword, authMethod } = useAuthStore()
     const [isVerifying, setIsVerifying] = useState(false)
     const [error, setError] = useState('')
+    const [profiles, setProfiles] = useState<localProfileService.LocalProfileSummary[]>([])
+    const [isLoadingProfiles, setIsLoadingProfiles] = useState(false)
+    const [showProfileSwitchPanel, setShowProfileSwitchPanel] = useState(false)
+    const [profileActionPending, setProfileActionPending] = useState<'switch' | 'create' | 'reset' | null>(null)
+    const [profileActionMessage, setProfileActionMessage] = useState<string>('')
     const hasInvokedRef = useRef(false)
+
+    const currentProfile = useMemo(
+        () => profiles.find(profile => profile.isCurrent) || null,
+        [profiles]
+    )
+
+    const displayName = userInfo?.nickName || currentProfile?.nickName || currentProfile?.wxid || '当前账号'
+    const displayAvatar = userInfo?.avatarUrl || currentProfile?.avatarUrl || ''
 
     useEffect(() => {
         // 自动触发一次验证 (仅当生物识别时)
@@ -19,6 +33,22 @@ export default function LockScreen() {
             handleUnlock()
         }
     }, [authMethod])
+
+    useEffect(() => {
+        void loadProfiles()
+    }, [])
+
+    const loadProfiles = async () => {
+        setIsLoadingProfiles(true)
+        try {
+            const list = await localProfileService.listProfiles()
+            setProfiles(list)
+        } catch (e) {
+            console.error('LockScreen 加载账号列表失败:', e)
+        } finally {
+            setIsLoadingProfiles(false)
+        }
+    }
 
     const handleUnlock = async () => {
         if (isVerifying) return
@@ -59,12 +89,91 @@ export default function LockScreen() {
         }
     }
 
+    const handleSwitchProfile = async (profile: localProfileService.LocalProfileSummary) => {
+        if (profile.isCurrent || isVerifying || profileActionPending) return
+
+        const targetName = profile.nickName || profile.wxid || '该账号'
+        const confirmed = window.confirm(
+            `将切换到「${targetName}」。\n\n应用会短暂重载，以确保账号数据完全隔离。是否继续？`
+        )
+        if (!confirmed) return
+
+        setProfileActionPending('switch')
+        setProfileActionMessage('正在切换账号并重载应用...')
+        try {
+            const result = await localProfileService.switchProfile(profile.id)
+            if (!result.success) {
+                setProfileActionPending(null)
+                setProfileActionMessage('')
+                setError(result.error || '切换账号失败')
+            }
+        } catch (e: any) {
+            console.error('LockScreen 切换账号失败:', e)
+            setProfileActionPending(null)
+            setProfileActionMessage('')
+            setError('切换账号失败，请重试')
+        }
+    }
+
+    const handleCreateProfile = async () => {
+        if (isVerifying || profileActionPending) return
+
+        const confirmed = window.confirm(
+            '将创建一个新的本机账号空间，并在重载后进入新账号。之后请重新配置/登录。是否继续？'
+        )
+        if (!confirmed) return
+
+        setProfileActionPending('create')
+        setProfileActionMessage('正在创建新账号空间并重载应用...')
+        try {
+            const result = await localProfileService.createAndSwitchProfile()
+            if (!result.success) {
+                setProfileActionPending(null)
+                setProfileActionMessage('')
+                setError(result.error || '创建账号失败')
+            }
+        } catch (e) {
+            console.error('LockScreen 创建账号失败:', e)
+            setProfileActionPending(null)
+            setProfileActionMessage('')
+            setError('创建账号失败，请重试')
+        }
+    }
+
+    const handleResetCurrentProfile = async () => {
+        if (authMethod !== 'password' || isVerifying || profileActionPending) return
+
+        const profileName = displayName || '当前账号'
+        const confirmed = window.confirm(
+            `将重置「${profileName}」在本机的账号数据（包含登录状态、密码保护、本地配置与缓存），然后重启应用。\n\n该操作不可撤销，重置后需要重新登录。是否继续？`
+        )
+        if (!confirmed) return
+
+        setProfileActionPending('reset')
+        setProfileActionMessage('正在排队重置当前账号本机数据，并准备重启应用...')
+        setError('')
+
+        try {
+            const result = await localProfileService.resetCurrentProfileAndRelaunch()
+            if (!result.success) {
+                setProfileActionPending(null)
+                setProfileActionMessage('')
+                setError(result.error || '重置失败')
+            }
+        } catch (e) {
+            console.error('LockScreen 重置当前账号失败:', e)
+            setProfileActionPending(null)
+            setProfileActionMessage('')
+            setError('重置失败，请重试')
+        }
+    }
+
     return (
         <div className="lock-screen-overlay">
             <div className="lock-content">
                 <div className="lock-avatar-container">
-                    {userInfo?.avatarUrl ? (
-                        <img src={userInfo.avatarUrl} alt="Avatar" className="lock-avatar" />
+                    {displayAvatar ? (
+                        <img src={displayAvatar} alt="Avatar" className="lock-avatar" />
                     ) : (
                         <div className="lock-avatar" style={{ background: '#e0e0e0', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                             <Lock size={32} color="#999" />
@@ -77,7 +186,7 @@ export default function LockScreen() {
 
                 <div className="lock-info">
                     <h2>VXdaochu 已锁定</h2>
-                    <p>{userInfo?.nickName ? `欢迎回来，${userInfo.nickName}` : '需要验证身份以继续'}</p>
+                    <p>{displayName ? `欢迎回来，${displayName}` : '需要验证身份以继续'}</p>
                 </div>
 
                 {authMethod === 'biometric' ? (
@@ -109,6 +218,103 @@ export default function LockScreen() {
                             </button>
                         </div>
                     </form>
+                )}
+
+                <div className="lock-secondary-actions">
+                    <button
+                        type="button"
+                        className={`lock-secondary-btn ${showProfileSwitchPanel ? 'active' : ''}`}
+                        onClick={() => {
+                            setShowProfileSwitchPanel(v => !v)
+                            setProfileActionMessage('')
+                            setError('')
+                        }}
+                        disabled={isVerifying || !!profileActionPending}
+                    >
+                        <CircleUserRound size={15} />
+                        <span>切换到其他账号</span>
+                        <ChevronDown size={14} />
+                    </button>
+
+                    {authMethod === 'password' && (
+                        <button
+                            type="button"
+                            className="lock-danger-btn"
+                            onClick={handleResetCurrentProfile}
+                            disabled={isVerifying || !!profileActionPending}
+                        >
+                            {profileActionPending === 'reset' ? <Loader2 size={14} className="spin" /> : <RotateCcw size={14} />}
+                            <span>忘记密码，重置本机数据</span>
+                        </button>
+                    )}
+                </div>
+
+                {showProfileSwitchPanel && (
+                    <div className="lock-profile-panel">
+                        <div className="lock-profile-panel-header">
+                            <span>本机账号</span>
+                            <button
+                                type="button"
+                                className="lock-profile-icon-btn"
+                                onClick={() => { void loadProfiles() }}
+                                disabled={isLoadingProfiles || !!profileActionPending}
+                                title="刷新账号列表"
+                            >
+                                <RefreshCw size={13} className={isLoadingProfiles ? 'spin' : ''} />
+                            </button>
+                        </div>
+
+                        <div className="lock-profile-list">
+                            {profiles.filter(p => !p.isCurrent).length === 0 ? (
+                                <div className="lock-profile-empty">
+                                    {isLoadingProfiles ? <Loader2 size={14} className="spin" /> : <CircleUserRound size={14} />}
+                                    <span>{isLoadingProfiles ? '正在加载账号列表...' : '暂无其他账号'}</span>
+                                </div>
+                            ) : (
+                                profiles.filter(p => !p.isCurrent).map(profile => (
+                                    <div key={profile.id} className="lock-profile-item">
+                                        <div className="lock-profile-item-avatar">
+                                            {profile.avatarUrl ? <img src={profile.avatarUrl} alt="" /> : <CircleUserRound size={14} />}
+                                        </div>
+                                        <div className="lock-profile-item-main">
+                                            <div className="lock-profile-item-name">{profile.nickName || profile.wxid || '未登录账号'}</div>
+                                            <div className="lock-profile-item-meta">
+                                                {profile.isProtected
+                                                    ? (profile.authMode === 'password' ? '切换后需输入本机密码' : '切换后需生物识别验证')
+                                                    : '未设置密码，可直接进入'}
+                                            </div>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            className="lock-profile-item-action"
+                                            onClick={() => { void handleSwitchProfile(profile) }}
+                                            disabled={isVerifying || !!profileActionPending}
+                                        >
+                                            {profileActionPending === 'switch' ? <Loader2 size={13} className="spin" /> : null}
+                                            <span>切换</span>
+                                        </button>
+                                    </div>
+                                ))
+                            )}
+                        </div>
+
+                        <button
+                            type="button"
+                            className="lock-profile-create-btn"
+                            onClick={handleCreateProfile}
+                            disabled={isVerifying || !!profileActionPending}
+                        >
+                            {profileActionPending === 'create' ? <Loader2 size={14} className="spin" /> : <Plus size={14} />}
+                            <span>添加账号（新建独立空间）</span>
+                        </button>
+                    </div>
+                )}
+
+                {profileActionMessage && (
+                    <div className="lock-info-tip">
+                        <Loader2 size={14} className="spin" />
+                        <span>{profileActionMessage}</span>
+                    </div>
                 )}
 
                 {error && (

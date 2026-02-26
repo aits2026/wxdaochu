@@ -79,9 +79,8 @@ export class LogService {
       if (cachePath) {
         this.logDir = join(cachePath, 'logs')
       } else {
-        // 使用默认缓存目录
-        const { app } = require('electron')
-        const defaultCachePath = join(app.getPath('userData'), 'cache')
+        // 使用当前 profile 的默认缓存目录
+        const defaultCachePath = this.configService.getCacheBasePath()
         this.logDir = join(defaultCachePath, 'logs')
       }
 

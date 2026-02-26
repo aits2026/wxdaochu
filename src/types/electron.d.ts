@@ -34,6 +34,53 @@ export interface ElectronAPI {
     getTldCache: () => Promise<{ tlds: string[]; updatedAt: number } | null>
     setTldCache: (tlds: string[]) => Promise<void>
   }
+  profile: {
+    list: () => Promise<Array<{
+      id: string
+      wxid: string
+      nickName: string
+      alias: string
+      avatarUrl: string
+      createdAt: number
+      updatedAt: number
+      lastUsedAt?: number
+      isCurrent: boolean
+      isProtected: boolean
+      authMode: 'none' | 'password' | 'biometric'
+      isConfigured: boolean
+    }>>
+    getCurrent: () => Promise<{
+      id: string
+      wxid: string
+      nickName: string
+      alias: string
+      avatarUrl: string
+      createdAt: number
+      updatedAt: number
+      lastUsedAt?: number
+      isCurrent: boolean
+      isProtected: boolean
+      authMode: 'none' | 'password' | 'biometric'
+      isConfigured: boolean
+    } | null>
+    create: () => Promise<{
+      id: string
+      wxid: string
+      nickName: string
+      alias: string
+      avatarUrl: string
+      createdAt: number
+      updatedAt: number
+      lastUsedAt?: number
+      isCurrent: boolean
+      isProtected: boolean
+      authMode: 'none' | 'password' | 'biometric'
+      isConfigured: boolean
+    }>
+    createAndSwitch: () => Promise<{ success: boolean; error?: string; profile?: any }>
+    switch: (profileId: string) => Promise<{ success: boolean; error?: string }>
+    resetCurrentAndRelaunch: () => Promise<{ success: boolean; error?: string; profileId?: string }>
+  }
   db: {
     open: (dbPath: string, key?: string) => Promise<boolean>
     query: <T = unknown>(sql: string, params?: unknown[]) => Promise<T[]>
