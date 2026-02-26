@@ -3721,6 +3721,42 @@ function ExportPage() {
                         </>
                       )}
                     </div>
+                    <div className="session-account-export-path" title={exportFolder || '未设置导出目录'}>
+                      <div
+                        className={`session-account-export-path-chip ${exportFolder ? '' : 'is-empty'}`}
+                        onClick={selectExportFolder}
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(e) => {
+                          if (e.key !== 'Enter' && e.key !== ' ') return
+                          e.preventDefault()
+                          void selectExportFolder()
+                        }}
+                      >
+                        <FolderOpen size={12} />
+                        <span className="session-account-export-path-label">导出目录</span>
+                        <span className="session-account-export-path-text">
+                          {exportFolder || '未设置'}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        className="session-account-export-path-btn"
+                        onClick={selectExportFolder}
+                      >
+                        {exportFolder ? '更换' : '选择'}
+                      </button>
+                      {exportFolder && (
+                        <button
+                          type="button"
+                          className="session-account-export-path-btn ghost"
+                          onClick={() => { void openExportFolder() }}
+                          title="打开当前导出目录"
+                        >
+                          打开
+                        </button>
+                      )}
+                    </div>
                     {runningImageDecryptTask && (
                       <button
                         type="button"
@@ -5121,14 +5157,6 @@ function ExportPage() {
                     </p>
                   </div>
 
-                  <div className="setting-section">
-                    <h3>导出位置</h3>
-                    <div className="export-path-select" onClick={selectExportFolder}>
-                      <FolderOpen size={16} />
-                      <span className="path-text">{exportFolder || '点击选择导出位置'}</span>
-                      <span className="change-text">更改</span>
-                    </div>
-                  </div>
                 </div>
 
                 <div className="export-action">
@@ -5335,14 +5363,6 @@ function ExportPage() {
                 </div>
               </div>
 
-              <div className="setting-section">
-                <h3>导出位置</h3>
-                <div className="export-path-select" onClick={selectExportFolder}>
-                  <FolderOpen size={16} />
-                  <span className="path-text">{exportFolder || '点击选择导出位置'}</span>
-                  <span className="change-text">更改</span>
-                </div>
-              </div>
             </div>
 
             <div className="export-action">
