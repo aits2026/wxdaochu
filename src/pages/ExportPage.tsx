@@ -77,6 +77,7 @@ type SelectSessionOptions = {
 const EXPORT_CHAT_CACHE_TTL_MS = 60 * 1000
 const OVERVIEW_CHECKING_TIMEOUT_MS = 20 * 1000
 const IMAGE_CACHE_RESOLVE_TIMEOUT_MS = 3000
+const SESSION_IMAGE_UNKNOWN_DATE_KEY = '__unknown__'
 const SESSION_SORT_STATS_WARMUP_LIMIT = 80
 const SESSION_SORT_STATS_WARMUP_START_DELAY_MS = 160
 const SESSION_SORT_STATS_WARMUP_YIELD_EVERY = 6
@@ -708,7 +709,6 @@ function ExportPage() {
   const [sessionImageAssetsSessionId, setSessionImageAssetsSessionId] = useState<string | null>(null)
   const [sessionImageAssetsSessionName, setSessionImageAssetsSessionName] = useState('')
   const [sessionImageAssets, setSessionImageAssets] = useState<SessionImageAssetItem[]>([])
-  const [sessionImageUndecryptedListCollapsed, setSessionImageUndecryptedListCollapsed] = useState(false)
   const [sessionVideoOverviews, setSessionVideoOverviews] = useState<Record<string, SessionVideoAvailabilityOverview>>({})
   const [showSessionVideoAssetsModal, setShowSessionVideoAssetsModal] = useState(false)
   const [sessionVideoAssetsLoading, setSessionVideoAssetsLoading] = useState(false)
@@ -731,7 +731,6 @@ function ExportPage() {
   const [sessionEmojiOverviewFilter, setSessionEmojiOverviewFilter] = useState<SessionEmojiOverviewFilter>('all')
   const [sessionEmojiOverviewSearchKeyword, setSessionEmojiOverviewSearchKeyword] = useState('')
   const [sessionEmojiOverviewItems, setSessionEmojiOverviewItems] = useState<SessionEmojiOverviewItem[]>([])
-  const [sessionImageSelectedDates, setSessionImageSelectedDates] = useState<Set<string>>(new Set())
 
   const [showFormatPicker, setShowFormatPicker] = useState(false)
   const [selectedSession, setSelectedSession] = useState<string | null>(null)
@@ -2329,16 +2328,7 @@ function ExportPage() {
       const result = await inspectSessionImageAssets(sessionId)
       if (requestId !== sessionImageAssetsRequestIdRef.current) return
 
-      const undecryptedDateSet = new Set<string>()
-      result.assets.forEach(item => {
-        if (!item.decrypted && item.createTime) {
-          undecryptedDateSet.add(new Date(item.createTime * 1000).toISOString().slice(0, 10))
-        }
-      })
-
       setSessionImageAssets(result.assets)
-      setSessionImageUndecryptedListCollapsed(false)
-      setSessionImageSelectedDates(new Set(Array.from(undecryptedDateSet).sort((a, b) => b.localeCompare(a))))
       setSessionImageOverviews(prev => ({
         ...prev,
         [sessionId]: {
@@ -2353,8 +2343,6 @@ function ExportPage() {
     } catch (e) {
       if (requestId !== sessionImageAssetsRequestIdRef.current) return
       setSessionImageAssets([])
-      setSessionImageSelectedDates(new Set())
-      setSessionImageUndecryptedListCollapsed(false)
       setSessionImageAssetsError(String(e))
     } finally {
       if (requestId === sessionImageAssetsRequestIdRef.current) {
@@ -2648,19 +2636,13 @@ function ExportPage() {
   }, [openSessionImageAssetsModal])
 
   const formatImageDecryptDateLabel = useCallback((dateStr: string) => {
+    if (dateStr === SESSION_IMAGE_UNKNOWN_DATE_KEY) return '未知日期'
     const [y, m, d] = dateStr.split('-').map(Number)
     const dt = new Date(Date.UTC(y, (m || 1) - 1, d || 1))
     const weekday = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][dt.getUTCDay()] || ''
-    return `${y}年${m}月${d}日 ${weekday}`
-  }, [])
-
-  const toggleSessionImageDate = useCallback((date: string) => {
-    setSessionImageSelectedDates(prev => {
-      const next = new Set(prev)
-      if (next.has(date)) next.delete(date)
-      else next.add(date)
-      return next
-    })
+    const mm = String(m || 0).padStart(2, '0')
+    const dd = String(d || 0).padStart(2, '0')
+    return `${y}-${mm}-${dd} ${weekday}`
   }, [])
 
   const decryptedImageAssets = useMemo(
@@ -2676,36 +2658,30 @@ function ExportPage() {
   const sessionImageUndecryptedCountByDate = useMemo(() => {
     const map = new Map<string, number>()
     undecryptedImageAssets.forEach(img => {
-      if (!img.createTime) return
-      const d = new Date(img.createTime * 1000).toISOString().slice(0, 10)
+      const d = img.createTime
+        ? new Date(img.createTime * 1000).toISOString().slice(0, 10)
+        : SESSION_IMAGE_UNKNOWN_DATE_KEY
       map.set(d, (map.get(d) ?? 0) + 1)
     })
     return map
   }, [undecryptedImageAssets])
 
   const sessionImageUndecryptedDates = useMemo(
-    () => Array.from(sessionImageUndecryptedCountByDate.keys()).sort((a, b) => b.localeCompare(a)),
+    () => Array.from(sessionImageUndecryptedCountByDate.keys()).sort((a, b) => {
+      if (a === SESSION_IMAGE_UNKNOWN_DATE_KEY) return 1
+      if (b === SESSION_IMAGE_UNKNOWN_DATE_KEY) return -1
+      return b.localeCompare(a)
+    }),
     [sessionImageUndecryptedCountByDate]
   )
 
-  const selectAllSessionImageDates = useCallback(() => {
-    setSessionImageSelectedDates(new Set(sessionImageUndecryptedDates))
+  const sessionImageUndecryptedDateRows = useMemo(() => {
+    const rows: Array<[string, string?]> = []
+    for (let i = 0; i < sessionImageUndecryptedDates.length; i += 2) {
+      rows.push([sessionImageUndecryptedDates[i], sessionImageUndecryptedDates[i + 1]])
+    }
+    return rows
   }, [sessionImageUndecryptedDates])
-
-  const clearAllSessionImageDates = useCallback(() => {
-    setSessionImageSelectedDates(new Set())
-  }, [])
-
-  const selectedSessionImageCount = useMemo(() => {
-    return undecryptedImageAssets.filter(img =>
-      img.createTime && sessionImageSelectedDates.has(new Date(img.createTime * 1000).toISOString().slice(0, 10))
-    ).length
-  }, [undecryptedImageAssets, sessionImageSelectedDates])
-
-  const selectedSessionImageDateCount = useMemo(
-    () => sessionImageUndecryptedDates.filter(date => sessionImageSelectedDates.has(date)).length,
-    [sessionImageUndecryptedDates, sessionImageSelectedDates]
-  )
 
   const currentSessionImageOverview = selectedSession ? sessionImageOverviews[selectedSession] : undefined
   const isCurrentSessionImageTaskRunning = Boolean(
@@ -3133,8 +3109,6 @@ function ExportPage() {
       setSessionEmojiOverviewSearchKeyword('')
       setSessionEmojiOverviewFilter('all')
       setSessionDetail(null)
-      setSessionImageSelectedDates(new Set())
-      setSessionImageUndecryptedListCollapsed(false)
       setExportRecords([])
       setIsLoadingDetail(true)
       setIsLoadingGroupInfo(false)
@@ -3481,16 +3455,9 @@ function ExportPage() {
   const confirmSessionImageDecrypt = async () => {
     const targetSessionId = sessionImageAssetsSessionId || selectedSession
     if (!targetSessionId) return
-    if (sessionImageSelectedDates.size === 0) {
-      alert('请至少选择一个日期')
-      return
-    }
-
-    const images = undecryptedImageAssets.filter(img =>
-      img.createTime && sessionImageSelectedDates.has(new Date(img.createTime * 1000).toISOString().slice(0, 10))
-    )
+    const images = undecryptedImageAssets
     if (images.length === 0) {
-      alert('所选日期下没有图片')
+      alert('当前没有可解密图片')
       return
     }
 
@@ -6428,12 +6395,12 @@ function ExportPage() {
                     <Loader2 size={11} className="spin" />
                     <span>解密中</span>
                   </span>
-                ) : (sessionImageAssetsUndecryptedCount > 0) ? (
+                  ) : (sessionImageAssetsUndecryptedCount > 0) ? (
                   <button
                     type="button"
                     className="session-media-action-btn"
                     onClick={() => { void confirmSessionImageDecrypt() }}
-                    disabled={isSessionImageDecrypting || selectedSessionImageCount === 0}
+                    disabled={isSessionImageDecrypting || undecryptedImageAssets.length === 0}
                   >
                     <span>{sessionImageAssetsDecryptedCount > 0 ? '继续解密' : '开始解密'}</span>
                   </button>
@@ -6469,55 +6436,62 @@ function ExportPage() {
                           <span>未解密图片（按日期）</span>
                           <span className="count-pill">{sessionImageAssetsUndecryptedCount.toLocaleString()} 张</span>
                         </div>
-                        <div className="session-image-decrypt-list-actions">
-                          <button type="button" onClick={selectAllSessionImageDates}>全选</button>
-                          <button type="button" onClick={clearAllSessionImageDates}>清空</button>
-                          <button
-                            type="button"
-                            className="collapse-btn"
-                            onClick={() => setSessionImageUndecryptedListCollapsed(v => !v)}
-                            aria-expanded={!sessionImageUndecryptedListCollapsed}
-                          >
-                            <ChevronDown
-                              size={14}
-                              style={{ transform: sessionImageUndecryptedListCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)', transition: 'transform 0.15s ease' }}
-                            />
-                            <span>{sessionImageUndecryptedListCollapsed ? '展开' : '收起'}</span>
-                          </button>
-                        </div>
                       </div>
 
-                      {!sessionImageUndecryptedListCollapsed && (
-                        <>
-                          <div className="session-image-decrypt-list">
-                            {sessionImageUndecryptedDates.length === 0 ? (
-                              <div className="session-image-decrypt-list-empty">暂无可选日期</div>
-                            ) : (
-                              sessionImageUndecryptedDates.map(dateStr => {
-                                const count = sessionImageUndecryptedCountByDate.get(dateStr) ?? 0
-                                const checked = sessionImageSelectedDates.has(dateStr)
-                                return (
-                                  <button
-                                    key={dateStr}
-                                    type="button"
-                                    className={`session-image-decrypt-list-item ${checked ? 'selected' : ''}`}
-                                    onClick={() => toggleSessionImageDate(dateStr)}
-                                  >
-                                    <span className={`check-indicator ${checked ? 'checked' : ''}`} aria-hidden="true">
-                                      {checked ? <Check size={12} /> : null}
-                                    </span>
-                                    <span className="date-label">{formatImageDecryptDateLabel(dateStr)}</span>
-                                    <span className="date-count">{count.toLocaleString()} 张</span>
-                                  </button>
-                                )
-                              })
-                            )}
-                          </div>
-                          <div className="session-image-decrypt-list-summary">
-                            已选择 {selectedSessionImageDateCount} 天，共 {selectedSessionImageCount.toLocaleString()} 张图片
-                          </div>
-                        </>
-                      )}
+                      <div className="session-image-decrypt-list-table-wrap">
+                        {sessionImageUndecryptedDates.length === 0 ? (
+                          <div className="session-image-decrypt-list-empty">暂无可选日期</div>
+                        ) : (
+                          <>
+                            <table className="session-image-decrypt-list-table desktop" aria-label="未解密图片按日期统计">
+                              <thead>
+                                <tr>
+                                  <th>日期</th>
+                                  <th>张数</th>
+                                  <th>日期</th>
+                                  <th>张数</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {sessionImageUndecryptedDateRows.map(([leftDate, rightDate]) => (
+                                  <tr key={`${leftDate}:${rightDate || 'empty'}`}>
+                                    <td>{formatImageDecryptDateLabel(leftDate)}</td>
+                                    <td>{(sessionImageUndecryptedCountByDate.get(leftDate) ?? 0).toLocaleString()}</td>
+                                    {rightDate ? (
+                                      <>
+                                        <td>{formatImageDecryptDateLabel(rightDate)}</td>
+                                        <td>{(sessionImageUndecryptedCountByDate.get(rightDate) ?? 0).toLocaleString()}</td>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <td className="empty-cell">-</td>
+                                        <td className="empty-cell">-</td>
+                                      </>
+                                    )}
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+
+                            <table className="session-image-decrypt-list-table mobile" aria-label="未解密图片按日期统计（单列）">
+                              <thead>
+                                <tr>
+                                  <th>日期</th>
+                                  <th>张数</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {sessionImageUndecryptedDates.map((dateStr) => (
+                                  <tr key={`single:${dateStr}`}>
+                                    <td>{formatImageDecryptDateLabel(dateStr)}</td>
+                                    <td>{(sessionImageUndecryptedCountByDate.get(dateStr) ?? 0).toLocaleString()}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </>
+                        )}
+                      </div>
                     </div>
                   )}
 
