@@ -6383,33 +6383,33 @@ function ExportPage() {
                   <span className="label">未解密</span>
                   <strong>{sessionImageAssetsUndecryptedCount.toLocaleString()}</strong>
                 </div>
-              </div>
-              <div className="session-image-assets-actions">
-                {sessionImageAssetsLoading ? (
-                  <span className="session-media-status-pill checking">
-                    <Loader2 size={11} className="spin" />
-                    <span>扫描中</span>
-                  </span>
-                ) : sessionImageAssetsSessionId && isSessionImageDecrypting && sessionImageDecryptTaskSessionId === sessionImageAssetsSessionId ? (
-                  <span className="session-media-status-pill running">
-                    <Loader2 size={11} className="spin" />
-                    <span>解密中</span>
-                  </span>
+                <div className="session-image-assets-stat-action">
+                  {sessionImageAssetsLoading ? (
+                    <span className="session-media-status-pill checking">
+                      <Loader2 size={11} className="spin" />
+                      <span>扫描中</span>
+                    </span>
+                  ) : sessionImageAssetsSessionId && isSessionImageDecrypting && sessionImageDecryptTaskSessionId === sessionImageAssetsSessionId ? (
+                    <span className="session-media-status-pill running">
+                      <Loader2 size={11} className="spin" />
+                      <span>解密中</span>
+                    </span>
                   ) : (sessionImageAssetsUndecryptedCount > 0) ? (
-                  <button
-                    type="button"
-                    className="session-media-action-btn"
-                    onClick={() => { void confirmSessionImageDecrypt() }}
-                    disabled={isSessionImageDecrypting || undecryptedImageAssets.length === 0}
-                  >
-                    <span>{sessionImageAssetsDecryptedCount > 0 ? '继续解密' : '开始解密'}</span>
-                  </button>
-                ) : (
-                  <span className="session-media-status-pill success">
-                    <CheckCircle size={11} />
-                    <span>已全部解密</span>
-                  </span>
-                )}
+                    <button
+                      type="button"
+                      className="session-media-action-btn"
+                      onClick={() => { void confirmSessionImageDecrypt() }}
+                      disabled={isSessionImageDecrypting || undecryptedImageAssets.length === 0}
+                    >
+                      <span>{sessionImageAssetsDecryptedCount > 0 ? '继续解密' : '开始解密'}</span>
+                    </button>
+                  ) : (
+                    <span className="session-media-status-pill success">
+                      <CheckCircle size={11} />
+                      <span>已全部解密</span>
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
 

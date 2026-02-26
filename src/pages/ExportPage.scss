@@ -3127,7 +3127,7 @@
   .session-image-assets-toolbar {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    justify-content: flex-start;
     gap: 12px;
     padding: 12px 20px;
     border-bottom: 1px solid var(--border-color);
@@ -3140,8 +3140,27 @@
 
   .session-image-assets-stats {
     display: flex;
+    align-items: center;
     gap: 8px;
     flex-wrap: wrap;
+  }
+
+  .session-image-assets-stat-action {
+    display: inline-flex;
+    align-items: center;
+    margin-left: 2px;
+  }
+
+  .session-image-assets-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+
+    @media (max-width: 760px) {
+      justify-content: flex-start;
+    }
   }
 
   .session-image-assets-stat {
@@ -3190,18 +3209,6 @@
       strong {
         color: var(--primary);
       }
-    }
-  }
-
-  .session-image-assets-actions {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-    justify-content: flex-end;
-
-    @media (max-width: 760px) {
-      justify-content: flex-start;
     }
   }
 
