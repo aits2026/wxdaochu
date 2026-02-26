@@ -145,6 +145,25 @@ interface SessionEmojiAssetSummary {
   parseFailedCount: number
 }
 
+type SessionEmojiOverviewFilter = 'all' | 'friend' | 'group' | 'official'
+
+interface SessionEmojiOverviewItem {
+  sessionId: string
+  sessionName: string
+  accountType: 'friend' | 'group' | 'official'
+  emojiCount?: number
+  countStatus: 'pending' | 'ready' | 'error'
+  downloadedCount: number
+  missingCount: number
+  rawMessageCount: number
+  parsedMessageCount: number
+  duplicateMessageCount: number
+  parseFailedCount: number
+  checkStatus: 'idle' | 'checking' | 'ready' | 'partial' | 'empty' | 'error'
+  error?: string
+  checkedAt?: number
+}
+
 // 会话类型筛选
 type SessionTypeFilter = 'group' | 'private' | 'official'
 type SessionListSortKey =
@@ -705,6 +724,13 @@ function ExportPage() {
   const [sessionEmojiAssetsSessionName, setSessionEmojiAssetsSessionName] = useState('')
   const [sessionEmojiAssets, setSessionEmojiAssets] = useState<SessionEmojiAssetItem[]>([])
   const [sessionEmojiAssetsSummary, setSessionEmojiAssetsSummary] = useState<SessionEmojiAssetSummary | null>(null)
+  const [showSessionEmojiOverviewModal, setShowSessionEmojiOverviewModal] = useState(false)
+  const [sessionEmojiOverviewLoading, setSessionEmojiOverviewLoading] = useState(false)
+  const [sessionEmojiOverviewChecking, setSessionEmojiOverviewChecking] = useState(false)
+  const [sessionEmojiOverviewError, setSessionEmojiOverviewError] = useState<string | null>(null)
+  const [sessionEmojiOverviewFilter, setSessionEmojiOverviewFilter] = useState<SessionEmojiOverviewFilter>('all')
+  const [sessionEmojiOverviewSearchKeyword, setSessionEmojiOverviewSearchKeyword] = useState('')
+  const [sessionEmojiOverviewItems, setSessionEmojiOverviewItems] = useState<SessionEmojiOverviewItem[]>([])
   const [sessionImageSelectedDates, setSessionImageSelectedDates] = useState<Set<string>>(new Set())
 
   const [showFormatPicker, setShowFormatPicker] = useState(false)
@@ -799,6 +825,7 @@ function ExportPage() {
   const sessionVideoOverviewRequestIdRef = useRef<Record<string, number>>({})
   const sessionVideoAssetsRequestIdRef = useRef(0)
   const sessionEmojiAssetsRequestIdRef = useRef(0)
+  const sessionEmojiOverviewRequestIdRef = useRef(0)
   const sessionTypeFilterRef = useRef<SessionTypeFilter>('private')
   const sessionSortStatsWarmupRunIdRef = useRef(0)
   const sessionTableHeaderScrollRef = useRef<HTMLDivElement | null>(null)
@@ -2104,6 +2131,51 @@ function ExportPage() {
     }
   }, [])
 
+  const inspectSessionEmojiDownloadOverview = useCallback(async (sessionId: string) => {
+    const base = await inspectSessionEmojiAssets(sessionId)
+    let downloadedCount = 0
+    let missingCount = 0
+
+    for (let i = 0; i < base.assets.length; i++) {
+      const emoji = base.assets[i]
+      let success = false
+      try {
+        const emojiResult = await window.electronAPI.chat.downloadEmoji(
+          emoji.emojiCdnUrl || '',
+          emoji.emojiMd5,
+          emoji.productId,
+          emoji.createTime
+        )
+        success = Boolean(emojiResult.success && emojiResult.localPath)
+      } catch {
+        success = false
+      }
+
+      if (success) downloadedCount++
+      else missingCount++
+
+      if (i % 10 === 0) {
+        await new Promise(r => setTimeout(r, 0))
+      }
+    }
+
+    return {
+      total: base.total,
+      rawMessageCount: base.rawMessageCount,
+      parsedMessageCount: base.parsedMessageCount,
+      duplicateMessageCount: base.duplicateMessageCount,
+      parseFailedCount: base.parseFailedCount,
+      downloadedCount,
+      missingCount
+    }
+  }, [inspectSessionEmojiAssets])
+
+  const patchSessionEmojiOverviewItem = useCallback((sessionId: string, patch: Partial<SessionEmojiOverviewItem>) => {
+    setSessionEmojiOverviewItems(prev => prev.map(item => (
+      item.sessionId === sessionId ? { ...item, ...patch } : item
+    )))
+  }, [])
+
   const toLocalPathFromFileUrl = useCallback((fileUrl?: string) => {
     if (!fileUrl) return undefined
     try {
@@ -2433,6 +2505,148 @@ function ExportPage() {
     }
   }, [getSessionDisplayName, inspectSessionEmojiAssets, selectedSession])
 
+  const closeSessionEmojiOverviewModal = useCallback(() => {
+    sessionEmojiOverviewRequestIdRef.current++
+    setSessionEmojiOverviewChecking(false)
+    setShowSessionEmojiOverviewModal(false)
+  }, [])
+
+  const openSessionEmojiOverviewModal = useCallback(async () => {
+    const requestId = ++sessionEmojiOverviewRequestIdRef.current
+    setShowSessionEmojiOverviewModal(true)
+    setSessionEmojiOverviewLoading(true)
+    setSessionEmojiOverviewChecking(false)
+    setSessionEmojiOverviewError(null)
+    setSessionEmojiOverviewSearchKeyword('')
+    setSessionEmojiOverviewFilter('all')
+
+    const initialItems: SessionEmojiOverviewItem[] = sessions.map(session => {
+      const stats = sessionCardStatsMapRef.current[session.username]
+      const emojiCount = typeof stats?.emojiCount === 'number' ? stats.emojiCount : undefined
+      const countStatus: SessionEmojiOverviewItem['countStatus'] =
+        typeof emojiCount === 'number' ? 'ready' : (stats?.status === 'error' ? 'error' : 'pending')
+      return {
+        sessionId: session.username,
+        sessionName: (stats?.remark || stats?.nickName || session.displayName || session.username || '').trim() || session.username,
+        accountType: session.accountType || (session.username.includes('@chatroom') ? 'group' : 'friend'),
+        emojiCount,
+        countStatus,
+        downloadedCount: 0,
+        missingCount: 0,
+        rawMessageCount: 0,
+        parsedMessageCount: 0,
+        duplicateMessageCount: 0,
+        parseFailedCount: 0,
+        checkStatus: 'idle'
+      }
+    })
+    setSessionEmojiOverviewItems(initialItems)
+    setSessionEmojiOverviewLoading(false)
+    setSessionEmojiOverviewChecking(true)
+
+    try {
+      for (let i = 0; i < sessions.length; i++) {
+        if (requestId !== sessionEmojiOverviewRequestIdRef.current) return
+        const session = sessions[i]
+        let stats = sessionCardStatsMapRef.current[session.username]
+
+        if (typeof stats?.emojiCount !== 'number') {
+          patchSessionEmojiOverviewItem(session.username, { countStatus: 'pending' })
+          await ensureSessionCardStats(session)
+          if (requestId !== sessionEmojiOverviewRequestIdRef.current) return
+          stats = sessionCardStatsMapRef.current[session.username]
+        }
+
+        const emojiCount = typeof stats?.emojiCount === 'number' ? stats.emojiCount : undefined
+        const sessionName = (
+          stats?.remark ||
+          stats?.nickName ||
+          sessionByUsername.get(session.username)?.displayName ||
+          session.username
+        )?.trim() || session.username
+
+        patchSessionEmojiOverviewItem(session.username, {
+          sessionName,
+          emojiCount,
+          countStatus: typeof emojiCount === 'number' ? 'ready' : (stats?.status === 'error' ? 'error' : 'pending')
+        })
+
+        if (!emojiCount || emojiCount <= 0) {
+          patchSessionEmojiOverviewItem(session.username, {
+            downloadedCount: 0,
+            missingCount: 0,
+            rawMessageCount: 0,
+            parsedMessageCount: 0,
+            duplicateMessageCount: 0,
+            parseFailedCount: 0,
+            checkStatus: 'empty',
+            checkedAt: Date.now(),
+            error: undefined
+          })
+          continue
+        }
+
+        patchSessionEmojiOverviewItem(session.username, {
+          checkStatus: 'checking',
+          error: undefined
+        })
+
+        try {
+          const result = await inspectSessionEmojiDownloadOverview(session.username)
+          if (requestId !== sessionEmojiOverviewRequestIdRef.current) return
+
+          const nextStatus: SessionEmojiOverviewItem['checkStatus'] =
+            result.total <= 0
+              ? 'empty'
+              : result.downloadedCount <= 0
+                ? 'partial'
+                : result.downloadedCount >= result.total && result.missingCount === 0
+                  ? 'ready'
+                  : 'partial'
+
+          patchSessionEmojiOverviewItem(session.username, {
+            emojiCount: result.total,
+            countStatus: 'ready',
+            downloadedCount: result.downloadedCount,
+            missingCount: result.missingCount,
+            rawMessageCount: result.rawMessageCount,
+            parsedMessageCount: result.parsedMessageCount,
+            duplicateMessageCount: result.duplicateMessageCount,
+            parseFailedCount: result.parseFailedCount,
+            checkStatus: nextStatus,
+            checkedAt: Date.now(),
+            error: undefined
+          })
+        } catch (e) {
+          if (requestId !== sessionEmojiOverviewRequestIdRef.current) return
+          patchSessionEmojiOverviewItem(session.username, {
+            checkStatus: 'error',
+            error: String(e),
+            checkedAt: Date.now()
+          })
+        }
+
+        if (i % 2 === 0) {
+          await new Promise(r => setTimeout(r, 0))
+        }
+      }
+    } catch (e) {
+      if (requestId !== sessionEmojiOverviewRequestIdRef.current) return
+      setSessionEmojiOverviewError(String(e))
+    } finally {
+      if (requestId === sessionEmojiOverviewRequestIdRef.current) {
+        setSessionEmojiOverviewChecking(false)
+        setSessionEmojiOverviewLoading(false)
+      }
+    }
+  }, [ensureSessionCardStats, inspectSessionEmojiDownloadOverview, sessions, sessionByUsername, patchSessionEmojiOverviewItem])
+
+  const handleOpenSessionEmojiFromOverview = useCallback(async (sessionId: string) => {
+    closeSessionEmojiOverviewModal()
+    await selectSession(sessionId)
+    await openSessionEmojiAssetsModal(sessionId)
+  }, [closeSessionEmojiOverviewModal, openSessionEmojiAssetsModal, selectSession])
+
   const handleImageStatCardClick = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     const target = event.target
     if (target instanceof Element && target.closest('button, a, input, select, textarea')) return
@@ -2597,6 +2811,68 @@ function ExportPage() {
   const sessionEmojiAssetsReadyCount = sessionEmojiAssetsSummary?.readyCount ?? readySessionEmojiAssets.length
   const sessionEmojiAssetsMissingCount = sessionEmojiAssetsSummary?.missingCount ?? Math.max(0, sessionEmojiAssetsTotalCount - sessionEmojiAssetsReadyCount)
   const sessionEmojiAssetsPendingCount = Math.max(0, sessionEmojiAssetsTotalCount - sessionEmojiAssetsReadyCount - sessionEmojiAssetsMissingCount)
+  const sessionEmojiOverviewAggregate = useMemo(() => {
+    let totalEmojiCount = 0
+    let totalDownloadedCount = 0
+    let totalMissingCount = 0
+    let totalCheckingCount = 0
+    let knownEmojiCountSessions = 0
+    let errorSessions = 0
+
+    for (const item of sessionEmojiOverviewItems) {
+      if (typeof item.emojiCount === 'number') {
+        totalEmojiCount += item.emojiCount
+        knownEmojiCountSessions++
+      }
+      totalDownloadedCount += item.downloadedCount
+      totalMissingCount += item.missingCount
+      if (item.checkStatus === 'checking') totalCheckingCount++
+      if (item.checkStatus === 'error' || item.countStatus === 'error') errorSessions++
+    }
+
+    return {
+      totalEmojiCount,
+      totalDownloadedCount,
+      totalMissingCount,
+      totalCheckingCount,
+      knownEmojiCountSessions,
+      totalSessions: sessionEmojiOverviewItems.length,
+      errorSessions
+    }
+  }, [sessionEmojiOverviewItems])
+  const fallbackEmojiTotalFromLoadedStats = useMemo(() => {
+    let total = 0
+    let known = 0
+    for (const session of sessions) {
+      const count = sessionCardStatsMap[session.username]?.emojiCount
+      if (typeof count === 'number') {
+        total += count
+        known++
+      }
+    }
+    return { total, known, totalSessions: sessions.length }
+  }, [sessionCardStatsMap, sessions])
+  const sessionEmojiOverviewDisplayedTotal = sessionEmojiOverviewItems.length > 0
+    ? sessionEmojiOverviewAggregate.totalEmojiCount
+    : fallbackEmojiTotalFromLoadedStats.total
+  const sessionEmojiOverviewTotalKnown = sessionEmojiOverviewItems.length > 0
+    ? sessionEmojiOverviewAggregate.knownEmojiCountSessions >= sessionEmojiOverviewAggregate.totalSessions
+    : fallbackEmojiTotalFromLoadedStats.known >= fallbackEmojiTotalFromLoadedStats.totalSessions
+  const filteredSessionEmojiOverviewItems = useMemo(() => {
+    const keyword = sessionEmojiOverviewSearchKeyword.trim().toLowerCase()
+    return sessionEmojiOverviewItems.filter(item => {
+      if (sessionEmojiOverviewFilter !== 'all' && item.accountType !== sessionEmojiOverviewFilter) {
+        return false
+      }
+      if (!keyword) return true
+      return item.sessionName.toLowerCase().includes(keyword) || item.sessionId.toLowerCase().includes(keyword)
+    }).slice().sort((a, b) => {
+      const aCount = a.emojiCount ?? -1
+      const bCount = b.emojiCount ?? -1
+      if (bCount !== aCount) return bCount - aCount
+      return (b.checkedAt || 0) - (a.checkedAt || 0)
+    })
+  }, [sessionEmojiOverviewFilter, sessionEmojiOverviewItems, sessionEmojiOverviewSearchKeyword])
   const groupFriendMembersForPopup = useMemo(() => {
     const friendMembers = sessionDetail?.groupInfo?.friendMembers || []
     if (friendMembers.length <= 1) return friendMembers
@@ -2823,6 +3099,7 @@ function ExportPage() {
       sessionImageAssetsRequestIdRef.current++
       sessionVideoAssetsRequestIdRef.current++
       sessionEmojiAssetsRequestIdRef.current++
+      sessionEmojiOverviewRequestIdRef.current++
       setSelectedSession(username)
       setShowExportSettings(false)
       setShowGroupFriendsPopup(false)
@@ -2854,6 +3131,13 @@ function ExportPage() {
       setSessionEmojiAssetsResolving(false)
       setSessionEmojiAssetsSessionId(null)
       setSessionEmojiAssetsSessionName('')
+      setShowSessionEmojiOverviewModal(false)
+      setSessionEmojiOverviewLoading(false)
+      setSessionEmojiOverviewChecking(false)
+      setSessionEmojiOverviewError(null)
+      setSessionEmojiOverviewItems([])
+      setSessionEmojiOverviewSearchKeyword('')
+      setSessionEmojiOverviewFilter('all')
       setSessionDetail(null)
       setSessionImageSelectedDates(new Set())
       setSessionImageUndecryptedListCollapsed(false)
@@ -3562,6 +3846,26 @@ function ExportPage() {
     }
   }
 
+  const getSessionEmojiOverviewStatusLabel = (item: SessionEmojiOverviewItem) => {
+    if (item.countStatus === 'error' || item.checkStatus === 'error') return '错误'
+    if (item.countStatus === 'pending') return '统计中'
+    if (item.checkStatus === 'checking') return '检查中'
+    if ((item.emojiCount || 0) <= 0 || item.checkStatus === 'empty') return '无表情'
+    if (item.checkStatus === 'ready' && item.downloadedCount >= (item.emojiCount || 0)) return '已完成'
+    if (item.downloadedCount <= 0 && item.missingCount > 0) return '未下载'
+    if (item.checkStatus === 'idle') return '待检查'
+    return '部分下载'
+  }
+
+  const getSessionEmojiOverviewStatusClass = (item: SessionEmojiOverviewItem) => {
+    if (item.countStatus === 'error' || item.checkStatus === 'error') return 'is-error'
+    if (item.countStatus === 'pending' || item.checkStatus === 'checking' || item.checkStatus === 'idle') return 'is-checking'
+    if ((item.emojiCount || 0) <= 0 || item.checkStatus === 'empty') return 'is-empty'
+    if (item.checkStatus === 'ready' && item.downloadedCount >= (item.emojiCount || 0)) return 'is-ready'
+    if (item.downloadedCount <= 0 && item.missingCount > 0) return 'is-missing'
+    return 'is-partial'
+  }
+
   return (
     <div className="export-page">
       {/* 聊天记录导出 */}
@@ -3765,6 +4069,37 @@ function ExportPage() {
                     </button>
                   )}
                 </div>
+                <button
+                  type="button"
+                  className="emoji-overview-trigger-card"
+                  onClick={() => { void openSessionEmojiOverviewModal() }}
+                  title="查看所有会话表情包总数与下载状态"
+                >
+                  <div className="emoji-overview-trigger-head">
+                    <span className="emoji-overview-trigger-icon" aria-hidden="true">
+                      <Smile size={14} />
+                    </span>
+                    <span className="emoji-overview-trigger-title">表情包总览</span>
+                    {(sessionEmojiOverviewLoading || sessionEmojiOverviewChecking || !sessionEmojiOverviewTotalKnown) && (
+                      <Loader2 size={12} className="spin" />
+                    )}
+                  </div>
+                  <div className="emoji-overview-trigger-metrics">
+                    <div className="emoji-overview-trigger-metric">
+                      <span className="label">总数</span>
+                      <strong>{sessionEmojiOverviewDisplayedTotal.toLocaleString()}</strong>
+                    </div>
+                    <div className="emoji-overview-trigger-metric">
+                      <span className="label">已下载</span>
+                      <strong>{sessionEmojiOverviewAggregate.totalDownloadedCount.toLocaleString()}</strong>
+                    </div>
+                  </div>
+                  {!sessionEmojiOverviewTotalKnown && (
+                    <div className="emoji-overview-trigger-hint">
+                      统计中 {sessionEmojiOverviewItems.length > 0 ? sessionEmojiOverviewAggregate.knownEmojiCountSessions : fallbackEmojiTotalFromLoadedStats.known}/{sessionEmojiOverviewItems.length > 0 ? sessionEmojiOverviewAggregate.totalSessions : fallbackEmojiTotalFromLoadedStats.totalSessions} 个会话
+                    </div>
+                  )}
+                </button>
               </div>
               {isLoadingSessionCounts && (
                 <div className="session-count-loading-hint">
@@ -5658,6 +5993,155 @@ function ExportPage() {
                     </div>
                   )}
                 </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 会话表情包总览弹窗（自动渐进检查） */}
+      {showSessionEmojiOverviewModal && (
+        <div className="export-overlay" onClick={closeSessionEmojiOverviewModal}>
+          <div className="session-image-assets-modal emoji-overview-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="session-image-assets-header">
+              <div>
+                <h3>会话表情包总览</h3>
+                <p>按会话查看表情包总数与下载状态（自动渐进检查）</p>
+              </div>
+              <button
+                type="button"
+                className="group-friends-close-btn"
+                onClick={closeSessionEmojiOverviewModal}
+                aria-label="关闭会话表情包总览弹窗"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="emoji-overview-summary-strip">
+              <div className="emoji-overview-summary-item">
+                <span className="label">总表情包</span>
+                <strong>{sessionEmojiOverviewAggregate.totalEmojiCount.toLocaleString()}</strong>
+              </div>
+              <div className="emoji-overview-summary-item success">
+                <span className="label">已下载</span>
+                <strong>{sessionEmojiOverviewAggregate.totalDownloadedCount.toLocaleString()}</strong>
+              </div>
+              <div className="emoji-overview-summary-item warning">
+                <span className="label">未下载</span>
+                <strong>{sessionEmojiOverviewAggregate.totalMissingCount.toLocaleString()}</strong>
+              </div>
+              <div className="emoji-overview-summary-item info">
+                <span className="label">检查中会话</span>
+                <strong>{sessionEmojiOverviewAggregate.totalCheckingCount.toLocaleString()}</strong>
+              </div>
+            </div>
+
+            <div className="emoji-overview-toolbar">
+              <div className="emoji-overview-filter-tabs" role="tablist" aria-label="会话类型筛选">
+                {([
+                  { key: 'all', label: '全部' },
+                  { key: 'friend', label: '私聊' },
+                  { key: 'group', label: '群聊' },
+                  { key: 'official', label: '公众号' }
+                ] as Array<{ key: SessionEmojiOverviewFilter; label: string }>).map(tab => (
+                  <button
+                    key={tab.key}
+                    type="button"
+                    className={`emoji-overview-filter-tab ${sessionEmojiOverviewFilter === tab.key ? 'active' : ''}`}
+                    onClick={() => setSessionEmojiOverviewFilter(tab.key)}
+                    role="tab"
+                    aria-selected={sessionEmojiOverviewFilter === tab.key}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+              <div className="search-bar emoji-overview-search">
+                <Search size={14} />
+                <input
+                  type="text"
+                  placeholder="搜索会话名或 ID..."
+                  value={sessionEmojiOverviewSearchKeyword}
+                  onChange={(e) => setSessionEmojiOverviewSearchKeyword(e.target.value)}
+                />
+                {sessionEmojiOverviewSearchKeyword && (
+                  <button className="clear-btn" onClick={() => setSessionEmojiOverviewSearchKeyword('')}>
+                    <X size={14} />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {(sessionEmojiOverviewLoading || sessionEmojiOverviewChecking || sessionEmojiOverviewError) && (
+              <div className="emoji-overview-progress-row">
+                {sessionEmojiOverviewLoading ? (
+                  <>
+                    <Loader2 size={12} className="spin" />
+                    <span>正在准备会话表情包总览...</span>
+                  </>
+                ) : sessionEmojiOverviewChecking ? (
+                  <>
+                    <Loader2 size={12} className="spin" />
+                    <span>正在自动渐进检查各会话表情包下载状态（{sessionEmojiOverviewAggregate.totalCheckingCount.toLocaleString()} 个会话检查中）...</span>
+                  </>
+                ) : sessionEmojiOverviewError ? (
+                  <>
+                    <XCircle size={12} />
+                    <span>检查中断：{sessionEmojiOverviewError}</span>
+                  </>
+                ) : null}
+              </div>
+            )}
+
+            <div className="emoji-overview-list">
+              <div className="emoji-overview-list-header">
+                <div>会话信息</div>
+                <div>类型</div>
+                <div>表情包总数</div>
+                <div>已下载</div>
+                <div>未下载</div>
+                <div>状态</div>
+                <div>操作</div>
+              </div>
+
+              {filteredSessionEmojiOverviewItems.length === 0 ? (
+                <div className="emoji-overview-list-empty">
+                  {sessionEmojiOverviewItems.length === 0 ? '暂无会话数据' : '当前筛选条件下暂无会话'}
+                </div>
+              ) : (
+                filteredSessionEmojiOverviewItems.map(item => (
+                  <div key={item.sessionId} className="emoji-overview-list-row">
+                    <div className="emoji-overview-session-meta" title={`${item.sessionName}\n${item.sessionId}`}>
+                      <div className="name">{item.sessionName}</div>
+                      <div className="id">{item.sessionId}</div>
+                    </div>
+                    <div className="emoji-overview-cell">
+                      <span className="emoji-overview-type-tag">{getContactTypeName(item.accountType)}</span>
+                    </div>
+                    <div className="emoji-overview-cell mono">
+                      {typeof item.emojiCount === 'number' ? item.emojiCount.toLocaleString() : (item.countStatus === 'error' ? '错误' : '--')}
+                    </div>
+                    <div className="emoji-overview-cell mono">{item.downloadedCount.toLocaleString()}</div>
+                    <div className="emoji-overview-cell mono">{item.missingCount.toLocaleString()}</div>
+                    <div className="emoji-overview-cell">
+                      <span className={`emoji-overview-status-pill ${getSessionEmojiOverviewStatusClass(item)}`}>
+                        {(item.countStatus === 'pending' || item.checkStatus === 'checking') && <Loader2 size={11} className="spin" />}
+                        <span>{getSessionEmojiOverviewStatusLabel(item)}</span>
+                      </span>
+                    </div>
+                    <div className="emoji-overview-cell">
+                      <button
+                        type="button"
+                        className="emoji-overview-open-btn"
+                        onClick={() => { void handleOpenSessionEmojiFromOverview(item.sessionId) }}
+                        disabled={!item.sessionId}
+                      >
+                        查看
+                      </button>
+                    </div>
+                  </div>
+                ))
               )}
             </div>
           </div>
