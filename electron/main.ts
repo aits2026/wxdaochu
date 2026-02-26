@@ -1877,6 +1877,10 @@ function registerIpcHandlers() {
     return chatService.getAllVideoMessages(sessionId)
   })
 
+  ipcMain.handle('chat:getAllEmojiMessages', async (_, sessionId: string) => {
+    return chatService.getAllEmojiMessages(sessionId)
+  })
+
   ipcMain.handle('chat:getContact', async (_, username: string) => {
     return chatService.getContact(username)
   })

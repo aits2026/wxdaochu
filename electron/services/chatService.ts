@@ -1768,6 +1768,113 @@ class ChatService extends EventEmitter {
   }
 
   /**
+   * 获取会话的所有表情消息（用于表情包预览）
+   */
+  async getAllEmojiMessages(
+    sessionId: string
+  ): Promise<{
+    success: boolean
+    emojis?: { emojiMd5?: string; emojiCdnUrl?: string; productId?: string; createTime?: number }[]
+    stats?: {
+      rawMessageCount: number
+      parsedMessageCount: number
+      uniqueCount: number
+      duplicateMessageCount: number
+      parseFailedCount: number
+    }
+    error?: string
+  }> {
+    try {
+      if (!this.dbDir) {
+        const connectResult = await this.connect()
+        if (!connectResult.success) {
+          return { success: false, error: connectResult.error || '数据库未连接' }
+        }
+      }
+
+      const dbTablePairs = this.findSessionTables(sessionId)
+      if (dbTablePairs.length === 0) {
+        return { success: false, error: '未找到该会话的消息表' }
+      }
+
+      const emojis: { emojiMd5?: string; emojiCdnUrl?: string; productId?: string; createTime?: number }[] = []
+      let rawMessageCount = 0
+      let parsedMessageCount = 0
+
+      for (const { db, tableName } of dbTablePairs) {
+        try {
+          const columns = db.prepare(`PRAGMA table_info('${tableName}')`).all() as any[]
+          const columnNames = columns.map((c: any) => c.name.toLowerCase())
+          const hasLocalTypeColumn = columnNames.includes('local_type')
+          const hasTypeColumn = columnNames.includes('type')
+
+          let typeCondition = ''
+          if (hasLocalTypeColumn && hasTypeColumn) {
+            typeCondition = '(local_type = 47 OR type = 47)'
+          } else if (hasLocalTypeColumn) {
+            typeCondition = 'local_type = 47'
+          } else if (hasTypeColumn) {
+            typeCondition = 'type = 47'
+          } else {
+            continue
+          }
+
+          const rows = db.prepare(
+            `SELECT * FROM ${tableName} WHERE ${typeCondition}`
+          ).all() as any[]
+          rawMessageCount += rows.length
+
+          for (const row of rows) {
+            const content = this.decodeMessageContent(row.message_content, row.compress_content)
+            if (!content) continue
+
+            const emojiInfo = this.parseEmojiInfo(content)
+            if (emojiInfo.md5 || emojiInfo.cdnUrl) {
+              parsedMessageCount++
+              emojis.push({
+                emojiMd5: emojiInfo.md5,
+                emojiCdnUrl: emojiInfo.cdnUrl,
+                productId: emojiInfo.productId,
+                createTime: row.create_time
+              })
+            }
+          }
+        } catch (e: any) {
+          console.error('[ChatService] 查询表情消息失败:', e)
+        }
+      }
+
+      const seen = new Set<string>()
+      const unique = emojis.filter(item => {
+        const key = item.emojiMd5 || item.emojiCdnUrl || ''
+        if (!key || seen.has(key)) return false
+        seen.add(key)
+        return true
+      })
+
+      const uniqueCount = unique.length
+      const duplicateMessageCount = Math.max(0, parsedMessageCount - uniqueCount)
+      const parseFailedCount = Math.max(0, rawMessageCount - parsedMessageCount)
+
+      console.log(`[ChatService] 表情消息统计: 原始=${rawMessageCount}, 可解析=${parsedMessageCount}, 去重后=${uniqueCount}, 重复=${duplicateMessageCount}, 解析失败=${parseFailedCount}`)
+      return {
+        success: true,
+        emojis: unique,
+        stats: {
+          rawMessageCount,
+          parsedMessageCount,
+          uniqueCount,
+          duplicateMessageCount,
+          parseFailedCount
+        }
+      }
+    } catch (e) {
+      console.error('[ChatService] 获取所有表情消息失败:', e)
+      return { success: false, error: String(e) }
+    }
+  }
+
+  /**
    * 根据日期获取消息（用于日期跳转）
    * @param sessionId 会话ID
    * @param targetTimestamp 目标日期的 Unix 时间戳（秒）
@@ -3543,7 +3650,7 @@ class ChatService extends EventEmitter {
    * 下载或获取表情包本地缓存
    * 如果 cdnUrl 为空但 md5 存在，则尝试通过本地存储或多种拼接规则下载
    */
-  async downloadEmoji(cdnUrl: string, md5?: string, productId?: string, createTime?: number, encryptUrl?: string, aesKey?: string): Promise<{ success: boolean; localPath?: string; error?: string }> {
+  async downloadEmoji(cdnUrl: string, md5?: string, productId?: string, createTime?: number, encryptUrl?: string, aesKey?: string): Promise<{ success: boolean; localPath?: string; filePath?: string; error?: string }> {
     // 如果没有 cdnUrl 也没有 md5，无法处理
     if (!cdnUrl && !md5) {
       return { success: false, error: '无效的 CDN URL 和 MD5' }
@@ -3557,7 +3664,7 @@ class ChatService extends EventEmitter {
     if (cached && fs.existsSync(cached)) {
       const dataUrl = this.fileToDataUrl(cached)
       if (dataUrl) {
-        return { success: true, localPath: dataUrl }
+        return { success: true, localPath: dataUrl, filePath: cached }
       }
     }
 
@@ -3568,7 +3675,7 @@ class ChatService extends EventEmitter {
       if (result) {
         const dataUrl = this.fileToDataUrl(result)
         if (dataUrl) {
-          return { success: true, localPath: dataUrl }
+          return { success: true, localPath: dataUrl, filePath: result }
         }
       }
       return { success: false, error: '下载失败' }
@@ -3588,7 +3695,7 @@ class ChatService extends EventEmitter {
         emojiCache.set(cacheKey, filePath)
         const dataUrl = this.fileToDataUrl(filePath)
         if (dataUrl) {
-          return { success: true, localPath: dataUrl }
+          return { success: true, localPath: dataUrl, filePath }
         }
       }
     }
@@ -3712,7 +3819,7 @@ class ChatService extends EventEmitter {
           const dataUrl = this.fileToDataUrl(localFile)
           if (dataUrl) {
             emojiCache.set(cacheKey, localFile)
-            return { success: true, localPath: dataUrl }
+            return { success: true, localPath: dataUrl, filePath: localFile }
           }
         }
       } catch (e) {
@@ -3734,7 +3841,7 @@ class ChatService extends EventEmitter {
             const dataUrl = this.fileToDataUrl(localPath)
             if (dataUrl) {
               emojiCache.set(cacheKey, localPath)
-              return { success: true, localPath: dataUrl }
+              return { success: true, localPath: dataUrl, filePath: localPath }
             }
           }
         } catch (e) { }
@@ -3753,7 +3860,7 @@ class ChatService extends EventEmitter {
       if (localPath) {
         emojiCache.set(cacheKey, localPath)
         const dataUrl = this.fileToDataUrl(localPath)
-        if (dataUrl) return { success: true, localPath: dataUrl }
+        if (dataUrl) return { success: true, localPath: dataUrl, filePath: localPath }
       }
     } catch (e) {
       // 忽略下载失败
@@ -3770,7 +3877,7 @@ class ChatService extends EventEmitter {
             emojiCache.set(cacheKey, localPath)
             const dataUrl = this.fileToDataUrl(localPath)
             if (dataUrl) {
-              return { success: true, localPath: dataUrl }
+              return { success: true, localPath: dataUrl, filePath: localPath }
             }
           }
         } catch (e) {
@@ -3796,7 +3903,7 @@ class ChatService extends EventEmitter {
           try { fs.unlinkSync(encLocalPath) } catch { }
           emojiCache.set(cacheKey, outputPath)
           const dataUrl = this.fileToDataUrl(outputPath)
-          if (dataUrl) return { success: true, localPath: dataUrl }
+          if (dataUrl) return { success: true, localPath: dataUrl, filePath: outputPath }
         }
       } catch (e) {
         console.warn('[ChatService] encryptUrl fallback 失败:', e)

@@ -231,6 +231,18 @@ export interface ElectronAPI {
       };
       error?: string
     }>
+    getAllEmojiMessages: (sessionId: string) => Promise<{
+      success: boolean;
+      emojis?: { emojiMd5?: string; emojiCdnUrl?: string; productId?: string; createTime?: number }[];
+      stats?: {
+        rawMessageCount: number;
+        parsedMessageCount: number;
+        uniqueCount: number;
+        duplicateMessageCount: number;
+        parseFailedCount: number;
+      };
+      error?: string
+    }>
     getContact: (username: string) => Promise<Contact | null>
     getContactAvatar: (username: string) => Promise<{ avatarUrl?: string; displayName?: string } | null>
     resolveTransferDisplayNames: (chatroomId: string, payerUsername: string, receiverUsername: string) => Promise<{ payerName: string; receiverName: string }>
@@ -245,7 +257,7 @@ export interface ElectronAPI {
       }
       error?: string
     }>
-    downloadEmoji: (cdnUrl: string, md5?: string, productId?: string, createTime?: number, encryptUrl?: string, aesKey?: string) => Promise<{ success: boolean; localPath?: string; error?: string }>
+    downloadEmoji: (cdnUrl: string, md5?: string, productId?: string, createTime?: number, encryptUrl?: string, aesKey?: string) => Promise<{ success: boolean; localPath?: string; filePath?: string; error?: string }>
     close: () => Promise<boolean>
     refreshCache: () => Promise<boolean>
     setCurrentSession: (sessionId: string | null) => Promise<boolean>

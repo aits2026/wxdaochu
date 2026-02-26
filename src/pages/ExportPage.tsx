@@ -124,6 +124,26 @@ interface SessionVideoAssetItem {
   thumbUrl?: string
 }
 
+interface SessionEmojiAssetItem {
+  emojiMd5?: string
+  emojiCdnUrl?: string
+  productId?: string
+  createTime?: number
+  previewUrl?: string
+  filePath?: string
+  exists: boolean
+}
+
+interface SessionEmojiAssetSummary {
+  total: number
+  readyCount: number
+  missingCount: number
+  rawMessageCount: number
+  parsedMessageCount: number
+  duplicateMessageCount: number
+  parseFailedCount: number
+}
+
 // 会话类型筛选
 type SessionTypeFilter = 'group' | 'private' | 'official'
 type SessionListSortKey =
@@ -189,6 +209,7 @@ interface ExportSessionRowData {
   onOpenCommonGroups: (session: ChatSession) => void
   onOpenExportSettings: (session: ChatSession) => void | Promise<void>
   onOpenImageAssets: (session: ChatSession) => void | Promise<void>
+  onOpenEmojiAssets: (session: ChatSession) => void | Promise<void>
 }
 
 interface QueuedChatExportJob {
@@ -382,7 +403,8 @@ const ExportSessionRow = (props: RowComponentProps<ExportSessionRowData>) => {
     onOpenChatWindow,
     onOpenCommonGroups,
     onOpenExportSettings,
-    onOpenImageAssets
+    onOpenImageAssets,
+    onOpenEmojiAssets
   } = props
   const session = sessions[index]
   const cardStats = sessionCardStatsMap[session.username]
@@ -479,7 +501,7 @@ const ExportSessionRow = (props: RowComponentProps<ExportSessionRowData>) => {
 
             return (
               <div key={item.label} className="session-table-cell session-cell-metric session-cell-media" title={item.label}>
-                {item.label === '图片' ? (
+                {item.label === '图片' || item.label === '表情包' ? (
                   <button
                     type="button"
                     className={`session-media-count-link ${hasMediaCount ? '' : 'is-disabled'}`}
@@ -487,7 +509,11 @@ const ExportSessionRow = (props: RowComponentProps<ExportSessionRowData>) => {
                     onClick={async (e) => {
                       e.stopPropagation()
                       if (!hasMediaCount) return
-                      await onOpenImageAssets(session)
+                      if (item.label === '图片') {
+                        await onOpenImageAssets(session)
+                        return
+                      }
+                      await onOpenEmojiAssets(session)
                     }}
                   >
                     {mediaContent}
@@ -670,6 +696,13 @@ function ExportPage() {
   const [sessionVideoAssetsSessionId, setSessionVideoAssetsSessionId] = useState<string | null>(null)
   const [sessionVideoAssetsSessionName, setSessionVideoAssetsSessionName] = useState('')
   const [sessionVideoAssets, setSessionVideoAssets] = useState<SessionVideoAssetItem[]>([])
+  const [showSessionEmojiAssetsModal, setShowSessionEmojiAssetsModal] = useState(false)
+  const [sessionEmojiAssetsLoading, setSessionEmojiAssetsLoading] = useState(false)
+  const [sessionEmojiAssetsError, setSessionEmojiAssetsError] = useState<string | null>(null)
+  const [sessionEmojiAssetsSessionId, setSessionEmojiAssetsSessionId] = useState<string | null>(null)
+  const [sessionEmojiAssetsSessionName, setSessionEmojiAssetsSessionName] = useState('')
+  const [sessionEmojiAssets, setSessionEmojiAssets] = useState<SessionEmojiAssetItem[]>([])
+  const [sessionEmojiAssetsSummary, setSessionEmojiAssetsSummary] = useState<SessionEmojiAssetSummary | null>(null)
   const [sessionImageSelectedDates, setSessionImageSelectedDates] = useState<Set<string>>(new Set())
 
   const [showFormatPicker, setShowFormatPicker] = useState(false)
@@ -763,6 +796,7 @@ function ExportPage() {
   const sessionImageAssetsRequestIdRef = useRef(0)
   const sessionVideoOverviewRequestIdRef = useRef<Record<string, number>>({})
   const sessionVideoAssetsRequestIdRef = useRef(0)
+  const sessionEmojiAssetsRequestIdRef = useRef(0)
   const sessionTypeFilterRef = useRef<SessionTypeFilter>('private')
   const sessionSortStatsWarmupRunIdRef = useRef(0)
   const sessionTableHeaderScrollRef = useRef<HTMLDivElement | null>(null)
@@ -2036,6 +2070,69 @@ function ExportPage() {
     }
   }, [])
 
+  const inspectSessionEmojiAssets = useCallback(async (sessionId: string) => {
+    const listResult = await window.electronAPI.chat.getAllEmojiMessages(sessionId)
+    if (!listResult.success || !listResult.emojis) {
+      throw new Error(listResult.error || '读取会话表情包失败')
+    }
+
+    const rawMessageCount = Number(listResult.stats?.rawMessageCount ?? listResult.emojis.length)
+    const parsedMessageCount = Number(listResult.stats?.parsedMessageCount ?? listResult.emojis.length)
+    const duplicateMessageCount = Number(listResult.stats?.duplicateMessageCount ?? Math.max(0, parsedMessageCount - listResult.emojis.length))
+    const parseFailedCount = Number(listResult.stats?.parseFailedCount ?? Math.max(0, rawMessageCount - parsedMessageCount))
+
+    const assets: SessionEmojiAssetItem[] = []
+    let readyCount = 0
+    let missingCount = 0
+
+    for (let i = 0; i < listResult.emojis.length; i++) {
+      const emoji = listResult.emojis[i]
+      let previewUrl: string | undefined
+      let filePath: string | undefined
+
+      try {
+        const emojiResult = await window.electronAPI.chat.downloadEmoji(
+          emoji.emojiCdnUrl || '',
+          emoji.emojiMd5,
+          emoji.productId,
+          emoji.createTime
+        )
+        if (emojiResult.success) {
+          previewUrl = emojiResult.localPath
+          filePath = emojiResult.filePath
+        }
+      } catch {
+        // 单条表情下载/读取失败按缺失处理
+      }
+
+      const exists = Boolean(previewUrl)
+      if (exists) readyCount++
+      else missingCount++
+
+      assets.push({
+        ...emoji,
+        previewUrl,
+        filePath,
+        exists
+      })
+
+      if (i % 12 === 0) {
+        await new Promise(r => setTimeout(r, 0))
+      }
+    }
+
+    return {
+      total: listResult.emojis.length,
+      readyCount,
+      missingCount,
+      rawMessageCount,
+      parsedMessageCount,
+      duplicateMessageCount,
+      parseFailedCount,
+      assets
+    }
+  }, [])
+
   const toLocalPathFromFileUrl = useCallback((fileUrl?: string) => {
     if (!fileUrl) return undefined
     try {
@@ -2266,6 +2363,43 @@ function ExportPage() {
     }
   }, [getSessionDisplayName, inspectSessionVideoAssets, selectedSession])
 
+  const openSessionEmojiAssetsModal = useCallback(async (targetSessionId?: string) => {
+    const sessionId = targetSessionId || selectedSession
+    if (!sessionId) return
+
+    const requestId = ++sessionEmojiAssetsRequestIdRef.current
+    setShowSessionEmojiAssetsModal(true)
+    setSessionEmojiAssetsLoading(true)
+    setSessionEmojiAssetsError(null)
+    setSessionEmojiAssetsSessionId(sessionId)
+    setSessionEmojiAssetsSessionName(getSessionDisplayName(sessionId))
+
+    try {
+      const result = await inspectSessionEmojiAssets(sessionId)
+      if (requestId !== sessionEmojiAssetsRequestIdRef.current) return
+
+      setSessionEmojiAssets(result.assets)
+      setSessionEmojiAssetsSummary({
+        total: result.total,
+        readyCount: result.readyCount,
+        missingCount: result.missingCount,
+        rawMessageCount: result.rawMessageCount,
+        parsedMessageCount: result.parsedMessageCount,
+        duplicateMessageCount: result.duplicateMessageCount,
+        parseFailedCount: result.parseFailedCount
+      })
+    } catch (e) {
+      if (requestId !== sessionEmojiAssetsRequestIdRef.current) return
+      setSessionEmojiAssets([])
+      setSessionEmojiAssetsSummary(null)
+      setSessionEmojiAssetsError(String(e))
+    } finally {
+      if (requestId === sessionEmojiAssetsRequestIdRef.current) {
+        setSessionEmojiAssetsLoading(false)
+      }
+    }
+  }, [getSessionDisplayName, inspectSessionEmojiAssets, selectedSession])
+
   const handleImageStatCardClick = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     const target = event.target
     if (target instanceof Element && target.closest('button, a, input, select, textarea')) return
@@ -2396,6 +2530,14 @@ function ExportPage() {
     () => sessionVideoAssets.filter(item => !item.exists && item.hasPreview),
     [sessionVideoAssets]
   )
+  const readySessionEmojiAssets = useMemo(
+    () => sessionEmojiAssets.filter(item => item.exists && item.previewUrl),
+    [sessionEmojiAssets]
+  )
+  const missingSessionEmojiAssets = useMemo(
+    () => sessionEmojiAssets.filter(item => !item.exists),
+    [sessionEmojiAssets]
+  )
   const sessionVideoAssetsOverview = useMemo(() => {
     if (!sessionVideoAssetsSessionId) return undefined
     return sessionVideoOverviews[sessionVideoAssetsSessionId]
@@ -2410,6 +2552,13 @@ function ExportPage() {
   const sessionVideoAssetsReadyCount = sessionVideoAssetsOverview?.readyCount ?? readySessionVideoAssets.length
   const sessionVideoAssetsThumbOnlyCount = sessionVideoAssetsOverview?.thumbOnlyCount ?? thumbOnlySessionVideoAssets.length
   const sessionVideoAssetsMissingCount = sessionVideoAssetsOverview?.missingCount ?? Math.max(0, sessionVideoAssetsTotalCount - sessionVideoAssetsReadyCount - sessionVideoAssetsThumbOnlyCount)
+  const sessionEmojiAssetsTotalCount = sessionEmojiAssetsSummary?.total ?? sessionEmojiAssets.length
+  const sessionEmojiAssetsRawMessageCount = sessionEmojiAssetsSummary?.rawMessageCount ?? sessionEmojiAssetsTotalCount
+  const sessionEmojiAssetsParsedMessageCount = sessionEmojiAssetsSummary?.parsedMessageCount ?? sessionEmojiAssetsTotalCount
+  const sessionEmojiAssetsDuplicateCount = sessionEmojiAssetsSummary?.duplicateMessageCount ?? Math.max(0, sessionEmojiAssetsParsedMessageCount - sessionEmojiAssetsTotalCount)
+  const sessionEmojiAssetsParseFailedCount = sessionEmojiAssetsSummary?.parseFailedCount ?? Math.max(0, sessionEmojiAssetsRawMessageCount - sessionEmojiAssetsParsedMessageCount)
+  const sessionEmojiAssetsReadyCount = sessionEmojiAssetsSummary?.readyCount ?? readySessionEmojiAssets.length
+  const sessionEmojiAssetsMissingCount = sessionEmojiAssetsSummary?.missingCount ?? Math.max(0, sessionEmojiAssetsTotalCount - sessionEmojiAssetsReadyCount)
   const groupFriendMembersForPopup = useMemo(() => {
     const friendMembers = sessionDetail?.groupInfo?.friendMembers || []
     if (friendMembers.length <= 1) return friendMembers
@@ -2635,6 +2784,7 @@ function ExportPage() {
       commonGroupMessageCountsRequestIdRef.current++
       sessionImageAssetsRequestIdRef.current++
       sessionVideoAssetsRequestIdRef.current++
+      sessionEmojiAssetsRequestIdRef.current++
       setSelectedSession(username)
       setShowExportSettings(false)
       setShowGroupFriendsPopup(false)
@@ -2658,6 +2808,13 @@ function ExportPage() {
       setSessionVideoAssetsLoading(false)
       setSessionVideoAssetsSessionId(null)
       setSessionVideoAssetsSessionName('')
+      setShowSessionEmojiAssetsModal(false)
+      setSessionEmojiAssets([])
+      setSessionEmojiAssetsSummary(null)
+      setSessionEmojiAssetsError(null)
+      setSessionEmojiAssetsLoading(false)
+      setSessionEmojiAssetsSessionId(null)
+      setSessionEmojiAssetsSessionName('')
       setSessionDetail(null)
       setSessionImageSelectedDates(new Set())
       setSessionImageUndecryptedListCollapsed(false)
@@ -2898,6 +3055,11 @@ function ExportPage() {
     await selectSession(session.username)
     await openSessionImageAssetsModal(session.username)
   }, [openSessionImageAssetsModal, selectSession])
+
+  const handleOpenEmojiAssetsFromList = useCallback(async (session: ChatSession) => {
+    await selectSession(session.username)
+    await openSessionEmojiAssetsModal(session.username)
+  }, [openSessionEmojiAssetsModal, selectSession])
 
   useEffect(() => {
     const cachedSelectedSession = pendingCachedSelectedSessionRef.current
@@ -3724,7 +3886,8 @@ function ExportPage() {
                       onOpenChatWindow: handleOpenChatWindowFromList,
                       onOpenCommonGroups: handleOpenCommonGroupsFromList,
                       onOpenExportSettings: handleOpenExportSettingsFromList,
-                      onOpenImageAssets: handleOpenImageAssetsFromList
+                      onOpenImageAssets: handleOpenImageAssetsFromList,
+                      onOpenEmojiAssets: handleOpenEmojiAssetsFromList
                     }}
                     rowComponent={ExportSessionRow}
                   />
@@ -5452,6 +5615,195 @@ function ExportPage() {
                               </div>
                             )
                           })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 会话表情包查看弹窗（预览 + 差异统计） */}
+      {showSessionEmojiAssetsModal && (
+        <div
+          className="export-overlay"
+          onClick={() => setShowSessionEmojiAssetsModal(false)}
+        >
+          <div className="session-image-assets-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="session-image-assets-header">
+              <div>
+                <h3>会话表情包</h3>
+                <p>查看可预览表情包，并打开本地缓存文件</p>
+              </div>
+              <button
+                type="button"
+                className="group-friends-close-btn"
+                onClick={() => setShowSessionEmojiAssetsModal(false)}
+                aria-label="关闭会话表情包弹窗"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="session-image-assets-subtitle">
+              {sessionEmojiAssetsSessionName || sessionEmojiAssetsSessionId || selectedSession}
+            </div>
+
+            <div style={{
+              marginBottom: 12,
+              padding: '10px 12px',
+              borderRadius: 10,
+              background: 'var(--bg-secondary)',
+              border: '1px solid var(--border-color, #e0e0e0)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 4
+            }}>
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                原始表情消息 <strong style={{ color: 'var(--text-primary)' }}>{sessionEmojiAssetsRawMessageCount.toLocaleString()}</strong> 条
+                {' '}→ 识别到唯一表情 <strong style={{ color: 'var(--text-primary)' }}>{sessionEmojiAssetsTotalCount.toLocaleString()}</strong> 个
+                {' '}→ 可预览表情包 <strong style={{ color: 'var(--text-primary)' }}>{sessionEmojiAssetsReadyCount.toLocaleString()}</strong> 个
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text-tertiary)', lineHeight: 1.5 }}>
+                差异说明：
+                {sessionEmojiAssetsDuplicateCount > 0 ? ` 重复引用 ${sessionEmojiAssetsDuplicateCount.toLocaleString()} 条；` : ' 无重复引用；'}
+                {sessionEmojiAssetsParseFailedCount > 0 ? ` 无法解析 ${sessionEmojiAssetsParseFailedCount.toLocaleString()} 条；` : ' 无解析失败；'}
+                {sessionEmojiAssetsMissingCount > 0 ? ` 无法预览 ${sessionEmojiAssetsMissingCount.toLocaleString()} 个。` : ' 已全部可预览。'}
+              </div>
+            </div>
+
+            <div className="session-image-assets-toolbar">
+              <div className="session-image-assets-stats">
+                <div className="session-image-assets-stat">
+                  <span className="label">原始消息</span>
+                  <strong>{sessionEmojiAssetsRawMessageCount.toLocaleString()}</strong>
+                </div>
+                <div className="session-image-assets-stat">
+                  <span className="label">唯一表情</span>
+                  <strong>{sessionEmojiAssetsTotalCount.toLocaleString()}</strong>
+                </div>
+                <div className="session-image-assets-stat success">
+                  <span className="label">可预览</span>
+                  <strong>{sessionEmojiAssetsReadyCount.toLocaleString()}</strong>
+                </div>
+                <div className="session-image-assets-stat warning">
+                  <span className="label">缺失</span>
+                  <strong>{sessionEmojiAssetsMissingCount.toLocaleString()}</strong>
+                </div>
+              </div>
+              <div className="session-image-assets-actions">
+                {sessionEmojiAssetsLoading ? (
+                  <span className="session-media-status-pill checking">
+                    <Loader2 size={11} className="spin" />
+                    <span>加载中</span>
+                  </span>
+                ) : sessionEmojiAssetsError ? (
+                  <button
+                    type="button"
+                    className="session-media-action-btn"
+                    onClick={() => { void openSessionEmojiAssetsModal(sessionEmojiAssetsSessionId || selectedSession || undefined) }}
+                    disabled={!sessionEmojiAssetsSessionId && !selectedSession}
+                  >
+                    <span>重试</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="session-media-action-btn"
+                    onClick={() => { void openSessionEmojiAssetsModal(sessionEmojiAssetsSessionId || selectedSession || undefined) }}
+                    disabled={!sessionEmojiAssetsSessionId && !selectedSession}
+                  >
+                    <span>重新检查</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="session-image-assets-content">
+              {sessionEmojiAssetsLoading ? (
+                <div className="session-image-assets-loading">
+                  <Loader2 size={14} className="spin" />
+                  <span>正在检查会话表情包...</span>
+                </div>
+              ) : sessionEmojiAssetsError ? (
+                <div className="session-image-assets-empty">
+                  <span>加载失败：{sessionEmojiAssetsError}</span>
+                </div>
+              ) : sessionEmojiAssetsTotalCount === 0 ? (
+                <div className="session-image-assets-empty">
+                  <span>当前会话暂无表情包</span>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                  {readySessionEmojiAssets.length > 0 && (
+                    <div className="session-assets-group">
+                      <div className="session-assets-group-title">可预览表情包（{readySessionEmojiAssets.length}）</div>
+                      <div className="session-image-assets-grid">
+                        {readySessionEmojiAssets
+                          .slice()
+                          .sort((a, b) => (b.createTime || 0) - (a.createTime || 0))
+                          .map((item, index) => (
+                            <button
+                              key={`${item.emojiMd5 || item.emojiCdnUrl || 'emoji'}:${index}:${item.createTime || 0}`}
+                              type="button"
+                              className="session-image-assets-item"
+                              onClick={() => item.filePath && window.electronAPI.shell.openPath(item.filePath)}
+                              disabled={!item.filePath}
+                              title={item.filePath ? '打开表情包文件' : '本地文件不可用'}
+                            >
+                              {item.previewUrl ? (
+                                <img
+                                  src={item.previewUrl}
+                                  alt=""
+                                  loading="lazy"
+                                />
+                              ) : (
+                                <div className="session-image-assets-placeholder">
+                                  <Smile size={18} />
+                                </div>
+                              )}
+                              <div className="session-image-assets-item-footer" style={{ justifyContent: 'space-between' }}>
+                                <span>
+                                  {item.createTime
+                                    ? new Date(item.createTime * 1000).toLocaleDateString('zh-CN')
+                                    : '未知时间'}
+                                </span>
+                                {item.filePath ? <ExternalLink size={12} /> : <span className="session-assets-preview-badge">仅预览</span>}
+                              </div>
+                            </button>
+                          ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {missingSessionEmojiAssets.length > 0 && (
+                    <div className="session-assets-group">
+                      <div className="session-assets-group-title">不可预览表情包（{missingSessionEmojiAssets.length}）</div>
+                      <div className="session-image-assets-grid">
+                        {missingSessionEmojiAssets
+                          .slice()
+                          .sort((a, b) => (b.createTime || 0) - (a.createTime || 0))
+                          .map((item, index) => (
+                            <div
+                              key={`${item.emojiMd5 || item.emojiCdnUrl || 'emoji-missing'}:${index}:${item.createTime || 0}`}
+                              className="session-image-assets-item"
+                              title={item.emojiMd5 || item.emojiCdnUrl || '未知表情'}
+                            >
+                              <div className="session-image-assets-placeholder">
+                                <Smile size={18} />
+                              </div>
+                              <div className="session-image-assets-item-footer" style={{ justifyContent: 'space-between' }}>
+                                <span>
+                                  {item.createTime
+                                    ? new Date(item.createTime * 1000).toLocaleDateString('zh-CN')
+                                    : '未知时间'}
+                                </span>
+                                <span className="session-assets-preview-badge">未缓存</span>
+                              </div>
+                            </div>
+                          ))}
                       </div>
                     </div>
                   )}
