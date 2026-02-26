@@ -583,12 +583,14 @@ export interface ElectronAPI {
       messageCount: number
       outputDir?: string
       outputTargetType?: 'file' | 'directory'
+      exportImagesIncluded?: boolean
       exportEmojisIncluded?: boolean
       exportVoicesIncluded?: boolean
     }[]>
     getLatestExportTimes: (sessionUsernames: string[]) => Promise<Record<string, number>>
     getEmojiExportFlags: (sessionUsernames: string[]) => Promise<Record<string, boolean>>
     getLatestEmojiExportTimes: (sessionUsernames: string[]) => Promise<Record<string, number>>
+    getLatestImageExportTimes: (sessionUsernames: string[]) => Promise<Record<string, number>>
     getLatestVoiceExportTimes: (sessionUsernames: string[]) => Promise<Record<string, number>>
     saveExportRecord: (
       sessionUsername: string,
@@ -598,7 +600,8 @@ export interface ElectronAPI {
       outputTargetType?: 'file' | 'directory',
       exportEmojisIncluded?: boolean,
       extra?: {
-        exportKind?: 'chat' | 'emoji-assets' | 'voice-assets'
+        exportKind?: 'chat' | 'image-assets' | 'emoji-assets' | 'voice-assets'
+        exportImagesIncluded?: boolean
         exportVoicesIncluded?: boolean
         sourceLatestMessageTimestamp?: number
         emojiItemCount?: number
@@ -847,6 +850,7 @@ export interface ExportOptions {
   exportVideos?: boolean
   exportEmojis?: boolean
   exportVoices?: boolean
+  imageOnlyMode?: boolean
   emojiOnlyMode?: boolean
   voiceOnlyMode?: boolean
   dedupeVideoFiles?: boolean
@@ -854,6 +858,7 @@ export interface ExportOptions {
   currentMessageCountHint?: number
   latestMessageTimestampHint?: number
   currentEmojiCountHint?: number
+  currentImageCountHint?: number
   currentVoiceCountHint?: number
 }
 

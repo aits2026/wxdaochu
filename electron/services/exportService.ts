@@ -93,6 +93,8 @@ export interface ExportOptions {
   exportVideos?: boolean
   exportEmojis?: boolean
   exportVoices?: boolean
+  // 仅导出图片资源（不生成聊天文本文件）
+  imageOnlyMode?: boolean
   // 仅导出表情包资源（不生成聊天文本文件）
   emojiOnlyMode?: boolean
   // 仅导出语音资源（不生成聊天文本文件）
@@ -107,6 +109,7 @@ export interface ExportOptions {
   // Unix 秒级时间戳（会话最新消息时间）
   latestMessageTimestampHint?: number
   currentEmojiCountHint?: number
+  currentImageCountHint?: number
   currentVoiceCountHint?: number
 }
 
@@ -2438,7 +2441,14 @@ class ExportService {
           !options.exportVideos &&
           !options.exportEmojis
         )
-        const mediaOnlyMode = emojiOnlyMode || voiceOnlyMode
+        const imageOnlyMode = Boolean(
+          options.imageOnlyMode &&
+          options.exportImages &&
+          !options.exportVideos &&
+          !options.exportEmojis &&
+          !options.exportVoices
+        )
+        const mediaOnlyMode = imageOnlyMode || emojiOnlyMode || voiceOnlyMode
         const hasMedia = Boolean(options.exportImages || options.exportVideos || options.exportEmojis || options.exportVoices)
         const sessionOutputDir = hasMedia ? path.join(outputDir, safeName) : outputDir
         if (hasMedia && !mediaOnlyMode && !fs.existsSync(sessionOutputDir)) {
@@ -2530,6 +2540,72 @@ class ExportService {
           }
         }
 
+        const canTrySkipImageUnchanged = Boolean(
+          options.skipIfUnchanged &&
+          imageOnlyMode &&
+          Number.isFinite(options.currentImageCountHint) &&
+          Number.isFinite(options.latestMessageTimestampHint) &&
+          Number(options.currentImageCountHint) >= 0 &&
+          Number(options.latestMessageTimestampHint) > 0
+        )
+        if (canTrySkipImageUnchanged) {
+          const latestImageRecord = exportRecordService.getLatestRecord(sessionId, 'image-assets')
+          const currentImageCount = Number(options.currentImageCountHint ?? -1)
+          const currentLatestMessageTimestamp = Number(options.latestMessageTimestampHint || 0)
+          const sessionFolderHasFiles = this.dirHasAnyFile(sessionOutputDir)
+          const hasNoImageDataChange = Boolean(
+            latestImageRecord &&
+            latestImageRecord.messageCount === currentImageCount &&
+            Number(latestImageRecord.sourceLatestMessageTimestamp || 0) >= currentLatestMessageTimestamp
+          )
+
+          if (hasNoImageDataChange && sessionFolderHasFiles) {
+            emitProgress({
+              current: 100,
+              total: 100,
+              currentSession: sessionInfo.displayName,
+              phase: 'complete',
+              detail: '已导出（无新增，已跳过）'
+            })
+            successCount++
+            sessionOutputs.push({
+              sessionId,
+              outputPath: sessionOutputDir,
+              openTargetPath: sessionOutputDir,
+              openTargetType: 'directory',
+              skipped: true,
+              skipReason: 'image-unchanged-existing-folder'
+            })
+            await new Promise(resolve => setImmediate(resolve))
+            continue
+          }
+        }
+
+        if (
+          imageOnlyMode &&
+          Number.isFinite(options.currentImageCountHint) &&
+          Number(options.currentImageCountHint) === 0
+        ) {
+          emitProgress({
+            current: 100,
+            total: 100,
+            currentSession: sessionInfo.displayName,
+            phase: 'complete',
+            detail: '无图片，已跳过'
+          })
+          successCount++
+          sessionOutputs.push({
+            sessionId,
+            outputPath: sessionOutputDir,
+            openTargetPath: outputDir,
+            openTargetType: 'directory',
+            skipped: true,
+            skipReason: 'image-empty-session'
+          })
+          await new Promise(resolve => setImmediate(resolve))
+          continue
+        }
+
         if (
           voiceOnlyMode &&
           Number.isFinite(options.currentVoiceCountHint) &&
@@ -2588,7 +2664,7 @@ class ExportService {
         const exportOpts = mediaPathMap ? { ...options, mediaPathMap } : options
 
         let result: { success: boolean; error?: string }
-        if (emojiOnlyMode || voiceOnlyMode) {
+        if (imageOnlyMode || emojiOnlyMode || voiceOnlyMode) {
           if (!this.dirHasAnyFile(sessionOutputDir)) {
             try {
               if (fs.existsSync(sessionOutputDir)) {
@@ -2605,7 +2681,7 @@ class ExportService {
               total: 100,
               currentSession: sessionInfo.displayName,
               phase: 'complete',
-              detail: emojiOnlyMode ? '无表情包，已跳过' : '无语音，已跳过'
+              detail: imageOnlyMode ? '无图片，已跳过' : (emojiOnlyMode ? '无表情包，已跳过' : '无语音，已跳过')
             })
             successCount++
             sessionOutputs.push({
@@ -2614,7 +2690,7 @@ class ExportService {
               openTargetPath: outputDir,
               openTargetType: 'directory',
               skipped: true,
-              skipReason: emojiOnlyMode ? 'emoji-empty-session' : 'voice-empty-session'
+              skipReason: imageOnlyMode ? 'image-empty-session' : (emojiOnlyMode ? 'emoji-empty-session' : 'voice-empty-session')
             })
             await new Promise(resolve => setImmediate(resolve))
             continue
@@ -2624,7 +2700,7 @@ class ExportService {
             total: 100,
             currentSession: sessionInfo.displayName,
             phase: 'complete',
-            detail: emojiOnlyMode ? '表情包导出完成' : '语音导出完成'
+            detail: imageOnlyMode ? '图片导出完成' : (emojiOnlyMode ? '表情包导出完成' : '语音导出完成')
           })
           result = { success: true }
         } else if (options.format === 'json') {
@@ -2693,7 +2769,9 @@ class ExportService {
     if (dbTablePairs.length === 0) return mediaPathMap
 
     // 创建媒体输出目录（直接在会话文件夹下创建子目录）
-    const imageOutDir = options.exportImages ? path.join(outputDir, 'images') : ''
+    const imageOutDir = options.exportImages
+      ? (options.imageOnlyMode ? outputDir : path.join(outputDir, 'images'))
+      : ''
     const videoOutDir = options.exportVideos ? path.join(outputDir, 'videos') : ''
     const emojiOutDir = options.exportEmojis
       ? (options.emojiOnlyMode ? outputDir : path.join(outputDir, 'emojis'))
@@ -2702,7 +2780,7 @@ class ExportService {
       ? (options.voiceOnlyMode ? outputDir : path.join(outputDir, 'voices'))
       : ''
 
-    if (options.exportImages && !fs.existsSync(imageOutDir)) {
+    if (options.exportImages && !options.imageOnlyMode && !fs.existsSync(imageOutDir)) {
       fs.mkdirSync(imageOutDir, { recursive: true })
     }
     if (options.exportVideos && !fs.existsSync(videoOutDir)) {
@@ -2891,6 +2969,9 @@ class ExportService {
               const destPath = path.join(imageOutDir, fileName)
               try {
                 if (!fs.existsSync(destPath)) {
+                  if (!fs.existsSync(imageOutDir)) {
+                    fs.mkdirSync(imageOutDir, { recursive: true })
+                  }
                   fs.copyFileSync(filePath, destPath)
                   imageCount++
                 }

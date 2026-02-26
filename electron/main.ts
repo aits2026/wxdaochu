@@ -2138,6 +2138,10 @@ function registerIpcHandlers() {
     return exportRecordService.getLatestEmojiExportTimes(Array.isArray(sessionUsernames) ? sessionUsernames : [])
   })
 
+  ipcMain.handle('export:getLatestImageExportTimes', (_, sessionUsernames: string[]) => {
+    return exportRecordService.getLatestImageExportTimes(Array.isArray(sessionUsernames) ? sessionUsernames : [])
+  })
+
   ipcMain.handle('export:getLatestVoiceExportTimes', (_, sessionUsernames: string[]) => {
     return exportRecordService.getLatestVoiceExportTimes(Array.isArray(sessionUsernames) ? sessionUsernames : [])
   })
@@ -2153,7 +2157,8 @@ function registerIpcHandlers() {
       outputTargetType?: 'file' | 'directory',
       exportEmojisIncluded?: boolean,
       extra?: {
-        exportKind?: 'chat' | 'emoji-assets' | 'voice-assets'
+        exportKind?: 'chat' | 'image-assets' | 'emoji-assets' | 'voice-assets'
+        exportImagesIncluded?: boolean
         exportVoicesIncluded?: boolean
         sourceLatestMessageTimestamp?: number
         emojiItemCount?: number

@@ -8,9 +8,10 @@ export interface ExportRecord {
   messageCount: number // 导出时的消息总数
   outputDir?: string   // 导出位置（兼容旧数据；新数据可能为文件或目录路径）
   outputTargetType?: 'file' | 'directory'
+  exportImagesIncluded?: boolean
   exportEmojisIncluded?: boolean
   exportVoicesIncluded?: boolean
-  exportKind?: 'chat' | 'emoji-assets' | 'voice-assets'
+  exportKind?: 'chat' | 'image-assets' | 'emoji-assets' | 'voice-assets'
   sourceLatestMessageTimestamp?: number // Unix 秒
   emojiItemCount?: number
 }
@@ -89,6 +90,23 @@ export class ExportRecordService {
     return result
   }
 
+  getLatestImageExportTimes(sessionUsernames: string[]): Record<string, number> {
+    const result: Record<string, number> = {}
+    for (const sessionUsername of sessionUsernames) {
+      const records = this.store[sessionUsername]
+      if (!records || records.length === 0) continue
+      for (let i = records.length - 1; i >= 0; i--) {
+        const record = records[i]
+        if (!record) continue
+        if (record.exportImagesIncluded === true || record.exportKind === 'image-assets') {
+          if (record.exportTime) result[sessionUsername] = record.exportTime
+          break
+        }
+      }
+    }
+    return result
+  }
+
   getLatestVoiceExportTimes(sessionUsernames: string[]): Record<string, number> {
     const result: Record<string, number> = {}
     for (const sessionUsername of sessionUsernames) {
@@ -129,7 +147,8 @@ export class ExportRecordService {
     outputTargetType?: 'file' | 'directory',
     exportEmojisIncluded?: boolean,
     extra?: {
-      exportKind?: 'chat' | 'emoji-assets' | 'voice-assets'
+      exportKind?: 'chat' | 'image-assets' | 'emoji-assets' | 'voice-assets'
+      exportImagesIncluded?: boolean
       exportVoicesIncluded?: boolean
       sourceLatestMessageTimestamp?: number
       emojiItemCount?: number
@@ -144,6 +163,7 @@ export class ExportRecordService {
       messageCount,
       outputDir,
       outputTargetType,
+      exportImagesIncluded: extra?.exportImagesIncluded,
       exportEmojisIncluded,
       exportVoicesIncluded: extra?.exportVoicesIncluded,
       exportKind: extra?.exportKind,
