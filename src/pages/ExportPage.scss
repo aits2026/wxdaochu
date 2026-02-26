@@ -3024,6 +3024,47 @@
     font-size: 12px;
   }
 
+  .image-card-export-order-row {
+    cursor: default;
+    align-items: flex-start;
+  }
+
+  .image-card-export-order-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px;
+    border-radius: 9px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .image-card-export-order-btn {
+    border: 0;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1;
+    padding: 7px 10px;
+    border-radius: 7px;
+    cursor: pointer;
+    transition: background-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+
+    &:hover {
+      background: rgba(0, 0, 0, 0.04);
+      color: var(--text-primary);
+    }
+
+    &.active {
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+      font-weight: 600;
+    }
+  }
+
   .chat-text-card-export-path-note {
     display: flex;
     align-items: center;

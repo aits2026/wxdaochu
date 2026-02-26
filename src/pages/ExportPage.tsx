@@ -76,6 +76,7 @@ interface ExportResult {
 }
 
 type SessionMessageCountMap = Record<string, number>
+type ImageBatchExportOrder = 'few-first' | 'many-first'
 type LoadSessionsOptions = {
   silent?: boolean
   preserveCounts?: boolean
@@ -891,6 +892,7 @@ function ExportPage() {
   const [showChatTextCardExportFormatPicker, setShowChatTextCardExportFormatPicker] = useState(false)
   const [showImageCardExportModal, setShowImageCardExportModal] = useState(false)
   const [showImageCardStatusModal, setShowImageCardStatusModal] = useState(false)
+  const [imageCardExportOrder, setImageCardExportOrder] = useState<ImageBatchExportOrder>('few-first')
   const [showEmojiCardExportModal, setShowEmojiCardExportModal] = useState(false)
   const [showEmojiCardStatusModal, setShowEmojiCardStatusModal] = useState(false)
   const [showVoiceCardExportModal, setShowVoiceCardExportModal] = useState(false)
@@ -4774,7 +4776,9 @@ function ExportPage() {
         const aImageCount = a.imageCountSort
         const bImageCount = b.imageCountSort
         if (aImageCount !== null && bImageCount !== null && aImageCount !== bImageCount) {
-          return aImageCount - bImageCount
+          return imageCardExportOrder === 'few-first'
+            ? (aImageCount - bImageCount)
+            : (bImageCount - aImageCount)
         }
         if (aImageCount !== null && bImageCount === null) return -1
         if (aImageCount === null && bImageCount !== null) return 1
@@ -4810,6 +4814,7 @@ function ExportPage() {
     enqueueBatchImageExportJobsChunked,
     exportFolder,
     imageExportFolder,
+    imageCardExportOrder,
     sessionCardStatsMap,
     sessionDetail?.imageCount,
     sessionDetail?.wxid,
@@ -8653,6 +8658,30 @@ function ExportPage() {
                   <h4>跳过规则</h4>
                   <div className="chat-text-card-setting-row-value">
                     <span>无新增且目标文件夹有内容时跳过</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="chat-text-card-setting-block">
+                <div className="chat-text-card-setting-row image-card-export-order-row">
+                  <h4>导出顺序</h4>
+                  <div className="image-card-export-order-toggle" role="group" aria-label="图片批量导出顺序">
+                    <button
+                      type="button"
+                      className={`image-card-export-order-btn ${imageCardExportOrder === 'few-first' ? 'active' : ''}`}
+                      onClick={() => setImageCardExportOrder('few-first')}
+                      aria-pressed={imageCardExportOrder === 'few-first'}
+                    >
+                      图片少的优先
+                    </button>
+                    <button
+                      type="button"
+                      className={`image-card-export-order-btn ${imageCardExportOrder === 'many-first' ? 'active' : ''}`}
+                      onClick={() => setImageCardExportOrder('many-first')}
+                      aria-pressed={imageCardExportOrder === 'many-first'}
+                    >
+                      图片多的优先
+                    </button>
                   </div>
                 </div>
               </div>
