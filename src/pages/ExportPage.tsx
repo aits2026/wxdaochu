@@ -2883,15 +2883,19 @@ function ExportPage() {
   const sessionEmojiAssetsReadyCount = sessionEmojiAssetsSummary?.readyCount ?? readySessionEmojiAssets.length
   const sessionEmojiAssetsMissingCount = sessionEmojiAssetsSummary?.missingCount ?? Math.max(0, sessionEmojiAssetsTotalCount - sessionEmojiAssetsReadyCount)
   const sessionEmojiAssetsPendingCount = Math.max(0, sessionEmojiAssetsTotalCount - sessionEmojiAssetsReadyCount - sessionEmojiAssetsMissingCount)
-  const chatTextCardTotalSessions = sessions.length
+  const bulkExportEligibleSessions = useMemo(
+    () => sessions.filter(session => session.accountType !== 'official'),
+    [sessions]
+  )
+  const chatTextCardTotalSessions = bulkExportEligibleSessions.length
   const chatTextCardExportedSessions = useMemo(() => (
-    sessions.reduce((count, session) => {
+    bulkExportEligibleSessions.reduce((count, session) => {
       const latestExportTime = sessionLatestExportTimeMap[session.username]
       return (typeof latestExportTime === 'number' && Number.isFinite(latestExportTime) && latestExportTime > 0)
         ? count + 1
         : count
     }, 0)
-  ), [sessionLatestExportTimeMap, sessions])
+  ), [bulkExportEligibleSessions, sessionLatestExportTimeMap])
   const chatTextStatusRows = useMemo(() => {
     const statusPriority: Record<'running' | 'queued' | 'not-exported' | 'exported', number> = {
       running: 0,
@@ -2899,7 +2903,7 @@ function ExportPage() {
       'not-exported': 2,
       exported: 3
     }
-    return sessions
+    return bulkExportEligibleSessions
       .map((session) => {
         const latestExportTime = sessionLatestExportTimeMap[session.username]
         const hasExported = typeof latestExportTime === 'number' && Number.isFinite(latestExportTime) && latestExportTime > 0
@@ -2926,7 +2930,7 @@ function ExportPage() {
         }
         return (b.session.lastTimestamp || 0) - (a.session.lastTimestamp || 0)
       })
-  }, [queuedChatExportSessionIds, runningChatExportSessionId, sessionLatestExportTimeMap, sessions])
+  }, [bulkExportEligibleSessions, queuedChatExportSessionIds, runningChatExportSessionId, sessionLatestExportTimeMap])
   const chatTextStatusSummary = useMemo(() => {
     let running = 0
     let queued = 0
@@ -2940,15 +2944,15 @@ function ExportPage() {
     }
     return { running, queued, exported, notExported, total: chatTextCardTotalSessions }
   }, [chatTextCardTotalSessions, chatTextStatusRows])
-  const sessionEmojiCardTotalSessions = sessions.length
+  const sessionEmojiCardTotalSessions = bulkExportEligibleSessions.length
   const sessionEmojiCardExportedSessions = useMemo(() => (
-    sessions.reduce((count, session) => {
+    bulkExportEligibleSessions.reduce((count, session) => {
       const latestExportTime = sessionEmojiLatestExportTimeMap[session.username]
       return (typeof latestExportTime === 'number' && Number.isFinite(latestExportTime) && latestExportTime > 0)
         ? count + 1
         : count
     }, 0)
-  ), [sessionEmojiLatestExportTimeMap, sessions])
+  ), [bulkExportEligibleSessions, sessionEmojiLatestExportTimeMap])
   const emojiStatusRows = useMemo(() => {
     type EmojiStatus = 'running' | 'queued' | 'not-exported' | 'exported' | 'skipped'
     const statusPriority: Record<EmojiStatus, number> = {
@@ -2958,7 +2962,7 @@ function ExportPage() {
       skipped: 3,
       exported: 4
     }
-    return sessions
+    return bulkExportEligibleSessions
       .map((session) => {
         const latestExportTime = sessionEmojiLatestExportTimeMap[session.username]
         const hasExported = typeof latestExportTime === 'number' && Number.isFinite(latestExportTime) && latestExportTime > 0
@@ -2991,9 +2995,9 @@ function ExportPage() {
   }, [
     queuedEmojiExportSessionIds,
     runningEmojiExportSessionId,
+    bulkExportEligibleSessions,
     sessionEmojiBatchOutcomeMap,
-    sessionEmojiLatestExportTimeMap,
-    sessions
+    sessionEmojiLatestExportTimeMap
   ])
   const emojiStatusSummary = useMemo(() => {
     let running = 0
@@ -3012,15 +3016,15 @@ function ExportPage() {
     }
     return { running, queued, exported, skipped, notExported, total: sessionEmojiCardTotalSessions }
   }, [emojiStatusRows, sessionEmojiCardTotalSessions])
-  const voiceCardTotalSessions = sessions.length
+  const voiceCardTotalSessions = bulkExportEligibleSessions.length
   const voiceCardExportedSessions = useMemo(() => (
-    sessions.reduce((count, session) => {
+    bulkExportEligibleSessions.reduce((count, session) => {
       const latestExportTime = sessionVoiceLatestExportTimeMap[session.username]
       return (typeof latestExportTime === 'number' && Number.isFinite(latestExportTime) && latestExportTime > 0)
         ? count + 1
         : count
     }, 0)
-  ), [sessionVoiceLatestExportTimeMap, sessions])
+  ), [bulkExportEligibleSessions, sessionVoiceLatestExportTimeMap])
   const voiceStatusRows = useMemo(() => {
     const statusPriority: Record<'running' | 'queued' | 'not-exported' | 'exported', number> = {
       running: 0,
@@ -3028,7 +3032,7 @@ function ExportPage() {
       'not-exported': 2,
       exported: 3
     }
-    return sessions
+    return bulkExportEligibleSessions
       .map((session) => {
         const latestExportTime = sessionVoiceLatestExportTimeMap[session.username]
         const hasExported = typeof latestExportTime === 'number' && Number.isFinite(latestExportTime) && latestExportTime > 0
@@ -3055,7 +3059,7 @@ function ExportPage() {
         }
         return (b.session.lastTimestamp || 0) - (a.session.lastTimestamp || 0)
       })
-  }, [queuedVoiceExportSessionIds, runningVoiceExportSessionId, sessionVoiceLatestExportTimeMap, sessions])
+  }, [bulkExportEligibleSessions, queuedVoiceExportSessionIds, runningVoiceExportSessionId, sessionVoiceLatestExportTimeMap])
   const voiceStatusSummary = useMemo(() => {
     let running = 0
     let queued = 0
@@ -3069,10 +3073,6 @@ function ExportPage() {
     }
     return { running, queued, exported, notExported, total: voiceCardTotalSessions }
   }, [voiceCardTotalSessions, voiceStatusRows])
-  const bulkExportEligibleSessions = useMemo(
-    () => sessions.filter(session => session.accountType !== 'official'),
-    [sessions]
-  )
   const groupFriendMembersForPopup = useMemo(() => {
     const friendMembers = sessionDetail?.groupInfo?.friendMembers || []
     if (friendMembers.length <= 1) return friendMembers
