@@ -91,7 +91,7 @@ function TaskCard({
       </div>
 
       <div className="global-task-center-meta">
-        {task.kind === 'chat-export' && task.format && (
+        {(task.kind === 'chat-export' || task.kind === 'chat-export-batch') && task.format && (
           <span>格式 {task.format}</span>
         )}
         {task.progressTotal > 0 && showProgressMeta && (

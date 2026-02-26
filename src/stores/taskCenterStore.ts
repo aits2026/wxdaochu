@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 
 export type GlobalTaskStatus = 'pending' | 'running' | 'success' | 'error'
-export type GlobalTaskKind = 'chat-export' | 'image-decrypt'
+export type GlobalTaskKind = 'chat-export' | 'chat-export-batch' | 'image-decrypt'
 
 export interface GlobalTaskRecord {
   id: string

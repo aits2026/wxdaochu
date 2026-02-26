@@ -224,6 +224,14 @@ interface QueuedChatExportJob {
   options: ExportOptions
   queuedAt: number
   suppressResultModal?: boolean
+  batchTaskId?: string
+}
+
+interface ChatExportBatchTaskProgress {
+  total: number
+  completed: number
+  successCount: number
+  failCount: number
 }
 
 interface SessionExportRecord {
@@ -629,28 +637,6 @@ function ExportPage() {
   const taskCenterOpen = useTaskCenterStore(state => state.openTaskCenter)
   const taskCenterHighlightTask = useTaskCenterStore(state => state.highlightTask)
   const taskCenterTasks = useTaskCenterStore(state => state.tasks)
-  const chatExportTasks = useMemo(() => taskCenterTasks.filter(
-    task => task.kind === 'chat-export' && (task.status === 'pending' || task.status === 'running')
-  ), [taskCenterTasks])
-  const runningChatExportSessionId = useMemo(
-    () => chatExportTasks.find(task => task.status === 'running')?.sessionId || null,
-    [chatExportTasks]
-  )
-  const queuedChatExportSessionIds = useMemo(() => {
-    const set = new Set<string>()
-    for (const task of chatExportTasks) {
-      if (task.status === 'pending' && task.sessionId) set.add(task.sessionId)
-    }
-    return set
-  }, [chatExportTasks])
-  const hasRunningChatExportTask = useMemo(
-    () => chatExportTasks.some(task => task.status === 'running'),
-    [chatExportTasks]
-  )
-  const hasPendingChatExportTask = useMemo(
-    () => chatExportTasks.some(task => task.status === 'pending'),
-    [chatExportTasks]
-  )
   const runningImageDecryptTask = useMemo(() => {
     let latest: typeof taskCenterTasks[number] | null = null
     for (const task of taskCenterTasks) {
@@ -790,6 +776,10 @@ function ExportPage() {
     exportVoices: false
   })
   const [hideImageDecryptExportTip, setHideImageDecryptExportTip] = useState(false)
+  const [runningChatExportSessionId, setRunningChatExportSessionId] = useState<string | null>(null)
+  const [queuedChatExportSessionIds, setQueuedChatExportSessionIds] = useState<Set<string>>(new Set())
+  const hasRunningChatExportTask = Boolean(runningChatExportSessionId)
+  const hasPendingChatExportTask = queuedChatExportSessionIds.size > 0
 
   // 通讯录导出状态
   const [contacts, setContacts] = useState<Contact[]>([])
@@ -837,10 +827,21 @@ function ExportPage() {
   const sessionEmojiExportFlagsRequestIdRef = useRef(0)
   const chatExportQueueRef = useRef<QueuedChatExportJob[]>([])
   const chatExportWorkerRunningRef = useRef(false)
+  const chatExportBatchTaskProgressRef = useRef<Record<string, ChatExportBatchTaskProgress>>({})
 
   useEffect(() => {
     sessionTypeFilterRef.current = sessionTypeFilter
   }, [sessionTypeFilter])
+
+  const syncChatExportQueueStatus = useCallback((nextRunningSessionId: string | null) => {
+    setRunningChatExportSessionId(nextRunningSessionId)
+    const nextQueued = new Set<string>()
+    for (const job of chatExportQueueRef.current) {
+      if (nextRunningSessionId && job.sessionId === nextRunningSessionId) continue
+      nextQueued.add(job.sessionId)
+    }
+    setQueuedChatExportSessionIds(nextQueued)
+  }, [])
 
   useEffect(() => {
     sessionCardStatsMapRef.current = sessionCardStatsMap
@@ -3430,6 +3431,37 @@ function ExportPage() {
 
   const executeQueuedChatExportJob = useCallback(async (job: QueuedChatExportJob) => {
     const formatLabel = job.options.format.toUpperCase()
+    const patchSingleJobTask = (patch: Parameters<typeof taskCenterPatchTask>[1]) => {
+      if (job.batchTaskId) return
+      taskCenterPatchTask(job.taskId, patch)
+    }
+    const finishBatchJob = (ok: boolean, errorMessage?: string) => {
+      if (!job.batchTaskId) return
+      const batch = chatExportBatchTaskProgressRef.current[job.batchTaskId]
+      if (!batch) return
+      batch.completed += 1
+      if (ok) batch.successCount += 1
+      else batch.failCount += 1
+
+      const isComplete = batch.completed >= batch.total
+      const hasAnySuccess = batch.successCount > 0
+      taskCenterPatchTask(job.batchTaskId, {
+        status: isComplete ? (hasAnySuccess ? 'success' : 'error') : 'running',
+        progressCurrent: batch.completed,
+        progressTotal: batch.total,
+        successCount: batch.successCount,
+        failCount: batch.failCount,
+        phase: isComplete ? '导出完成' : '正在导出...',
+        detail: isComplete
+          ? `共 ${batch.total.toLocaleString()} 个会话，成功 ${batch.successCount.toLocaleString()}，失败 ${batch.failCount.toLocaleString()}`
+          : `共 ${batch.total.toLocaleString()} 个会话，可继续操作页面`,
+        currentName: isComplete ? '' : job.sessionName,
+        error: isComplete && !hasAnySuccess ? (errorMessage || '批量导出失败') : undefined
+      })
+      if (isComplete) {
+        delete chatExportBatchTaskProgressRef.current[job.batchTaskId]
+      }
+    }
     const exportOptions = {
       format: job.options.format,
       dateRange: (job.options.startDate && job.options.endDate) ? {
@@ -3458,7 +3490,7 @@ function ExportPage() {
           const exportOpenTargetPath = sessionOutput?.openTargetPath || job.outputDir
           const exportOpenTargetType = sessionOutput?.openTargetType || 'directory'
 
-          taskCenterPatchTask(job.taskId, {
+          patchSingleJobTask({
             status: 'success',
             progressCurrent: 1,
             progressTotal: 1,
@@ -3487,8 +3519,9 @@ function ExportPage() {
           if (job.options.exportEmojis) {
             setSessionEmojiExportFlagMap(prev => ({ ...prev, [job.sessionId]: true }))
           }
+          finishBatchJob(true)
         } else {
-          taskCenterPatchTask(job.taskId, {
+          patchSingleJobTask({
             status: 'error',
             progressCurrent: 1,
             progressTotal: 1,
@@ -3498,13 +3531,14 @@ function ExportPage() {
             detail: '导出失败',
             error: result.error || '导出失败'
           })
+          finishBatchJob(false, result.error || '导出失败')
         }
       } else {
         const errorMessage = `${job.options.format.toUpperCase()} 格式导出功能开发中...`
         if (!job.suppressResultModal) {
           setExportResult({ success: false, error: errorMessage })
         }
-        taskCenterPatchTask(job.taskId, {
+        patchSingleJobTask({
           status: 'error',
           progressCurrent: 1,
           progressTotal: 1,
@@ -3512,6 +3546,7 @@ function ExportPage() {
           detail: '导出失败',
           error: errorMessage
         })
+        finishBatchJob(false, errorMessage)
       }
     } catch (e) {
       console.error('导出失败:', e)
@@ -3519,7 +3554,7 @@ function ExportPage() {
       if (!job.suppressResultModal) {
         setExportResult({ success: false, error: errorMessage })
       }
-      taskCenterPatchTask(job.taskId, {
+      patchSingleJobTask({
         status: 'error',
         progressCurrent: 1,
         progressTotal: 1,
@@ -3527,6 +3562,7 @@ function ExportPage() {
         detail: '导出失败',
         error: errorMessage
       })
+      finishBatchJob(false, errorMessage)
     }
   }, [selectedSession, taskCenterPatchTask])
 
@@ -3536,14 +3572,25 @@ function ExportPage() {
     if (!nextJob) return
 
     chatExportWorkerRunningRef.current = true
-    taskCenterPatchTask(nextJob.taskId, {
-      status: 'running',
-      progressCurrent: 0,
-      progressTotal: 1,
-      phase: '正在准备...',
-      detail: '可继续操作页面'
-    })
-    taskCenterSetActiveExportTaskId(nextJob.taskId)
+    syncChatExportQueueStatus(nextJob.sessionId)
+    if (nextJob.batchTaskId) {
+      taskCenterPatchTask(nextJob.batchTaskId, {
+        status: 'running',
+        phase: '正在导出...',
+        detail: `共 ${(chatExportBatchTaskProgressRef.current[nextJob.batchTaskId]?.total || 0).toLocaleString()} 个会话，可继续操作页面`,
+        currentName: nextJob.sessionName
+      })
+      taskCenterSetActiveExportTaskId(null)
+    } else {
+      taskCenterPatchTask(nextJob.taskId, {
+        status: 'running',
+        progressCurrent: 0,
+        progressTotal: 1,
+        phase: '正在准备...',
+        detail: '可继续操作页面'
+      })
+      taskCenterSetActiveExportTaskId(nextJob.taskId)
+    }
 
     try {
       await executeQueuedChatExportJob(nextJob)
@@ -3551,21 +3598,24 @@ function ExportPage() {
       chatExportQueueRef.current = chatExportQueueRef.current.filter(job => job.taskId !== nextJob.taskId)
       chatExportWorkerRunningRef.current = false
       taskCenterSetActiveExportTaskId(null)
+      syncChatExportQueueStatus(null)
       window.setTimeout(() => { void processNextQueuedChatExport() }, 0)
     }
-  }, [executeQueuedChatExportJob, taskCenterPatchTask, taskCenterSetActiveExportTaskId])
+  }, [executeQueuedChatExportJob, syncChatExportQueueStatus, taskCenterPatchTask, taskCenterSetActiveExportTaskId])
 
   const enqueueChatExportJobs = useCallback((params: {
     sessionIds: string[]
     exportOptions: ExportOptions
     suppressResultModal?: boolean
     closeSingleSessionSettings?: boolean
+    batchTaskId?: string
   }) => {
     const {
       sessionIds,
       exportOptions,
       suppressResultModal = false,
-      closeSingleSessionSettings = false
+      closeSingleSessionSettings = false,
+      batchTaskId
     } = params
 
     if (!exportFolder || sessionIds.length === 0) return 0
@@ -3593,7 +3643,8 @@ function ExportPage() {
         outputDir: exportFolder,
         options: { ...exportOptions },
         queuedAt,
-        suppressResultModal
+        suppressResultModal,
+        batchTaskId
       }
     })
 
@@ -3601,29 +3652,32 @@ function ExportPage() {
 
     setExportResult(null)
 
-    jobs.forEach((job, index) => {
-      const hasRunningOrQueuedBeforeEnqueue = hasRunningBefore || (queueLengthBefore + index) > 0
-      taskCenterUpsertTask({
-        id: job.taskId,
-        kind: 'chat-export',
-        typeLabel: '聊天导出',
-        sessionId: job.sessionId,
-        sessionName: job.sessionName,
-        status: 'pending',
-        progressCurrent: 0,
-        progressTotal: 1,
-        unitLabel: '个会话',
-        format: job.options.format.toUpperCase(),
-        outputDir: exportFolder,
-        phase: hasRunningOrQueuedBeforeEnqueue ? '等待执行' : '准备执行',
-        detail: hasRunningOrQueuedBeforeEnqueue ? '已加入队列，等待前序任务完成' : '等待执行',
-        createdAt: job.queuedAt,
-        updatedAt: job.queuedAt
+    if (!batchTaskId) {
+      jobs.forEach((job, index) => {
+        const hasRunningOrQueuedBeforeEnqueue = hasRunningBefore || (queueLengthBefore + index) > 0
+        taskCenterUpsertTask({
+          id: job.taskId,
+          kind: 'chat-export',
+          typeLabel: '聊天导出',
+          sessionId: job.sessionId,
+          sessionName: job.sessionName,
+          status: 'pending',
+          progressCurrent: 0,
+          progressTotal: 1,
+          unitLabel: '个会话',
+          format: job.options.format.toUpperCase(),
+          outputDir: exportFolder,
+          phase: hasRunningOrQueuedBeforeEnqueue ? '等待执行' : '准备执行',
+          detail: hasRunningOrQueuedBeforeEnqueue ? '已加入队列，等待前序任务完成' : '等待执行',
+          createdAt: job.queuedAt,
+          updatedAt: job.queuedAt
+        })
       })
-    })
+    }
 
     chatExportQueueRef.current = [...chatExportQueueRef.current, ...jobs]
-    taskCenterHighlightTask(jobs[0].taskId)
+    taskCenterHighlightTask(batchTaskId || jobs[0].taskId)
+    syncChatExportQueueStatus(chatExportWorkerRunningRef.current ? runningChatExportSessionId : null)
     if (closeSingleSessionSettings) {
       setShowExportSettings(false)
     }
@@ -3634,6 +3688,7 @@ function ExportPage() {
   }, [
     exportFolder,
     processNextQueuedChatExport,
+    runningChatExportSessionId,
     sessionByUsername,
     sessionDetail?.alias,
     sessionDetail?.messageCount,
@@ -3641,6 +3696,7 @@ function ExportPage() {
     sessionDetail?.remark,
     sessionDetail?.wxid,
     sessionMessageCounts,
+    syncChatExportQueueStatus,
     taskCenterHighlightTask,
     taskCenterOpen,
     taskCenterUpsertTask
@@ -3680,6 +3736,35 @@ function ExportPage() {
     }
     if (sessions.length === 0) return
 
+    const totalSessions = sessions.length
+    const batchTaskId = `chat-export-batch:${Date.now()}`
+    const batchFormat = chatTextCardExportOptions.format.toUpperCase()
+    chatExportBatchTaskProgressRef.current[batchTaskId] = {
+      total: totalSessions,
+      completed: 0,
+      successCount: 0,
+      failCount: 0
+    }
+    taskCenterUpsertTask({
+      id: batchTaskId,
+      kind: 'chat-export-batch',
+      typeLabel: '聊天文本批量导出',
+      sessionName: '全部会话',
+      status: 'pending',
+      progressCurrent: 0,
+      progressTotal: totalSessions,
+      successCount: 0,
+      failCount: 0,
+      unitLabel: '个会话',
+      format: batchFormat,
+      outputDir: exportFolder,
+      outputTargetType: 'directory',
+      phase: '等待执行',
+      detail: `共 ${totalSessions.toLocaleString()} 个会话，已加入队列`,
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    })
+
     const queuedCount = enqueueChatExportJobs({
       sessionIds: sessions.map(session => session.username),
       exportOptions: {
@@ -3689,14 +3774,17 @@ function ExportPage() {
         exportEmojis: false,
         exportVoices: false
       },
-      suppressResultModal: true
+      suppressResultModal: true,
+      batchTaskId
     })
 
     if (queuedCount > 0) {
       setShowChatTextCardExportModal(false)
       setShowChatTextCardExportFormatPicker(false)
+    } else {
+      delete chatExportBatchTaskProgressRef.current[batchTaskId]
     }
-  }, [chatTextCardExportOptions, enqueueChatExportJobs, exportFolder, sessions])
+  }, [chatTextCardExportOptions, enqueueChatExportJobs, exportFolder, sessions, taskCenterUpsertTask])
 
   // 导出通讯录
   const startContactExport = async () => {
