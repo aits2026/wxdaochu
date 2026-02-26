@@ -587,13 +587,19 @@ export interface ElectronAPI {
     }[]>
     getLatestExportTimes: (sessionUsernames: string[]) => Promise<Record<string, number>>
     getEmojiExportFlags: (sessionUsernames: string[]) => Promise<Record<string, boolean>>
+    getLatestEmojiExportTimes: (sessionUsernames: string[]) => Promise<Record<string, number>>
     saveExportRecord: (
       sessionUsername: string,
       format: string,
       messageCount: number,
       outputDir?: string,
       outputTargetType?: 'file' | 'directory',
-      exportEmojisIncluded?: boolean
+      exportEmojisIncluded?: boolean,
+      extra?: {
+        exportKind?: 'chat' | 'emoji-assets'
+        sourceLatestMessageTimestamp?: number
+        emojiItemCount?: number
+      }
     ) => Promise<void>
   }
   activation: {
@@ -838,10 +844,12 @@ export interface ExportOptions {
   exportVideos?: boolean
   exportEmojis?: boolean
   exportVoices?: boolean
+  emojiOnlyMode?: boolean
   dedupeVideoFiles?: boolean
   skipIfUnchanged?: boolean
   currentMessageCountHint?: number
   latestMessageTimestampHint?: number
+  currentEmojiCountHint?: number
 }
 
 export interface ContactExportOptions {

@@ -9,6 +9,9 @@ export interface ExportRecord {
   outputDir?: string   // 导出位置（兼容旧数据；新数据可能为文件或目录路径）
   outputTargetType?: 'file' | 'directory'
   exportEmojisIncluded?: boolean
+  exportKind?: 'chat' | 'emoji-assets'
+  sourceLatestMessageTimestamp?: number // Unix 秒
+  emojiItemCount?: number
 }
 
 type RecordStore = { [sessionUsername: string]: ExportRecord[] }
@@ -68,6 +71,23 @@ export class ExportRecordService {
     return result
   }
 
+  getLatestEmojiExportTimes(sessionUsernames: string[]): Record<string, number> {
+    const result: Record<string, number> = {}
+    for (const sessionUsername of sessionUsernames) {
+      const records = this.store[sessionUsername]
+      if (!records || records.length === 0) continue
+      for (let i = records.length - 1; i >= 0; i--) {
+        const record = records[i]
+        if (!record) continue
+        if (record.exportEmojisIncluded === true || record.exportKind === 'emoji-assets') {
+          if (record.exportTime) result[sessionUsername] = record.exportTime
+          break
+        }
+      }
+    }
+    return result
+  }
+
   getLatestRecord(sessionUsername: string, format?: string): ExportRecord | null {
     const records = this.store[sessionUsername]
     if (!records || records.length === 0) return null
@@ -89,7 +109,12 @@ export class ExportRecordService {
     messageCount: number,
     outputDir?: string,
     outputTargetType?: 'file' | 'directory',
-    exportEmojisIncluded?: boolean
+    exportEmojisIncluded?: boolean,
+    extra?: {
+      exportKind?: 'chat' | 'emoji-assets'
+      sourceLatestMessageTimestamp?: number
+      emojiItemCount?: number
+    }
   ) {
     if (!this.store[sessionUsername]) {
       this.store[sessionUsername] = []
@@ -100,7 +125,10 @@ export class ExportRecordService {
       messageCount,
       outputDir,
       outputTargetType,
-      exportEmojisIncluded
+      exportEmojisIncluded,
+      exportKind: extra?.exportKind,
+      sourceLatestMessageTimestamp: extra?.sourceLatestMessageTimestamp,
+      emojiItemCount: extra?.emojiItemCount
     })
     this.save()
   }

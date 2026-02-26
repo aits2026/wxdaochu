@@ -93,6 +93,8 @@ export interface ExportOptions {
   exportVideos?: boolean
   exportEmojis?: boolean
   exportVoices?: boolean
+  // 仅导出表情包资源（不生成聊天文本文件）
+  emojiOnlyMode?: boolean
   // 视频文件去重（多个消息可引用同一文件）；默认开启以节省空间
   dedupeVideoFiles?: boolean
   // 媒体路径映射表：消息实例键 -> 相对路径（避免仅用 createTime 发生同秒覆盖）
@@ -102,6 +104,7 @@ export interface ExportOptions {
   currentMessageCountHint?: number
   // Unix 秒级时间戳（会话最新消息时间）
   latestMessageTimestampHint?: number
+  currentEmojiCountHint?: number
 }
 
 export interface ContactExportOptions {
@@ -156,6 +159,21 @@ class ExportService {
 
   constructor() {
     this.configService = new ConfigService()
+  }
+
+  private dirHasAnyFile(targetDir: string): boolean {
+    try {
+      if (!fs.existsSync(targetDir)) return false
+      const entries = fs.readdirSync(targetDir, { withFileTypes: true })
+      for (const entry of entries) {
+        const fullPath = path.join(targetDir, entry.name)
+        if (entry.isFile()) return true
+        if (entry.isDirectory() && this.dirHasAnyFile(fullPath)) return true
+      }
+      return false
+    } catch {
+      return false
+    }
   }
 
   private cleanAccountDirName(dirName: string): string {
@@ -2403,7 +2421,14 @@ class ExportService {
         else if (options.format === 'html') ext = '.html'
 
         // 当导出媒体时，创建会话子文件夹，把文件和媒体都放进去
-        const hasMedia = options.exportImages || options.exportVideos || options.exportEmojis || options.exportVoices
+        const emojiOnlyMode = Boolean(
+          options.emojiOnlyMode &&
+          options.exportEmojis &&
+          !options.exportImages &&
+          !options.exportVideos &&
+          !options.exportVoices
+        )
+        const hasMedia = Boolean(options.exportImages || options.exportVideos || options.exportEmojis || options.exportVoices)
         const sessionOutputDir = hasMedia ? path.join(outputDir, safeName) : outputDir
         if (hasMedia && !fs.existsSync(sessionOutputDir)) {
           fs.mkdirSync(sessionOutputDir, { recursive: true })
@@ -2411,15 +2436,16 @@ class ExportService {
 
         const outputPath = path.join(sessionOutputDir, `${safeName}${ext}`)
 
-        const canTrySkipUnchanged = Boolean(
+        const canTrySkipTextUnchanged = Boolean(
           options.skipIfUnchanged &&
+          !emojiOnlyMode &&
           !hasMedia &&
           Number.isFinite(options.currentMessageCountHint) &&
           Number.isFinite(options.latestMessageTimestampHint) &&
           Number(options.currentMessageCountHint) >= 0 &&
           Number(options.latestMessageTimestampHint) > 0
         )
-        if (canTrySkipUnchanged) {
+        if (canTrySkipTextUnchanged) {
           const latestRecord = exportRecordService.getLatestRecord(sessionId, options.format)
           const currentMessageCount = Number(options.currentMessageCountHint ?? -1)
           const latestMessageTimestampMs = Math.floor(Number(options.latestMessageTimestampHint || 0) * 1000)
@@ -2446,6 +2472,47 @@ class ExportService {
               openTargetType: 'file',
               skipped: true,
               skipReason: 'unchanged-existing-file'
+            })
+            await new Promise(resolve => setImmediate(resolve))
+            continue
+          }
+        }
+
+        const canTrySkipEmojiUnchanged = Boolean(
+          options.skipIfUnchanged &&
+          emojiOnlyMode &&
+          Number.isFinite(options.currentEmojiCountHint) &&
+          Number.isFinite(options.latestMessageTimestampHint) &&
+          Number(options.currentEmojiCountHint) >= 0 &&
+          Number(options.latestMessageTimestampHint) > 0
+        )
+        if (canTrySkipEmojiUnchanged) {
+          const latestEmojiRecord = exportRecordService.getLatestRecord(sessionId, 'emoji-assets')
+          const currentEmojiCount = Number(options.currentEmojiCountHint ?? -1)
+          const currentLatestMessageTimestamp = Number(options.latestMessageTimestampHint || 0)
+          const sessionFolderHasFiles = this.dirHasAnyFile(sessionOutputDir)
+          const hasNoEmojiDataChange = Boolean(
+            latestEmojiRecord &&
+            latestEmojiRecord.emojiItemCount === currentEmojiCount &&
+            Number(latestEmojiRecord.sourceLatestMessageTimestamp || 0) >= currentLatestMessageTimestamp
+          )
+
+          if (hasNoEmojiDataChange && sessionFolderHasFiles) {
+            emitProgress({
+              current: 100,
+              total: 100,
+              currentSession: sessionInfo.displayName,
+              phase: 'complete',
+              detail: '已导出（无新增，已跳过）'
+            })
+            successCount++
+            sessionOutputs.push({
+              sessionId,
+              outputPath: sessionOutputDir,
+              openTargetPath: sessionOutputDir,
+              openTargetType: 'directory',
+              skipped: true,
+              skipReason: 'emoji-unchanged-existing-folder'
             })
             await new Promise(resolve => setImmediate(resolve))
             continue
@@ -2485,9 +2552,17 @@ class ExportService {
         const exportOpts = mediaPathMap ? { ...options, mediaPathMap } : options
 
         let result: { success: boolean; error?: string }
-
-        // 根据格式选择导出方法
-        if (options.format === 'json') {
+        if (emojiOnlyMode) {
+          emitProgress({
+            current: 100,
+            total: 100,
+            currentSession: sessionInfo.displayName,
+            phase: 'complete',
+            detail: '表情包导出完成'
+          })
+          result = { success: true }
+        } else if (options.format === 'json') {
+          // 根据格式选择导出方法
           result = await this.exportSessionToDetailedJson(sessionId, outputPath, exportOpts, emitProgress)
         } else if (options.format === 'chatlab' || options.format === 'chatlab-jsonl') {
           result = await this.exportSessionToChatLab(sessionId, outputPath, exportOpts, emitProgress)
@@ -2503,7 +2578,7 @@ class ExportService {
           successCount++
           sessionOutputs.push({
             sessionId,
-            outputPath,
+            outputPath: emojiOnlyMode ? sessionOutputDir : outputPath,
             openTargetPath: hasMedia ? sessionOutputDir : outputPath,
             openTargetType: hasMedia ? 'directory' : 'file'
           })
@@ -2554,7 +2629,9 @@ class ExportService {
     // 创建媒体输出目录（直接在会话文件夹下创建子目录）
     const imageOutDir = options.exportImages ? path.join(outputDir, 'images') : ''
     const videoOutDir = options.exportVideos ? path.join(outputDir, 'videos') : ''
-    const emojiOutDir = options.exportEmojis ? path.join(outputDir, 'emojis') : ''
+    const emojiOutDir = options.exportEmojis
+      ? (options.emojiOnlyMode ? outputDir : path.join(outputDir, 'emojis'))
+      : ''
 
     if (options.exportImages && !fs.existsSync(imageOutDir)) {
       fs.mkdirSync(imageOutDir, { recursive: true })

@@ -322,15 +322,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('export:getLatestExportTimes', sessionUsernames),
     getEmojiExportFlags: (sessionUsernames: string[]) =>
       ipcRenderer.invoke('export:getEmojiExportFlags', sessionUsernames),
+    getLatestEmojiExportTimes: (sessionUsernames: string[]) =>
+      ipcRenderer.invoke('export:getLatestEmojiExportTimes', sessionUsernames),
     saveExportRecord: (
       sessionUsername: string,
       format: string,
       messageCount: number,
       outputDir?: string,
       outputTargetType?: 'file' | 'directory',
-      exportEmojisIncluded?: boolean
+      exportEmojisIncluded?: boolean,
+      extra?: {
+        exportKind?: 'chat' | 'emoji-assets'
+        sourceLatestMessageTimestamp?: number
+        emojiItemCount?: number
+      }
     ) =>
-      ipcRenderer.invoke('export:saveExportRecord', sessionUsername, format, messageCount, outputDir, outputTargetType, exportEmojisIncluded),
+      ipcRenderer.invoke('export:saveExportRecord', sessionUsername, format, messageCount, outputDir, outputTargetType, exportEmojisIncluded, extra),
   },
 
   // 激活

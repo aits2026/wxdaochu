@@ -834,7 +834,8 @@
       }
     }
 
-    &.is-chat-text-card {
+    &.is-chat-text-card,
+    &.is-emoji-card {
       outline: none;
 
       &:focus-visible {

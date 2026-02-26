@@ -38,9 +38,11 @@ interface ExportOptions {
   exportVideos: boolean
   exportEmojis: boolean
   exportVoices: boolean
+  emojiOnlyMode?: boolean
   skipIfUnchanged?: boolean
   currentMessageCountHint?: number
   latestMessageTimestampHint?: number
+  currentEmojiCountHint?: number
 }
 
 interface ContactExportOptions {
@@ -87,7 +89,8 @@ const SESSION_SORT_STATS_WARMUP_LIMIT = 80
 const SESSION_SORT_STATS_WARMUP_START_DELAY_MS = 160
 const SESSION_SORT_STATS_WARMUP_YIELD_EVERY = 6
 const CHAT_TEXT_EXPORT_SUBDIR_NAME = '聊天文本'
-const OPEN_CHAT_TEXT_STATUS_OVERVIEW_EVENT = 'vxdaochu:open-chat-text-status-overview'
+const EMOJI_EXPORT_SUBDIR_NAME = '表情包'
+const OPEN_EXPORT_OVERVIEW_EVENT = 'vxdaochu:open-export-overview'
 
 interface SessionImageDecryptOverview {
   total: number
@@ -240,6 +243,29 @@ interface ChatExportBatchTaskProgress {
   completed: number
   successCount: number
   failCount: number
+}
+
+interface QueuedEmojiExportJob {
+  taskId: string
+  sessionId: string
+  sessionName: string
+  emojiCount?: number
+  latestMessageTimestamp?: number
+  outputDir: string
+  queuedAt: number
+  batchTaskId: string
+}
+
+interface EmojiExportBatchTaskProgress {
+  total: number
+  completed: number
+  successCount: number
+  failCount: number
+}
+
+interface EmojiBatchSessionOutcome {
+  status: 'exported' | 'skipped'
+  at: number
 }
 
 interface SessionExportRecord {
@@ -688,6 +714,7 @@ function ExportPage() {
   const [loadedSessionCountUsernames, setLoadedSessionCountUsernames] = useState<Set<string>>(new Set())
   const [sessionLatestExportTimeMap, setSessionLatestExportTimeMap] = useState<Record<string, number | null>>({})
   const [sessionEmojiExportFlagMap, setSessionEmojiExportFlagMap] = useState<Record<string, boolean | null>>({})
+  const [sessionEmojiLatestExportTimeMap, setSessionEmojiLatestExportTimeMap] = useState<Record<string, number | null>>({})
   const [searchKeyword, setSearchKeyword] = useState('')
   const [sessionTypeFilter, setSessionTypeFilter] = useState<SessionTypeFilter>('private')
   const [sessionListSortKey, setSessionListSortKey] = useState<SessionListSortKey>('messageCount')
@@ -783,6 +810,8 @@ function ExportPage() {
   const [showChatTextCardExportModal, setShowChatTextCardExportModal] = useState(false)
   const [showChatTextCardStatusModal, setShowChatTextCardStatusModal] = useState(false)
   const [showChatTextCardExportFormatPicker, setShowChatTextCardExportFormatPicker] = useState(false)
+  const [showEmojiCardExportModal, setShowEmojiCardExportModal] = useState(false)
+  const [showEmojiCardStatusModal, setShowEmojiCardStatusModal] = useState(false)
   const [chatTextCardExportOptions, setChatTextCardExportOptions] = useState<ExportOptions>({
     format: 'json',
     startDate: '',
@@ -796,10 +825,17 @@ function ExportPage() {
   const [hideImageDecryptExportTip, setHideImageDecryptExportTip] = useState(false)
   const [runningChatExportSessionId, setRunningChatExportSessionId] = useState<string | null>(null)
   const [queuedChatExportSessionIds, setQueuedChatExportSessionIds] = useState<Set<string>>(new Set())
+  const [runningEmojiExportSessionId, setRunningEmojiExportSessionId] = useState<string | null>(null)
+  const [queuedEmojiExportSessionIds, setQueuedEmojiExportSessionIds] = useState<Set<string>>(new Set())
+  const [sessionEmojiBatchOutcomeMap, setSessionEmojiBatchOutcomeMap] = useState<Record<string, EmojiBatchSessionOutcome>>({})
   const hasRunningChatExportTask = Boolean(runningChatExportSessionId)
   const hasPendingChatExportTask = queuedChatExportSessionIds.size > 0
   const chatTextExportFolder = useMemo(
     () => appendPathSegment(exportFolder, CHAT_TEXT_EXPORT_SUBDIR_NAME),
+    [exportFolder]
+  )
+  const emojiExportFolder = useMemo(
+    () => appendPathSegment(exportFolder, EMOJI_EXPORT_SUBDIR_NAME),
     [exportFolder]
   )
 
@@ -847,9 +883,13 @@ function ExportPage() {
   const sessionDetailDiagRunIdRef = useRef(0)
   const sessionLatestExportTimesRequestIdRef = useRef(0)
   const sessionEmojiExportFlagsRequestIdRef = useRef(0)
+  const sessionEmojiLatestExportTimesRequestIdRef = useRef(0)
   const chatExportQueueRef = useRef<QueuedChatExportJob[]>([])
   const chatExportWorkerRunningRef = useRef(false)
   const chatExportBatchTaskProgressRef = useRef<Record<string, ChatExportBatchTaskProgress>>({})
+  const emojiExportQueueRef = useRef<QueuedEmojiExportJob[]>([])
+  const emojiExportWorkerRunningRef = useRef(false)
+  const emojiExportBatchTaskProgressRef = useRef<Record<string, EmojiExportBatchTaskProgress>>({})
 
   useEffect(() => {
     sessionTypeFilterRef.current = sessionTypeFilter
@@ -863,6 +903,16 @@ function ExportPage() {
       nextQueued.add(job.sessionId)
     }
     setQueuedChatExportSessionIds(nextQueued)
+  }, [])
+
+  const syncEmojiExportQueueStatus = useCallback((nextRunningSessionId: string | null) => {
+    setRunningEmojiExportSessionId(nextRunningSessionId)
+    const nextQueued = new Set<string>()
+    for (const job of emojiExportQueueRef.current) {
+      if (nextRunningSessionId && job.sessionId === nextRunningSessionId) continue
+      nextQueued.add(job.sessionId)
+    }
+    setQueuedEmojiExportSessionIds(nextQueued)
   }, [])
 
   useEffect(() => {
@@ -1506,6 +1556,8 @@ function ExportPage() {
     if (sessions.length === 0) {
       setSessionLatestExportTimeMap({})
       setSessionEmojiExportFlagMap({})
+      setSessionEmojiLatestExportTimeMap({})
+      setSessionEmojiBatchOutcomeMap({})
       return
     }
 
@@ -1525,6 +1577,30 @@ function ExportPage() {
     setSessionEmojiExportFlagMap(prev => {
       let changed = false
       const next: Record<string, boolean | null> = {}
+      for (const [username, value] of Object.entries(prev)) {
+        if (currentUsernames.has(username)) {
+          next[username] = value
+        } else {
+          changed = true
+        }
+      }
+      return changed ? next : prev
+    })
+    setSessionEmojiLatestExportTimeMap(prev => {
+      let changed = false
+      const next: Record<string, number | null> = {}
+      for (const [username, value] of Object.entries(prev)) {
+        if (currentUsernames.has(username)) {
+          next[username] = value
+        } else {
+          changed = true
+        }
+      }
+      return changed ? next : prev
+    })
+    setSessionEmojiBatchOutcomeMap(prev => {
+      let changed = false
+      const next: Record<string, EmojiBatchSessionOutcome> = {}
       for (const [username, value] of Object.entries(prev)) {
         if (currentUsernames.has(username)) {
           next[username] = value
@@ -1609,6 +1685,43 @@ function ExportPage() {
       }
     })()
   }, [activeTab, sessions, sessionEmojiExportFlagMap])
+
+  useEffect(() => {
+    if (activeTab !== 'chat' || sessions.length === 0) return
+
+    const missingUsernames = sessions
+      .map(session => session.username)
+      .filter(username => !(username in sessionEmojiLatestExportTimeMap))
+
+    if (missingUsernames.length === 0) return
+
+    const requestId = ++sessionEmojiLatestExportTimesRequestIdRef.current
+
+    void (async () => {
+      try {
+        const latestMap = await window.electronAPI.export.getLatestEmojiExportTimes(missingUsernames)
+        if (requestId !== sessionEmojiLatestExportTimesRequestIdRef.current) return
+
+        setSessionEmojiLatestExportTimeMap(prev => {
+          const next = { ...prev }
+          for (const username of missingUsernames) {
+            next[username] = typeof latestMap?.[username] === 'number' ? latestMap[username] : null
+          }
+          return next
+        })
+      } catch (e) {
+        console.error('加载会话表情包最近导出时间失败:', e)
+        if (requestId !== sessionEmojiLatestExportTimesRequestIdRef.current) return
+        setSessionEmojiLatestExportTimeMap(prev => {
+          const next = { ...prev }
+          for (const username of missingUsernames) {
+            if (!(username in next)) next[username] = null
+          }
+          return next
+        })
+      }
+    })()
+  }, [activeTab, sessions, sessionEmojiLatestExportTimeMap])
 
   const sessionByUsername = useMemo(() => {
     const map = new Map<string, ChatSession>()
@@ -2736,9 +2849,75 @@ function ExportPage() {
   const sessionEmojiCardTotalSessions = sessions.length
   const sessionEmojiCardExportedSessions = useMemo(() => (
     sessions.reduce((count, session) => {
-      return sessionEmojiExportFlagMap[session.username] === true ? count + 1 : count
+      const latestExportTime = sessionEmojiLatestExportTimeMap[session.username]
+      return (typeof latestExportTime === 'number' && Number.isFinite(latestExportTime) && latestExportTime > 0)
+        ? count + 1
+        : count
     }, 0)
-  ), [sessionEmojiExportFlagMap, sessions])
+  ), [sessionEmojiLatestExportTimeMap, sessions])
+  const emojiStatusRows = useMemo(() => {
+    type EmojiStatus = 'running' | 'queued' | 'not-exported' | 'exported' | 'skipped'
+    const statusPriority: Record<EmojiStatus, number> = {
+      running: 0,
+      queued: 1,
+      'not-exported': 2,
+      skipped: 3,
+      exported: 4
+    }
+    return sessions
+      .map((session) => {
+        const latestExportTime = sessionEmojiLatestExportTimeMap[session.username]
+        const hasExported = typeof latestExportTime === 'number' && Number.isFinite(latestExportTime) && latestExportTime > 0
+        const recentOutcome = sessionEmojiBatchOutcomeMap[session.username]
+        const status: EmojiStatus =
+          runningEmojiExportSessionId === session.username
+            ? 'running'
+            : queuedEmojiExportSessionIds.has(session.username)
+              ? 'queued'
+              : (recentOutcome?.status === 'skipped' && hasExported)
+                ? 'skipped'
+                : hasExported
+                  ? 'exported'
+                  : 'not-exported'
+
+        return {
+          session,
+          status,
+          latestExportTime: hasExported ? latestExportTime : null
+        }
+      })
+      .sort((a, b) => {
+        const statusDiff = statusPriority[a.status] - statusPriority[b.status]
+        if (statusDiff !== 0) return statusDiff
+        if ((a.status === 'exported' || a.status === 'skipped') && (b.status === 'exported' || b.status === 'skipped')) {
+          return (b.latestExportTime || 0) - (a.latestExportTime || 0)
+        }
+        return (b.session.lastTimestamp || 0) - (a.session.lastTimestamp || 0)
+      })
+  }, [
+    queuedEmojiExportSessionIds,
+    runningEmojiExportSessionId,
+    sessionEmojiBatchOutcomeMap,
+    sessionEmojiLatestExportTimeMap,
+    sessions
+  ])
+  const emojiStatusSummary = useMemo(() => {
+    let running = 0
+    let queued = 0
+    let exported = 0
+    let skipped = 0
+    let notExported = 0
+    for (const row of emojiStatusRows) {
+      if (row.status === 'running') running += 1
+      else if (row.status === 'queued') queued += 1
+      else if (row.status === 'skipped') {
+        skipped += 1
+        exported += 1
+      } else if (row.status === 'exported') exported += 1
+      else notExported += 1
+    }
+    return { running, queued, exported, skipped, notExported, total: sessionEmojiCardTotalSessions }
+  }, [emojiStatusRows, sessionEmojiCardTotalSessions])
   const groupFriendMembersForPopup = useMemo(() => {
     const friendMembers = sessionDetail?.groupInfo?.friendMembers || []
     if (friendMembers.length <= 1) return friendMembers
@@ -3551,6 +3730,7 @@ function ExportPage() {
             setSessionLatestExportTimeMap(prev => ({ ...prev, [job.sessionId]: Date.now() }))
             if (job.options.exportEmojis) {
               setSessionEmojiExportFlagMap(prev => ({ ...prev, [job.sessionId]: true }))
+              setSessionEmojiLatestExportTimeMap(prev => ({ ...prev, [job.sessionId]: Date.now() }))
             }
           }
           finishBatchJob(true)
@@ -3832,6 +4012,287 @@ function ExportPage() {
     taskCenterPatchTask
   ])
 
+  const executeQueuedEmojiExportJob = useCallback(async (job: QueuedEmojiExportJob) => {
+    const finishBatchJob = (ok: boolean, errorMessage?: string) => {
+      const batch = emojiExportBatchTaskProgressRef.current[job.batchTaskId]
+      if (!batch) return
+      batch.completed += 1
+      if (ok) batch.successCount += 1
+      else batch.failCount += 1
+
+      const isComplete = batch.completed >= batch.total
+      const hasAnySuccess = batch.successCount > 0
+      taskCenterPatchTask(job.batchTaskId, {
+        status: isComplete ? (hasAnySuccess ? 'success' : 'error') : 'running',
+        progressCurrent: batch.completed,
+        progressTotal: batch.total,
+        successCount: batch.successCount,
+        failCount: batch.failCount,
+        phase: isComplete ? '导出完成' : '正在导出...',
+        detail: isComplete
+          ? `共 ${batch.total.toLocaleString()} 个会话，成功 ${batch.successCount.toLocaleString()}，失败 ${batch.failCount.toLocaleString()}`
+          : `共 ${batch.total.toLocaleString()} 个会话，可继续操作页面`,
+        currentName: isComplete ? '' : job.sessionName,
+        error: isComplete && !hasAnySuccess ? (errorMessage || '批量导出失败') : undefined
+      })
+      if (isComplete) {
+        delete emojiExportBatchTaskProgressRef.current[job.batchTaskId]
+      }
+    }
+
+    const exportOptions: ExportOptions = {
+      format: 'json',
+      startDate: '',
+      endDate: '',
+      exportAvatars: false,
+      exportImages: false,
+      exportVideos: false,
+      exportEmojis: true,
+      exportVoices: false,
+      emojiOnlyMode: true,
+      skipIfUnchanged: true,
+      latestMessageTimestampHint: job.latestMessageTimestamp
+    }
+    if (typeof job.emojiCount === 'number' && Number.isFinite(job.emojiCount) && job.emojiCount >= 0) {
+      exportOptions.currentEmojiCountHint = job.emojiCount
+    }
+
+    try {
+      const result = await window.electronAPI.export.exportSessions(
+        [job.sessionId],
+        job.outputDir,
+        exportOptions
+      )
+
+      if (result.success) {
+        const sessionOutput = result.sessionOutputs?.find(item => item.sessionId === job.sessionId) || result.sessionOutputs?.[0]
+        const exportOpenTargetPath = sessionOutput?.openTargetPath || job.outputDir
+        const exportOpenTargetType = sessionOutput?.openTargetType || 'directory'
+        const wasSkipped = sessionOutput?.skipped === true
+
+        if (!wasSkipped) {
+          await window.electronAPI.export.saveExportRecord(
+            job.sessionId,
+            'emoji-assets',
+            typeof job.emojiCount === 'number' ? job.emojiCount : 0,
+            exportOpenTargetPath,
+            exportOpenTargetType,
+            true,
+            {
+              exportKind: 'emoji-assets',
+              sourceLatestMessageTimestamp: job.latestMessageTimestamp,
+              emojiItemCount: typeof job.emojiCount === 'number' ? job.emojiCount : undefined
+            }
+          )
+
+          const now = Date.now()
+          setSessionEmojiExportFlagMap(prev => ({ ...prev, [job.sessionId]: true }))
+          setSessionEmojiLatestExportTimeMap(prev => ({ ...prev, [job.sessionId]: now }))
+          setSessionEmojiBatchOutcomeMap(prev => ({
+            ...prev,
+            [job.sessionId]: { status: 'exported', at: now }
+          }))
+        } else {
+          setSessionEmojiExportFlagMap(prev => ({ ...prev, [job.sessionId]: true }))
+          setSessionEmojiLatestExportTimeMap(prev => ({
+            ...prev,
+            [job.sessionId]: (typeof prev[job.sessionId] === 'number' && Number.isFinite(prev[job.sessionId]) && (prev[job.sessionId] || 0) > 0)
+              ? prev[job.sessionId]
+              : Date.now()
+          }))
+          setSessionEmojiBatchOutcomeMap(prev => ({
+            ...prev,
+            [job.sessionId]: { status: 'skipped', at: Date.now() }
+          }))
+        }
+
+        finishBatchJob(true)
+        return
+      }
+
+      finishBatchJob(false, result.error || '导出失败')
+    } catch (e) {
+      console.error('批量导出表情包失败:', e)
+      const errorMessage = e instanceof Error ? e.message : String(e)
+      finishBatchJob(false, errorMessage)
+    }
+  }, [taskCenterPatchTask])
+
+  const processNextQueuedEmojiExport = useCallback(async () => {
+    if (emojiExportWorkerRunningRef.current) return
+    const nextJob = emojiExportQueueRef.current[0]
+    if (!nextJob) return
+
+    emojiExportWorkerRunningRef.current = true
+    syncEmojiExportQueueStatus(nextJob.sessionId)
+    taskCenterPatchTask(nextJob.batchTaskId, {
+      status: 'running',
+      phase: '正在导出...',
+      detail: `共 ${(emojiExportBatchTaskProgressRef.current[nextJob.batchTaskId]?.total || 0).toLocaleString()} 个会话，可继续操作页面`,
+      currentName: nextJob.sessionName
+    })
+    taskCenterSetActiveExportTaskId(null)
+
+    try {
+      await executeQueuedEmojiExportJob(nextJob)
+    } finally {
+      emojiExportQueueRef.current = emojiExportQueueRef.current.filter(job => job.taskId !== nextJob.taskId)
+      emojiExportWorkerRunningRef.current = false
+      taskCenterSetActiveExportTaskId(null)
+      syncEmojiExportQueueStatus(null)
+      window.setTimeout(() => { void processNextQueuedEmojiExport() }, 0)
+    }
+  }, [executeQueuedEmojiExportJob, syncEmojiExportQueueStatus, taskCenterPatchTask, taskCenterSetActiveExportTaskId])
+
+  const enqueueBatchEmojiExportJobsChunked = useCallback(async (params: {
+    sessionIds: string[]
+    batchTaskId: string
+    chunkSize?: number
+  }) => {
+    const {
+      sessionIds,
+      batchTaskId,
+      chunkSize = 120
+    } = params
+
+    if (!exportFolder || !emojiExportFolder || sessionIds.length === 0) return 0
+
+    const queueStartedAt = Date.now()
+    let queuedCount = 0
+    let hasStartedWorker = false
+
+    taskCenterHighlightTask(batchTaskId)
+    taskCenterOpen()
+
+    for (let offset = 0; offset < sessionIds.length; offset += chunkSize) {
+      const chunk = sessionIds.slice(offset, offset + chunkSize)
+      if (chunk.length === 0) continue
+
+      const jobs: QueuedEmojiExportJob[] = chunk.map((sessionId, index) => {
+        const absoluteIndex = offset + index
+        const sessionMeta = sessionByUsername.get(sessionId)
+        const sessionName =
+          (sessionDetail?.wxid === sessionId ? (sessionDetail?.remark || sessionDetail?.nickName || sessionDetail?.alias) : undefined) ||
+          sessionMeta?.displayName ||
+          sessionId
+        const emojiCount =
+          (sessionDetail?.wxid === sessionId ? sessionDetail.emojiCount : undefined) ??
+          sessionCardStatsMap[sessionId]?.emojiCount
+        const queuedAt = queueStartedAt + absoluteIndex
+
+        return {
+          taskId: `emoji-export:${sessionId}:${queuedAt}`,
+          sessionId,
+          sessionName,
+          emojiCount,
+          latestMessageTimestamp: sessionMeta?.lastTimestamp,
+          outputDir: emojiExportFolder,
+          queuedAt,
+          batchTaskId
+        }
+      })
+
+      emojiExportQueueRef.current = [...emojiExportQueueRef.current, ...jobs]
+      queuedCount += jobs.length
+
+      taskCenterPatchTask(batchTaskId, {
+        phase: queuedCount < sessionIds.length ? '准备队列...' : '等待执行',
+        detail: queuedCount < sessionIds.length
+          ? `正在准备导出队列 ${queuedCount.toLocaleString()} / ${sessionIds.length.toLocaleString()} 个会话`
+          : `共 ${sessionIds.length.toLocaleString()} 个会话，已加入队列`
+      })
+
+      syncEmojiExportQueueStatus(emojiExportWorkerRunningRef.current ? runningEmojiExportSessionId : null)
+      if (!hasStartedWorker) {
+        hasStartedWorker = true
+        void processNextQueuedEmojiExport()
+      }
+
+      if (queuedCount < sessionIds.length) {
+        await yieldToMainThread()
+      }
+    }
+
+    return queuedCount
+  }, [
+    emojiExportFolder,
+    exportFolder,
+    processNextQueuedEmojiExport,
+    runningEmojiExportSessionId,
+    sessionByUsername,
+    sessionCardStatsMap,
+    sessionDetail?.alias,
+    sessionDetail?.emojiCount,
+    sessionDetail?.nickName,
+    sessionDetail?.remark,
+    sessionDetail?.wxid,
+    syncEmojiExportQueueStatus,
+    taskCenterHighlightTask,
+    taskCenterOpen,
+    taskCenterPatchTask
+  ])
+
+  const startEmojiCardExportAll = useCallback(async () => {
+    if (!exportFolder) {
+      alert('请先在顶部设置导出目录')
+      return
+    }
+    if (sessions.length === 0) return
+
+    const totalSessions = sessions.length
+    const batchTaskId = `emoji-export-batch:${Date.now()}`
+    emojiExportBatchTaskProgressRef.current[batchTaskId] = {
+      total: totalSessions,
+      completed: 0,
+      successCount: 0,
+      failCount: 0
+    }
+    setSessionEmojiBatchOutcomeMap({})
+    taskCenterUpsertTask({
+      id: batchTaskId,
+      kind: 'emoji-export-batch',
+      typeLabel: '表情包批量导出',
+      sessionName: '全部会话',
+      status: 'pending',
+      progressCurrent: 0,
+      progressTotal: totalSessions,
+      successCount: 0,
+      failCount: 0,
+      unitLabel: '个会话',
+      outputDir: emojiExportFolder,
+      outputTargetType: 'directory',
+      phase: '准备队列...',
+      detail: `正在准备导出队列 0 / ${totalSessions.toLocaleString()} 个会话`,
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    })
+    setShowEmojiCardExportModal(false)
+
+    await yieldToMainThread()
+
+    const queuedCount = await enqueueBatchEmojiExportJobsChunked({
+      sessionIds: sessions.map(session => session.username),
+      batchTaskId
+    })
+
+    if (queuedCount <= 0) {
+      delete emojiExportBatchTaskProgressRef.current[batchTaskId]
+      taskCenterPatchTask(batchTaskId, {
+        status: 'error',
+        phase: '导出失败',
+        detail: '未能创建导出队列',
+        error: '未能创建导出队列'
+      })
+    }
+  }, [
+    emojiExportFolder,
+    enqueueBatchEmojiExportJobsChunked,
+    exportFolder,
+    sessions,
+    taskCenterPatchTask,
+    taskCenterUpsertTask
+  ])
+
   // 导出聊天记录（支持排队）
   const startExport = useCallback(async () => {
     if (!selectedSession || !exportFolder) return
@@ -3848,27 +4309,52 @@ function ExportPage() {
   ])
 
   const openChatTextCardExportModal = useCallback(() => {
+    setShowEmojiCardExportModal(false)
+    setShowEmojiCardStatusModal(false)
     setShowChatTextCardStatusModal(false)
     setShowChatTextCardExportFormatPicker(false)
     setShowChatTextCardExportModal(true)
   }, [])
 
   const openChatTextCardStatusModal = useCallback(() => {
+    setShowEmojiCardExportModal(false)
+    setShowEmojiCardStatusModal(false)
     setShowChatTextCardExportModal(false)
     setShowChatTextCardExportFormatPicker(false)
     setShowChatTextCardStatusModal(true)
   }, [])
 
+  const openEmojiCardExportModal = useCallback(() => {
+    setShowChatTextCardExportModal(false)
+    setShowChatTextCardStatusModal(false)
+    setShowChatTextCardExportFormatPicker(false)
+    setShowEmojiCardStatusModal(false)
+    setShowEmojiCardExportModal(true)
+  }, [])
+
+  const openEmojiCardStatusModal = useCallback(() => {
+    setShowChatTextCardExportModal(false)
+    setShowChatTextCardStatusModal(false)
+    setShowChatTextCardExportFormatPicker(false)
+    setShowEmojiCardExportModal(false)
+    setShowEmojiCardStatusModal(true)
+  }, [])
+
   useEffect(() => {
-    const handleOpenFromTaskCenter = () => {
+    const handleOpenFromTaskCenter = (event: Event) => {
+      const detail = (event as CustomEvent<{ taskKind?: string }>).detail
       setActiveTab('chat')
+      if (detail?.taskKind === 'emoji-export-batch') {
+        openEmojiCardStatusModal()
+        return
+      }
       openChatTextCardStatusModal()
     }
-    window.addEventListener(OPEN_CHAT_TEXT_STATUS_OVERVIEW_EVENT, handleOpenFromTaskCenter as EventListener)
+    window.addEventListener(OPEN_EXPORT_OVERVIEW_EVENT, handleOpenFromTaskCenter as EventListener)
     return () => {
-      window.removeEventListener(OPEN_CHAT_TEXT_STATUS_OVERVIEW_EVENT, handleOpenFromTaskCenter as EventListener)
+      window.removeEventListener(OPEN_EXPORT_OVERVIEW_EVENT, handleOpenFromTaskCenter as EventListener)
     }
-  }, [openChatTextCardStatusModal])
+  }, [openChatTextCardStatusModal, openEmojiCardStatusModal])
 
   const startChatTextCardExportAll = useCallback(async () => {
     if (!exportFolder) {
@@ -4212,8 +4698,16 @@ function ExportPage() {
                   </div>
                 </div>
                 <div
-                  className="emoji-overview-trigger-card is-static"
-                  title="按会话去重统计：已导出到电脑且勾选表情包的会话数"
+                  className="emoji-overview-trigger-card is-emoji-card"
+                  title="点击查看全部会话表情包导出状态"
+                  role="button"
+                  tabIndex={0}
+                  onClick={openEmojiCardStatusModal}
+                  onKeyDown={(e) => {
+                    if (e.key !== 'Enter' && e.key !== ' ') return
+                    e.preventDefault()
+                    openEmojiCardStatusModal()
+                  }}
                 >
                   <div className="emoji-overview-trigger-head">
                     <span className="emoji-overview-trigger-icon" aria-hidden="true">
@@ -4225,6 +4719,20 @@ function ExportPage() {
                     <strong>
                       {sessionEmojiCardExportedSessions.toLocaleString()} / {sessionEmojiCardTotalSessions.toLocaleString()}
                     </strong>
+                  </div>
+                  <div className="emoji-overview-trigger-actions">
+                    <button
+                      type="button"
+                      className="emoji-overview-trigger-action-btn"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        openEmojiCardExportModal()
+                      }}
+                      disabled={sessions.length === 0}
+                      title="导出全部会话表情包"
+                    >
+                      导出
+                    </button>
                   </div>
                 </div>
               </div>
@@ -6840,6 +7348,184 @@ function ExportPage() {
                 type="button"
                 className="chat-text-card-modal-btn"
                 onClick={() => setShowChatTextCardStatusModal(false)}
+              >
+                关闭
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showEmojiCardExportModal && (
+        <div
+          className="export-overlay"
+          onClick={() => setShowEmojiCardExportModal(false)}
+        >
+          <div className="chat-text-card-export-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="chat-text-card-modal-header">
+              <div>
+                <h3>导出表情包</h3>
+                <p>范围：全部会话（使用顶部统一导出目录）</p>
+              </div>
+              <button
+                type="button"
+                className="group-friends-close-btn"
+                onClick={() => setShowEmojiCardExportModal(false)}
+                aria-label="关闭表情包导出弹窗"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="chat-text-card-modal-body">
+              <div className="chat-text-card-setting-block">
+                <div className="chat-text-card-setting-row">
+                  <h4>导出内容</h4>
+                  <div className="chat-text-card-setting-row-value">
+                    <Smile size={16} />
+                    <span>全部会话表情包</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="chat-text-card-setting-block">
+                <div className="chat-text-card-setting-row">
+                  <h4>跳过规则</h4>
+                  <div className="chat-text-card-setting-row-value">
+                    <span>无新增且目标文件夹有内容时跳过</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className={`chat-text-card-export-path-note ${exportFolder ? '' : 'is-empty'}`}>
+                <span className="label">导出目录</span>
+                <span className="path" title={emojiExportFolder || '未设置导出目录'}>{emojiExportFolder || '未设置导出目录'}</span>
+              </div>
+            </div>
+
+            <div className="chat-text-card-modal-actions">
+              <button
+                type="button"
+                className="chat-text-card-modal-btn"
+                onClick={() => setShowEmojiCardExportModal(false)}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                className="chat-text-card-modal-btn primary"
+                onClick={startEmojiCardExportAll}
+                disabled={!exportFolder || sessions.length === 0}
+              >
+                开始导出
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showEmojiCardStatusModal && (
+        <div
+          className="export-overlay"
+          onClick={() => setShowEmojiCardStatusModal(false)}
+        >
+          <div className="chat-text-card-status-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="chat-text-card-modal-header">
+              <div>
+                <h3>表情包导出状态</h3>
+              </div>
+              <button
+                type="button"
+                className="group-friends-close-btn"
+                onClick={() => setShowEmojiCardStatusModal(false)}
+                aria-label="关闭表情包导出状态弹窗"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="chat-text-card-status-summary">
+              <span className="chat-text-card-status-summary-item compact">
+                <span className="label">已导出</span>
+                <strong>{emojiStatusSummary.exported.toLocaleString()} / {emojiStatusSummary.total.toLocaleString()}</strong>
+              </span>
+              <span className="chat-text-card-status-summary-item compact">
+                <span className="label">导出中</span>
+                <strong>{emojiStatusSummary.running.toLocaleString()}</strong>
+              </span>
+              <span className="chat-text-card-status-summary-item compact">
+                <span className="label">排队中</span>
+                <strong>{emojiStatusSummary.queued.toLocaleString()}</strong>
+              </span>
+              <span className="chat-text-card-status-summary-item compact">
+                <span className="label">已跳过</span>
+                <strong>{emojiStatusSummary.skipped.toLocaleString()}</strong>
+              </span>
+              <span className="chat-text-card-status-summary-item compact">
+                <span className="label">未导出</span>
+                <strong>{emojiStatusSummary.notExported.toLocaleString()}</strong>
+              </span>
+            </div>
+
+            <div className="chat-text-card-status-list" role="list" aria-label="全部会话表情包导出状态">
+              {emojiStatusRows.length === 0 ? (
+                <div className="chat-text-card-status-empty">暂无会话</div>
+              ) : (
+                emojiStatusRows.map(({ session, status, latestExportTime }) => {
+                  const statusLabel = status === 'running'
+                    ? '导出中'
+                    : status === 'queued'
+                      ? '排队中'
+                      : status === 'skipped'
+                        ? '已跳过'
+                        : status === 'exported'
+                          ? '已导出'
+                          : '未导出'
+                  const statusClass = status === 'running'
+                    ? 'running'
+                    : status === 'queued'
+                      ? 'checking'
+                      : status === 'exported' || status === 'skipped'
+                        ? 'success'
+                        : 'warning'
+                  const recentLabel = latestExportTime ? formatRecentExportTime(latestExportTime) : '--'
+                  const accountTypeLabel = session.accountType === 'group'
+                    ? '群聊'
+                    : session.accountType === 'official'
+                      ? '公众号'
+                      : '私聊'
+
+                  return (
+                    <div key={session.username} className="chat-text-card-status-card" role="listitem" title={session.username}>
+                      <div className="chat-text-card-status-card-head">
+                        <span className="chat-text-card-status-session-name" title={session.displayName || session.username}>
+                          {session.displayName || session.username}
+                        </span>
+                        <span className={`session-media-status-pill ${statusClass}`}>
+                          {status === 'running' && <Loader2 size={11} className="spin" />}
+                          <span>{statusLabel}</span>
+                        </span>
+                      </div>
+                      <div className="chat-text-card-status-card-meta">
+                        <span className="chat-text-card-status-type-pill">{accountTypeLabel}</span>
+                        <span
+                          className="chat-text-card-status-time"
+                          title={latestExportTime ? new Date(latestExportTime).toLocaleString('zh-CN') : '未导出'}
+                        >
+                          {recentLabel || '--'}
+                        </span>
+                      </div>
+                    </div>
+                  )
+                })
+              )}
+            </div>
+
+            <div className="chat-text-card-modal-actions">
+              <button
+                type="button"
+                className="chat-text-card-modal-btn"
+                onClick={() => setShowEmojiCardStatusModal(false)}
               >
                 关闭
               </button>
