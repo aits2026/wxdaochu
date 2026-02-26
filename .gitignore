@@ -44,6 +44,9 @@ Thumbs.db
 
 # Docs
 Docs
+!docs/
+!docs/changes/
+!docs/changes/**
 语音转文字接口文档
 
 # WeFolw

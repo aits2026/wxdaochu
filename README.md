@@ -13,7 +13,7 @@
 [![React](https://img.shields.io/badge/React-19-61DAFB.svg?logo=react)]()
 [![Telegram](https://img.shields.io/badge/Telegram-Join%20Group-26A5E4.svg?logo=telegram)](https://t.me/nobody2026go)
 
-[功能特性](#-功能特性) • [快速开始](#-快速开始) • [技术栈](#️-技术栈) • [许可证](#-许可证)
+[功能特性](#-功能特性) • [快速开始](#-快速开始) • [技术栈](#️-技术栈) • [迭代记录](docs/changes/README.md) • [许可证](#-许可证)
 
 </div>
 
@@ -105,6 +105,13 @@ npm run build:core
 ```
 
 构建产物位于 `release/` 目录。
+
+---
+
+## 📝 迭代记录（AI Commit Journal）
+
+- 每次提交会自动生成一份变更记录文档（含“改了什么 / 为什么做 / AI 协作过程摘要”）
+- 快速入口：[`docs/changes/README.md`](docs/changes/README.md)
 
 ---
 

@@ -1,0 +1,23 @@
+#!/bin/sh
+set -e
+
+if [ "${AI_COMMIT_JOURNAL_NOOP_HOOK:-}" = "1" ]; then
+  exit 0
+fi
+
+repo_root=$(git rev-parse --show-toplevel 2>/dev/null || true)
+if [ -z "$repo_root" ]; then
+  exit 0
+fi
+
+if [ "${AI_COMMIT_JOURNAL_WRAPPER:-}" = "1" ]; then
+  # Wrapper mode already generated and staged the journal file.
+  exit 0
+fi
+
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "ai-commit-journal: python3 not found" >&2
+  exit 1
+fi
+
+python3 "$repo_root/scripts/ai_commit_journal.py" hook-pre-commit
