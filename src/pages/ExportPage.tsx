@@ -297,6 +297,16 @@ interface ImageBatchSessionOutcome {
   at: number
 }
 
+interface ImageBatchSessionLiveProgress {
+  sessionId: string
+  sessionName: string
+  phase: 'preparing' | 'decrypting' | 'complete'
+  decryptCurrent?: number
+  decryptTotal?: number
+  exportedCount?: number
+  rawDetail?: string
+}
+
 interface QueuedVoiceExportJob {
   taskId: string
   sessionId: string
@@ -389,6 +399,25 @@ const appendPathSegment = (baseDir: string, segment: string) => {
 const yieldToMainThread = () => new Promise<void>(resolve => {
   window.setTimeout(resolve, 0)
 })
+
+const parseImageMediaProgressDetail = (detail?: string | null) => {
+  if (!detail) return null
+  const normalized = String(detail)
+  const match = /图片处理:\s*(\d+)\s*\/\s*(\d+)\s*[（(]\s*已导出\s*(\d+)\s*[）)]/.exec(normalized)
+  if (!match) return null
+  return {
+    processed: Number(match[1]),
+    total: Number(match[2]),
+    exported: Number(match[3])
+  }
+}
+
+const parseImageMediaTotalHint = (detail?: string | null) => {
+  if (!detail) return null
+  const match = /正在处理图片消息[（(]共\s*(\d+)\s*条[）)]/.exec(String(detail))
+  if (!match) return null
+  return Number(match[1])
+}
 
 const SESSION_TABLE_HEADER_MEDIA_ICONS: Record<string, JSX.Element> = {
   图片: <Image size={11} />,
@@ -885,6 +914,7 @@ function ExportPage() {
   const [runningImageExportSessionId, setRunningImageExportSessionId] = useState<string | null>(null)
   const [queuedImageExportSessionIds, setQueuedImageExportSessionIds] = useState<Set<string>>(new Set())
   const [sessionImageBatchOutcomeMap, setSessionImageBatchOutcomeMap] = useState<Record<string, ImageBatchSessionOutcome>>({})
+  const [imageBatchCurrentSessionProgress, setImageBatchCurrentSessionProgress] = useState<ImageBatchSessionLiveProgress | null>(null)
   const [runningVoiceExportSessionId, setRunningVoiceExportSessionId] = useState<string | null>(null)
   const [queuedVoiceExportSessionIds, setQueuedVoiceExportSessionIds] = useState<Set<string>>(new Set())
   const hasRunningChatExportTask = Boolean(runningChatExportSessionId)
@@ -959,16 +989,22 @@ function ExportPage() {
   const imageExportQueueRef = useRef<QueuedImageExportJob[]>([])
   const imageExportWorkerRunningRef = useRef(false)
   const imageExportBatchTaskProgressRef = useRef<Record<string, ImageExportBatchTaskProgress>>({})
+  const imageExportCurrentJobRef = useRef<{ batchTaskId: string; sessionId: string; sessionName: string } | null>(null)
   const emojiExportQueueRef = useRef<QueuedEmojiExportJob[]>([])
   const emojiExportWorkerRunningRef = useRef(false)
   const emojiExportBatchTaskProgressRef = useRef<Record<string, EmojiExportBatchTaskProgress>>({})
   const voiceExportQueueRef = useRef<QueuedVoiceExportJob[]>([])
   const voiceExportWorkerRunningRef = useRef(false)
   const voiceExportBatchTaskProgressRef = useRef<Record<string, VoiceExportBatchTaskProgress>>({})
+  const runningImageExportSessionIdRef = useRef<string | null>(null)
 
   useEffect(() => {
     sessionTypeFilterRef.current = sessionTypeFilter
   }, [sessionTypeFilter])
+
+  useEffect(() => {
+    runningImageExportSessionIdRef.current = runningImageExportSessionId
+  }, [runningImageExportSessionId])
 
   const syncChatExportQueueStatus = useCallback((nextRunningSessionId: string | null) => {
     setRunningChatExportSessionId(nextRunningSessionId)
@@ -1928,6 +1964,75 @@ function ExportPage() {
       }
     })()
   }, [activeTab, sessions, sessionVoiceLatestExportTimeMap])
+
+  useEffect(() => {
+    const removeExportProgressListener = window.electronAPI.export.onProgress?.((progress: any) => {
+      const currentJob = imageExportCurrentJobRef.current
+      const runningSessionId = runningImageExportSessionIdRef.current
+      if (!currentJob || !runningSessionId || currentJob.sessionId !== runningSessionId) return
+
+      const phase = typeof progress?.phase === 'string' ? progress.phase : ''
+      const detailText = typeof progress?.detail === 'string' ? progress.detail : ''
+      const parsed = parseImageMediaProgressDetail(detailText)
+      const totalHint = parseImageMediaTotalHint(detailText)
+
+      if (!parsed && !totalHint && phase !== 'exporting' && phase !== 'writing' && phase !== 'complete') {
+        return
+      }
+
+      setImageBatchCurrentSessionProgress(prev => {
+        const baseTotal = parsed?.total ?? totalHint ?? prev?.decryptTotal
+        const next: ImageBatchSessionLiveProgress = {
+          sessionId: currentJob.sessionId,
+          sessionName: currentJob.sessionName,
+          phase: parsed ? 'decrypting' : (phase === 'complete' ? 'complete' : 'preparing'),
+          decryptCurrent: parsed?.processed ?? (totalHint ? 0 : prev?.decryptCurrent),
+          decryptTotal: baseTotal,
+          exportedCount: parsed?.exported ?? (totalHint ? 0 : prev?.exportedCount),
+          rawDetail: detailText || prev?.rawDetail
+        }
+        if (
+          prev &&
+          prev.sessionId === next.sessionId &&
+          prev.sessionName === next.sessionName &&
+          prev.phase === next.phase &&
+          prev.decryptCurrent === next.decryptCurrent &&
+          prev.decryptTotal === next.decryptTotal &&
+          prev.exportedCount === next.exportedCount &&
+          prev.rawDetail === next.rawDetail
+        ) {
+          return prev
+        }
+        return next
+      })
+
+      const currentLive = parsed
+        ? {
+            total: parsed.total,
+            decryptCurrent: parsed.processed,
+            exportedCount: parsed.exported
+          }
+        : (totalHint ? { total: totalHint, decryptCurrent: 0, exportedCount: 0 } : null)
+
+      const phaseLine = currentLive
+        ? `解密/处理 ${currentLive.decryptCurrent.toLocaleString()} / ${currentLive.total.toLocaleString()}`
+        : (phase === 'complete' ? '图片导出完成' : '图片导出中')
+      const detailLine = currentLive
+        ? `图片导出 ${currentLive.exportedCount.toLocaleString()} / ${currentLive.total.toLocaleString()}`
+        : (detailText || '正在处理图片')
+
+      taskCenterPatchTask(currentJob.batchTaskId, {
+        status: 'running',
+        currentName: currentJob.sessionName,
+        phase: phaseLine,
+        detail: detailLine
+      })
+    })
+
+    return () => {
+      removeExportProgressListener?.()
+    }
+  }, [taskCenterPatchTask])
 
   const sessionByUsername = useMemo(() => {
     const map = new Map<string, ChatSession>()
@@ -3031,7 +3136,10 @@ function ExportPage() {
         return {
           session,
           status,
-          latestExportTime: hasExported ? latestExportTime : null
+          latestExportTime: hasExported ? latestExportTime : null,
+          liveProgress: (runningImageExportSessionId === session.username && imageBatchCurrentSessionProgress?.sessionId === session.username)
+            ? imageBatchCurrentSessionProgress
+            : null
         }
       })
       .sort((a, b) => {
@@ -3178,6 +3286,7 @@ function ExportPage() {
       })
   }, [
     bulkExportEligibleSessions,
+    imageBatchCurrentSessionProgress,
     queuedImageExportSessionIds,
     runningImageExportSessionId,
     sessionImageBatchOutcomeMap,
@@ -4475,6 +4584,22 @@ function ExportPage() {
     if (!nextJob) return
 
     imageExportWorkerRunningRef.current = true
+    imageExportCurrentJobRef.current = {
+      batchTaskId: nextJob.batchTaskId,
+      sessionId: nextJob.sessionId,
+      sessionName: nextJob.sessionName
+    }
+    setImageBatchCurrentSessionProgress({
+      sessionId: nextJob.sessionId,
+      sessionName: nextJob.sessionName,
+      phase: 'preparing',
+      decryptCurrent: 0,
+      decryptTotal: (typeof nextJob.imageCount === 'number' && Number.isFinite(nextJob.imageCount) && nextJob.imageCount >= 0)
+        ? nextJob.imageCount
+        : undefined,
+      exportedCount: 0,
+      rawDetail: '准备导出图片'
+    })
     syncImageExportQueueStatus(nextJob.sessionId)
     taskCenterPatchTask(nextJob.batchTaskId, {
       status: 'running',
@@ -4489,6 +4614,8 @@ function ExportPage() {
     } finally {
       imageExportQueueRef.current = imageExportQueueRef.current.filter(job => job.taskId !== nextJob.taskId)
       imageExportWorkerRunningRef.current = false
+      imageExportCurrentJobRef.current = null
+      setImageBatchCurrentSessionProgress(prev => (prev?.sessionId === nextJob.sessionId ? null : prev))
       taskCenterSetActiveExportTaskId(null)
       syncImageExportQueueStatus(null)
       window.setTimeout(() => { void processNextQueuedImageExport() }, 0)
@@ -4602,6 +4729,7 @@ function ExportPage() {
       failCount: 0
     }
     setSessionImageBatchOutcomeMap({})
+    setImageBatchCurrentSessionProgress(null)
     taskCenterUpsertTask({
       id: batchTaskId,
       kind: 'image-export-batch',
@@ -4625,8 +4753,32 @@ function ExportPage() {
     await yieldToMainThread()
 
     const orderedSessionIds = bulkExportEligibleSessions
-      .map((session, index) => ({ session, index }))
+      .map((session, index) => {
+        const selectedDetailCount = (
+          sessionDetail?.wxid === session.username &&
+          typeof sessionDetail.imageCount === 'number' &&
+          Number.isFinite(sessionDetail.imageCount) &&
+          sessionDetail.imageCount >= 0
+        )
+          ? sessionDetail.imageCount
+          : undefined
+        const statCount = sessionCardStatsMap[session.username]?.imageCount
+        const count = selectedDetailCount ?? statCount
+        return {
+          session,
+          index,
+          imageCountSort: (typeof count === 'number' && Number.isFinite(count) && count >= 0) ? count : null
+        }
+      })
       .sort((a, b) => {
+        const aImageCount = a.imageCountSort
+        const bImageCount = b.imageCountSort
+        if (aImageCount !== null && bImageCount !== null && aImageCount !== bImageCount) {
+          return aImageCount - bImageCount
+        }
+        if (aImageCount !== null && bImageCount === null) return -1
+        if (aImageCount === null && bImageCount !== null) return 1
+
         const priority = (accountType?: ChatSession['accountType']) => {
           if (accountType === 'friend') return 0
           if (accountType === 'group') return 1
@@ -4658,6 +4810,9 @@ function ExportPage() {
     enqueueBatchImageExportJobsChunked,
     exportFolder,
     imageExportFolder,
+    sessionCardStatsMap,
+    sessionDetail?.imageCount,
+    sessionDetail?.wxid,
     taskCenterPatchTask,
     taskCenterUpsertTask
   ])
@@ -8576,7 +8731,7 @@ function ExportPage() {
               {imageStatusRows.length === 0 ? (
                 <div className="chat-text-card-status-empty">暂无会话</div>
               ) : (
-                imageStatusRows.map(({ session, status, latestExportTime }) => {
+                imageStatusRows.map(({ session, status, latestExportTime, liveProgress }) => {
                   const statusLabel = status === 'running'
                     ? '导出中'
                     : status === 'queued'
@@ -8620,6 +8775,22 @@ function ExportPage() {
                           {recentLabel || '--'}
                         </span>
                       </div>
+                      {status === 'running' && liveProgress && (
+                        <div className="chat-text-card-status-card-meta" style={{ marginTop: 4, gap: 10 }}>
+                          <span className="chat-text-card-status-time" title={liveProgress.rawDetail || '图片处理进度'}>
+                            解密/处理{' '}
+                            {typeof liveProgress.decryptCurrent === 'number' && typeof liveProgress.decryptTotal === 'number'
+                              ? `${liveProgress.decryptCurrent.toLocaleString()} / ${liveProgress.decryptTotal.toLocaleString()}`
+                              : '进行中...'}
+                          </span>
+                          <span className="chat-text-card-status-time" title={liveProgress.rawDetail || '图片导出进度'}>
+                            图片导出{' '}
+                            {typeof liveProgress.exportedCount === 'number' && typeof liveProgress.decryptTotal === 'number'
+                              ? `${liveProgress.exportedCount.toLocaleString()} / ${liveProgress.decryptTotal.toLocaleString()}`
+                              : '进行中...'}
+                          </span>
+                        </div>
+                      )}
                     </div>
                   )
                 })
