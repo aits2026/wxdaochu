@@ -171,6 +171,22 @@
   gap: 8px;
   transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
 
+  &.is-clickable {
+    cursor: pointer;
+
+    &:hover {
+      border-color: rgba(var(--primary-rgb), 0.22);
+      background: rgba(var(--primary-rgb), 0.04);
+      box-shadow: 0 8px 20px rgba(var(--primary-rgb), 0.08);
+    }
+
+    &:focus-visible {
+      outline: none;
+      border-color: rgba(var(--primary-rgb), 0.28);
+      box-shadow: 0 0 0 2px rgba(var(--primary-rgb), 0.12);
+    }
+  }
+
   &.highlighted {
     border-color: rgba(var(--primary-rgb), 0.35);
     background: rgba(var(--primary-rgb), 0.06);

@@ -3,6 +3,8 @@ import { CheckCircle, ExternalLink, ListTodo, Loader2, Trash2, XCircle } from 'l
 import { GlobalTaskRecord, useTaskCenterStore } from '../stores/taskCenterStore'
 import './GlobalTaskCenter.scss'
 
+const OPEN_CHAT_TEXT_STATUS_OVERVIEW_EVENT = 'vxdaochu:open-chat-text-status-overview'
+
 const formatTaskTime = (timestamp?: number) => {
   if (!timestamp) return ''
   const date = new Date(timestamp)
@@ -12,11 +14,13 @@ const formatTaskTime = (timestamp?: number) => {
 function TaskCard({
   task,
   onRemove,
-  highlighted
+  highlighted,
+  onInspect
 }: {
   task: GlobalTaskRecord
   onRemove: (taskId: string) => void
   highlighted?: boolean
+  onInspect?: (task: GlobalTaskRecord) => void
 }) {
   const openExportTarget = useCallback(async () => {
     if (!task.outputDir) return
@@ -44,6 +48,7 @@ function TaskCard({
   const showResultCounts = hasResultCounts && !(isSingleSessionChatExport && resultTotal <= 1)
   const displayPhase = !isFinished ? (task.phase || '') : ''
   const displayCurrentName = task.currentName && task.currentName !== task.sessionName ? task.currentName : ''
+  const isInspectable = task.kind === 'chat-export-batch' && Boolean(onInspect)
 
   let displayDetail = task.detail || ''
   if (displayDetail && task.phase) {
@@ -62,7 +67,18 @@ function TaskCard({
   }
 
   return (
-    <div className={`global-task-center-card ${highlighted ? 'highlighted' : ''}`}>
+    <div
+      className={`global-task-center-card ${highlighted ? 'highlighted' : ''} ${isInspectable ? 'is-clickable' : ''}`}
+      role={isInspectable ? 'button' : undefined}
+      tabIndex={isInspectable ? 0 : undefined}
+      onClick={isInspectable ? () => onInspect?.(task) : undefined}
+      onKeyDown={isInspectable ? (e) => {
+        if (e.key !== 'Enter' && e.key !== ' ') return
+        e.preventDefault()
+        onInspect?.(task)
+      } : undefined}
+      title={isInspectable ? '点击查看聊天文本导出状态总览' : undefined}
+    >
       <div className="global-task-center-card-top">
         <div className="global-task-center-main">
           <span className="global-task-center-type">{task.typeLabel}</span>
@@ -129,13 +145,16 @@ function TaskCard({
           {task.status === 'success' && task.outputDir && (
             <button
               type="button"
-              onClick={() => void openExportTarget()}
+              onClick={(e) => {
+                e.stopPropagation()
+                void openExportTarget()
+              }}
             >
               <ExternalLink size={12} />
               <span>打开导出位置</span>
             </button>
           )}
-          <button type="button" onClick={() => onRemove(task.id)}>
+          <button type="button" onClick={(e) => { e.stopPropagation(); onRemove(task.id) }}>
             关闭
           </button>
         </div>
@@ -213,6 +232,14 @@ function GlobalTaskCenter({ variant = 'titlebar', label = '任务中心' }: Glob
     }
   }
 
+  const handleInspectTask = useCallback((task: GlobalTaskRecord) => {
+    if (task.kind !== 'chat-export-batch') return
+    setTaskCenterOpen(false)
+    window.dispatchEvent(new CustomEvent(OPEN_CHAT_TEXT_STATUS_OVERVIEW_EVENT, {
+      detail: { taskId: task.id, source: 'task-center' }
+    }))
+  }, [setTaskCenterOpen])
+
   return (
     <div className={`global-task-center-wrap ${variant}`}>
       <button
@@ -263,7 +290,7 @@ function GlobalTaskCenter({ variant = 'titlebar', label = '任务中心' }: Glob
                   <div className="global-task-center-section">
                     <div className="section-title">待开始（{pendingTasks.length}）</div>
                     {pendingTasks.map(task => (
-                      <TaskCard key={task.id} task={task} onRemove={removeTask} highlighted={task.id === highlightedTaskId} />
+                      <TaskCard key={task.id} task={task} onRemove={removeTask} highlighted={task.id === highlightedTaskId} onInspect={handleInspectTask} />
                     ))}
                   </div>
                 )}
@@ -272,7 +299,7 @@ function GlobalTaskCenter({ variant = 'titlebar', label = '任务中心' }: Glob
                   <div className="global-task-center-section">
                     <div className="section-title">进行中（{runningTasks.length}）</div>
                     {runningTasks.map(task => (
-                      <TaskCard key={task.id} task={task} onRemove={removeTask} highlighted={task.id === highlightedTaskId} />
+                      <TaskCard key={task.id} task={task} onRemove={removeTask} highlighted={task.id === highlightedTaskId} onInspect={handleInspectTask} />
                     ))}
                   </div>
                 )}
@@ -281,7 +308,7 @@ function GlobalTaskCenter({ variant = 'titlebar', label = '任务中心' }: Glob
                   <div className="global-task-center-section">
                     <div className="section-title">已完成（{finishedTasks.length}）</div>
                     {finishedTasks.map(task => (
-                      <TaskCard key={task.id} task={task} onRemove={removeTask} highlighted={task.id === highlightedTaskId} />
+                      <TaskCard key={task.id} task={task} onRemove={removeTask} highlighted={task.id === highlightedTaskId} onInspect={handleInspectTask} />
                     ))}
                   </div>
                 )}

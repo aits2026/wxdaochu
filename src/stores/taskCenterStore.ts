@@ -134,14 +134,29 @@ export const useTaskCenterStore = create<TaskCenterState>((set, get) => ({
 
   updateActiveExportProgress: (progress) => {
     const state = get()
-    const fallbackTask = state.tasks
-      .filter(task => task.kind === 'chat-export' && task.status === 'running')
-      .sort((a, b) => b.updatedAt - a.updatedAt)[0]
-    const targetTaskId = state.activeExportTaskId || fallbackTask?.id
+    let targetTaskId = state.activeExportTaskId
+    let targetTask = targetTaskId ? state.tasks.find(task => task.id === targetTaskId) : undefined
+
+    // 批量聊天文本导出使用聚合任务自行更新，不消费高频 export.onProgress。
+    if (targetTask && targetTask.kind !== 'chat-export') {
+      return
+    }
+
+    if (!targetTaskId) {
+      let fallbackTask: GlobalTaskRecord | undefined
+      for (const task of state.tasks) {
+        if (task.kind !== 'chat-export' || task.status !== 'running') continue
+        if (!fallbackTask || task.updatedAt > fallbackTask.updatedAt) {
+          fallbackTask = task
+        }
+      }
+      targetTaskId = fallbackTask?.id || null
+      targetTask = fallbackTask
+    }
+
     if (!targetTaskId) return
 
     const phase = progress.phase ? (EXPORT_PHASE_LABEL_MAP[progress.phase] || progress.phase) : undefined
-    const targetTask = state.tasks.find(task => task.id === targetTaskId)
     const hasProgressNumbers = (
       progress.stepCurrent !== undefined ||
       progress.stepTotal !== undefined ||

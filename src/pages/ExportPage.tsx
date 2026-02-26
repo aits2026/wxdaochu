@@ -82,6 +82,7 @@ const SESSION_SORT_STATS_WARMUP_LIMIT = 80
 const SESSION_SORT_STATS_WARMUP_START_DELAY_MS = 160
 const SESSION_SORT_STATS_WARMUP_YIELD_EVERY = 6
 const CHAT_TEXT_EXPORT_SUBDIR_NAME = '聊天文本'
+const OPEN_CHAT_TEXT_STATUS_OVERVIEW_EVENT = 'vxdaochu:open-chat-text-status-overview'
 
 interface SessionImageDecryptOverview {
   total: number
@@ -648,17 +649,16 @@ function ExportPage() {
   const taskCenterSetActiveExportTaskId = useTaskCenterStore(state => state.setActiveExportTaskId)
   const taskCenterOpen = useTaskCenterStore(state => state.openTaskCenter)
   const taskCenterHighlightTask = useTaskCenterStore(state => state.highlightTask)
-  const taskCenterTasks = useTaskCenterStore(state => state.tasks)
-  const runningImageDecryptTask = useMemo(() => {
-    let latest: typeof taskCenterTasks[number] | null = null
-    for (const task of taskCenterTasks) {
+  const runningImageDecryptTask = useTaskCenterStore(state => {
+    let latest: typeof state.tasks[number] | null = null
+    for (const task of state.tasks) {
       if (task.kind !== 'image-decrypt' || task.status !== 'running') continue
       if (!latest || task.updatedAt > latest.updatedAt) {
         latest = task
       }
     }
     return latest
-  }, [taskCenterTasks])
+  })
   const [exportAccountInfo, setExportAccountInfo] = useState<{
     connected: boolean
     wxid: string
@@ -3844,6 +3844,17 @@ function ExportPage() {
     setShowChatTextCardExportFormatPicker(false)
     setShowChatTextCardStatusModal(true)
   }, [])
+
+  useEffect(() => {
+    const handleOpenFromTaskCenter = () => {
+      setActiveTab('chat')
+      openChatTextCardStatusModal()
+    }
+    window.addEventListener(OPEN_CHAT_TEXT_STATUS_OVERVIEW_EVENT, handleOpenFromTaskCenter as EventListener)
+    return () => {
+      window.removeEventListener(OPEN_CHAT_TEXT_STATUS_OVERVIEW_EVENT, handleOpenFromTaskCenter as EventListener)
+    }
+  }, [openChatTextCardStatusModal])
 
   const startChatTextCardExportAll = useCallback(async () => {
     if (!exportFolder) {
