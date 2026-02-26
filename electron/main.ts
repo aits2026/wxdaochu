@@ -2130,6 +2130,10 @@ function registerIpcHandlers() {
     return exportRecordService.getLatestRecordTimes(Array.isArray(sessionUsernames) ? sessionUsernames : [])
   })
 
+  ipcMain.handle('export:getEmojiExportFlags', (_, sessionUsernames: string[]) => {
+    return exportRecordService.getEmojiExportFlags(Array.isArray(sessionUsernames) ? sessionUsernames : [])
+  })
+
   ipcMain.handle(
     'export:saveExportRecord',
     (
@@ -2138,9 +2142,10 @@ function registerIpcHandlers() {
       format: string,
       messageCount: number,
       outputDir?: string,
-      outputTargetType?: 'file' | 'directory'
+      outputTargetType?: 'file' | 'directory',
+      exportEmojisIncluded?: boolean
     ) => {
-      exportRecordService.saveRecord(sessionUsername, format, messageCount, outputDir, outputTargetType)
+      exportRecordService.saveRecord(sessionUsername, format, messageCount, outputDir, outputTargetType, exportEmojisIncluded)
     }
   )
 

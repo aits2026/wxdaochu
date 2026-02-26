@@ -320,14 +320,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('export:getExportRecords', sessionUsername),
     getLatestExportTimes: (sessionUsernames: string[]) =>
       ipcRenderer.invoke('export:getLatestExportTimes', sessionUsernames),
+    getEmojiExportFlags: (sessionUsernames: string[]) =>
+      ipcRenderer.invoke('export:getEmojiExportFlags', sessionUsernames),
     saveExportRecord: (
       sessionUsername: string,
       format: string,
       messageCount: number,
       outputDir?: string,
-      outputTargetType?: 'file' | 'directory'
+      outputTargetType?: 'file' | 'directory',
+      exportEmojisIncluded?: boolean
     ) =>
-      ipcRenderer.invoke('export:saveExportRecord', sessionUsername, format, messageCount, outputDir, outputTargetType),
+      ipcRenderer.invoke('export:saveExportRecord', sessionUsername, format, messageCount, outputDir, outputTargetType, exportEmojisIncluded),
   },
 
   // 激活

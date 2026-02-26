@@ -580,14 +580,17 @@ export interface ElectronAPI {
       messageCount: number
       outputDir?: string
       outputTargetType?: 'file' | 'directory'
+      exportEmojisIncluded?: boolean
     }[]>
     getLatestExportTimes: (sessionUsernames: string[]) => Promise<Record<string, number>>
+    getEmojiExportFlags: (sessionUsernames: string[]) => Promise<Record<string, boolean>>
     saveExportRecord: (
       sessionUsername: string,
       format: string,
       messageCount: number,
       outputDir?: string,
-      outputTargetType?: 'file' | 'directory'
+      outputTargetType?: 'file' | 'directory',
+      exportEmojisIncluded?: boolean
     ) => Promise<void>
   }
   activation: {

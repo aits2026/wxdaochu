@@ -8,6 +8,7 @@ export interface ExportRecord {
   messageCount: number // 导出时的消息总数
   outputDir?: string   // 导出位置（兼容旧数据；新数据可能为文件或目录路径）
   outputTargetType?: 'file' | 'directory'
+  exportEmojisIncluded?: boolean
 }
 
 type RecordStore = { [sessionUsername: string]: ExportRecord[] }
@@ -55,12 +56,25 @@ export class ExportRecordService {
     return result
   }
 
+  getEmojiExportFlags(sessionUsernames: string[]): Record<string, boolean> {
+    const result: Record<string, boolean> = {}
+    for (const sessionUsername of sessionUsernames) {
+      const records = this.store[sessionUsername]
+      if (!records || records.length === 0) continue
+      if (records.some(record => record?.exportEmojisIncluded === true)) {
+        result[sessionUsername] = true
+      }
+    }
+    return result
+  }
+
   saveRecord(
     sessionUsername: string,
     format: string,
     messageCount: number,
     outputDir?: string,
-    outputTargetType?: 'file' | 'directory'
+    outputTargetType?: 'file' | 'directory',
+    exportEmojisIncluded?: boolean
   ) {
     if (!this.store[sessionUsername]) {
       this.store[sessionUsername] = []
@@ -70,7 +84,8 @@ export class ExportRecordService {
       format,
       messageCount,
       outputDir,
-      outputTargetType
+      outputTargetType,
+      exportEmojisIncluded
     })
     this.save()
   }

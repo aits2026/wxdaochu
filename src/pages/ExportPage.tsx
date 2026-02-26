@@ -230,6 +230,7 @@ interface SessionExportRecord {
   messageCount: number
   outputDir?: string
   outputTargetType?: 'file' | 'directory'
+  exportEmojisIncluded?: boolean
 }
 
 interface SessionCardGroupInfo {
@@ -675,6 +676,7 @@ function ExportPage() {
   const [isLoadingSessionCounts, setIsLoadingSessionCounts] = useState(false)
   const [loadedSessionCountUsernames, setLoadedSessionCountUsernames] = useState<Set<string>>(new Set())
   const [sessionLatestExportTimeMap, setSessionLatestExportTimeMap] = useState<Record<string, number | null>>({})
+  const [sessionEmojiExportFlagMap, setSessionEmojiExportFlagMap] = useState<Record<string, boolean | null>>({})
   const [searchKeyword, setSearchKeyword] = useState('')
   const [sessionTypeFilter, setSessionTypeFilter] = useState<SessionTypeFilter>('private')
   const [sessionListSortKey, setSessionListSortKey] = useState<SessionListSortKey>('messageCount')
@@ -811,6 +813,7 @@ function ExportPage() {
   const identityChipCopyResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const sessionDetailDiagRunIdRef = useRef(0)
   const sessionLatestExportTimesRequestIdRef = useRef(0)
+  const sessionEmojiExportFlagsRequestIdRef = useRef(0)
   const chatExportQueueRef = useRef<QueuedChatExportJob[]>([])
   const chatExportWorkerRunningRef = useRef(false)
 
@@ -1456,6 +1459,7 @@ function ExportPage() {
   useEffect(() => {
     if (sessions.length === 0) {
       setSessionLatestExportTimeMap({})
+      setSessionEmojiExportFlagMap({})
       return
     }
 
@@ -1463,6 +1467,18 @@ function ExportPage() {
     setSessionLatestExportTimeMap(prev => {
       let changed = false
       const next: Record<string, number | null> = {}
+      for (const [username, value] of Object.entries(prev)) {
+        if (currentUsernames.has(username)) {
+          next[username] = value
+        } else {
+          changed = true
+        }
+      }
+      return changed ? next : prev
+    })
+    setSessionEmojiExportFlagMap(prev => {
+      let changed = false
+      const next: Record<string, boolean | null> = {}
       for (const [username, value] of Object.entries(prev)) {
         if (currentUsernames.has(username)) {
           next[username] = value
@@ -1510,6 +1526,43 @@ function ExportPage() {
       }
     })()
   }, [activeTab, sessions, sessionLatestExportTimeMap])
+
+  useEffect(() => {
+    if (activeTab !== 'chat' || sessions.length === 0) return
+
+    const missingUsernames = sessions
+      .map(session => session.username)
+      .filter(username => !(username in sessionEmojiExportFlagMap))
+
+    if (missingUsernames.length === 0) return
+
+    const requestId = ++sessionEmojiExportFlagsRequestIdRef.current
+
+    void (async () => {
+      try {
+        const emojiExportFlags = await window.electronAPI.export.getEmojiExportFlags(missingUsernames)
+        if (requestId !== sessionEmojiExportFlagsRequestIdRef.current) return
+
+        setSessionEmojiExportFlagMap(prev => {
+          const next = { ...prev }
+          for (const username of missingUsernames) {
+            next[username] = emojiExportFlags?.[username] === true ? true : null
+          }
+          return next
+        })
+      } catch (e) {
+        console.error('加载会话表情包导出标记失败:', e)
+        if (requestId !== sessionEmojiExportFlagsRequestIdRef.current) return
+        setSessionEmojiExportFlagMap(prev => {
+          const next = { ...prev }
+          for (const username of missingUsernames) {
+            if (!(username in next)) next[username] = null
+          }
+          return next
+        })
+      }
+    })()
+  }, [activeTab, sessions, sessionEmojiExportFlagMap])
 
   const sessionByUsername = useMemo(() => {
     const map = new Map<string, ChatSession>()
@@ -2583,12 +2636,11 @@ function ExportPage() {
     }, 0)
   ), [sessionLatestExportTimeMap, sessions])
   const sessionEmojiCardTotalSessions = sessions.length
-  const sessionEmojiCardDownloadedSessions = useMemo(() => (
+  const sessionEmojiCardExportedSessions = useMemo(() => (
     sessions.reduce((count, session) => {
-      const emojiCount = sessionCardStatsMap[session.username]?.emojiCount
-      return typeof emojiCount === 'number' ? count + 1 : count
+      return sessionEmojiExportFlagMap[session.username] === true ? count + 1 : count
     }, 0)
-  ), [sessionCardStatsMap, sessions])
+  ), [sessionEmojiExportFlagMap, sessions])
   const groupFriendMembersForPopup = useMemo(() => {
     const friendMembers = sessionDetail?.groupInfo?.friendMembers || []
     if (friendMembers.length <= 1) return friendMembers
@@ -3345,13 +3397,17 @@ function ExportPage() {
             job.options.format,
             job.messageCount,
             exportOpenTargetPath,
-            exportOpenTargetType
+            exportOpenTargetType,
+            job.options.exportEmojis
           )
           const records = await window.electronAPI.export.getExportRecords(job.sessionId)
           if (selectedSession === job.sessionId) {
             setExportRecords(records)
           }
           setSessionLatestExportTimeMap(prev => ({ ...prev, [job.sessionId]: Date.now() }))
+          if (job.options.exportEmojis) {
+            setSessionEmojiExportFlagMap(prev => ({ ...prev, [job.sessionId]: true }))
+          }
         } else {
           taskCenterPatchTask(job.taskId, {
             status: 'error',
@@ -3706,7 +3762,7 @@ function ExportPage() {
                 </div>
                 <div
                   className="emoji-overview-trigger-card is-static"
-                  title="按会话列表中已处理的表情包会话数统计"
+                  title="按会话去重统计：已导出到电脑且勾选表情包的会话数"
                 >
                   <div className="emoji-overview-trigger-head">
                     <span className="emoji-overview-trigger-icon" aria-hidden="true">
@@ -3716,7 +3772,7 @@ function ExportPage() {
                   </div>
                   <div className="emoji-overview-trigger-summary">
                     <strong>
-                      {sessionEmojiCardDownloadedSessions.toLocaleString()} / {sessionEmojiCardTotalSessions.toLocaleString()}
+                      {sessionEmojiCardExportedSessions.toLocaleString()} / {sessionEmojiCardTotalSessions.toLocaleString()}
                     </strong>
                   </div>
                 </div>
