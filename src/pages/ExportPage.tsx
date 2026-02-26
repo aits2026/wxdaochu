@@ -81,6 +81,7 @@ const SESSION_IMAGE_UNKNOWN_DATE_KEY = '__unknown__'
 const SESSION_SORT_STATS_WARMUP_LIMIT = 80
 const SESSION_SORT_STATS_WARMUP_START_DELAY_MS = 160
 const SESSION_SORT_STATS_WARMUP_YIELD_EVERY = 6
+const CHAT_TEXT_EXPORT_SUBDIR_NAME = '聊天文本'
 
 interface SessionImageDecryptOverview {
   total: number
@@ -295,6 +296,13 @@ const formatRecentExportTime = (exportTime?: number | null, nowMs: number = Date
   const m = String(d.getMonth() + 1).padStart(2, '0')
   const day = String(d.getDate()).padStart(2, '0')
   return `${y}-${m}-${day}`
+}
+
+const appendPathSegment = (baseDir: string, segment: string) => {
+  if (!baseDir) return ''
+  if (/[\\/]+$/.test(baseDir)) return `${baseDir}${segment}`
+  const separator = baseDir.includes('\\') && !baseDir.includes('/') ? '\\' : '/'
+  return `${baseDir}${separator}${segment}`
 }
 
 const SESSION_TABLE_HEADER_MEDIA_ICONS: Record<string, JSX.Element> = {
@@ -780,6 +788,10 @@ function ExportPage() {
   const [queuedChatExportSessionIds, setQueuedChatExportSessionIds] = useState<Set<string>>(new Set())
   const hasRunningChatExportTask = Boolean(runningChatExportSessionId)
   const hasPendingChatExportTask = queuedChatExportSessionIds.size > 0
+  const chatTextExportFolder = useMemo(
+    () => appendPathSegment(exportFolder, CHAT_TEXT_EXPORT_SUBDIR_NAME),
+    [exportFolder]
+  )
 
   // 通讯录导出状态
   const [contacts, setContacts] = useState<Contact[]>([])
@@ -3280,6 +3292,12 @@ function ExportPage() {
     }
   }
 
+  const openChatTextExportFolder = async () => {
+    if (chatTextExportFolder) {
+      await window.electronAPI.shell.openPath(chatTextExportFolder)
+    }
+  }
+
   const openExportRecordFolder = useCallback(async (
     outputPath?: string,
     outputTargetType?: 'file' | 'directory'
@@ -3640,7 +3658,7 @@ function ExportPage() {
         sessionId,
         sessionName,
         messageCount,
-        outputDir: exportFolder,
+        outputDir: chatTextExportFolder,
         options: { ...exportOptions },
         queuedAt,
         suppressResultModal,
@@ -3666,7 +3684,7 @@ function ExportPage() {
           progressTotal: 1,
           unitLabel: '个会话',
           format: job.options.format.toUpperCase(),
-          outputDir: exportFolder,
+          outputDir: chatTextExportFolder,
           phase: hasRunningOrQueuedBeforeEnqueue ? '等待执行' : '准备执行',
           detail: hasRunningOrQueuedBeforeEnqueue ? '已加入队列，等待前序任务完成' : '等待执行',
           createdAt: job.queuedAt,
@@ -3686,6 +3704,7 @@ function ExportPage() {
 
     return jobs.length
   }, [
+    chatTextExportFolder,
     exportFolder,
     processNextQueuedChatExport,
     runningChatExportSessionId,
@@ -3757,7 +3776,7 @@ function ExportPage() {
       failCount: 0,
       unitLabel: '个会话',
       format: batchFormat,
-      outputDir: exportFolder,
+      outputDir: chatTextExportFolder,
       outputTargetType: 'directory',
       phase: '等待执行',
       detail: `共 ${totalSessions.toLocaleString()} 个会话，已加入队列`,
@@ -3784,7 +3803,7 @@ function ExportPage() {
     } else {
       delete chatExportBatchTaskProgressRef.current[batchTaskId]
     }
-  }, [chatTextCardExportOptions, enqueueChatExportJobs, exportFolder, sessions, taskCenterUpsertTask])
+  }, [chatTextCardExportOptions, chatTextExportFolder, enqueueChatExportJobs, exportFolder, sessions, taskCenterUpsertTask])
 
   // 导出通讯录
   const startContactExport = async () => {
@@ -6561,7 +6580,7 @@ function ExportPage() {
 
               <div className={`chat-text-card-export-path-note ${exportFolder ? '' : 'is-empty'}`}>
                 <span className="label">导出目录</span>
-                <span className="path" title={exportFolder || '未设置导出目录'}>{exportFolder || '未设置导出目录'}</span>
+                <span className="path" title={chatTextExportFolder || '未设置导出目录'}>{chatTextExportFolder || '未设置导出目录'}</span>
               </div>
             </div>
 
@@ -6718,7 +6737,7 @@ function ExportPage() {
             )}
             <div className="result-actions">
               {exportResult.success && (
-                <button className="open-folder-btn" onClick={openExportFolder}>
+                <button className="open-folder-btn" onClick={activeTab === 'chat' ? openChatTextExportFolder : openExportFolder}>
                   <ExternalLink size={16} />
                   <span>打开文件夹</span>
                 </button>
