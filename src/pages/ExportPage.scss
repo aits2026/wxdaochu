@@ -906,6 +906,12 @@
     margin-top: -1px;
   }
 
+  .emoji-overview-trigger-meta {
+    font-size: 11px;
+    line-height: 1.2;
+    color: var(--text-secondary);
+  }
+
   .emoji-overview-trigger-action-btn {
     border: 1px solid rgba(var(--primary-rgb), 0.14);
     background: rgba(var(--primary-rgb), 0.06);

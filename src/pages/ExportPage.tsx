@@ -2364,6 +2364,9 @@ function ExportPage() {
   }, [])
 
   const isSelectedFriendSession = selectedSessionItem?.accountType === 'friend'
+  const totalSnsMomentsCount = snsUserPostCountsStatus === 'ready'
+    ? Object.values(snsUserPostCounts).reduce((sum, count) => sum + (Number.isFinite(count) ? count : 0), 0)
+    : 0
   const selectedSessionMomentsTotalCount = snsUserPostCountsStatus === 'ready'
     ? (snsUserPostCounts[(sessionDetail?.wxid || selectedSessionItem?.username || selectedSession || '').trim()] ?? 0)
     : null
@@ -6954,6 +6957,25 @@ function ExportPage() {
                     >
                       {isVideoCardExporting ? '导出中' : '导出'}
                     </button>
+                  </div>
+                </div>
+                <div
+                  className="emoji-overview-trigger-card is-static"
+                  title={snsUserPostCountsStatus === 'error' ? '朋友圈总条数统计失败，当前显示 0' : '已获取到的朋友圈总条数'}
+                  aria-label={`朋友圈已获取总条数 ${totalSnsMomentsCount.toLocaleString()} 条`}
+                >
+                  <div className="emoji-overview-trigger-head">
+                    <span className="emoji-overview-trigger-icon" aria-hidden="true">
+                      <Aperture size={14} />
+                    </span>
+                    <span className="emoji-overview-trigger-title">朋友圈</span>
+                    {snsUserPostCountsStatus === 'loading' && <Loader2 size={12} className="spin" aria-hidden="true" />}
+                  </div>
+                  <div className="emoji-overview-trigger-summary">
+                    <strong>{totalSnsMomentsCount.toLocaleString()}</strong>
+                  </div>
+                  <div className="emoji-overview-trigger-actions" aria-hidden="true">
+                    <span className="emoji-overview-trigger-meta">已获取总条数</span>
                   </div>
                 </div>
               </div>
