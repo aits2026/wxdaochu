@@ -2860,7 +2860,9 @@ class ExportService {
     const imageOutDir = options.exportImages
       ? (options.imageOnlyMode ? outputDir : path.join(outputDir, 'images'))
       : ''
-    const videoOutDir = options.exportVideos ? path.join(outputDir, 'videos') : ''
+    const videoOutDir = options.exportVideos
+      ? (options.videoOnlyMode ? outputDir : path.join(outputDir, 'videos'))
+      : ''
     const emojiOutDir = options.exportEmojis
       ? (options.emojiOnlyMode ? outputDir : path.join(outputDir, 'emojis'))
       : ''
@@ -3211,7 +3213,7 @@ class ExportService {
                     if (fs.existsSync(videoPath)) {
                       const fileName = `${createTime}_${videoMd5}.mp4`
                       const destPath = path.join(videoOutDir, fileName)
-                      const relativePath = `videos/${fileName}`
+                      const relativePath = options.videoOnlyMode ? fileName : `videos/${fileName}`
                       const existedBeforeCopy = fs.existsSync(destPath)
                       try {
                         if (!fs.existsSync(destPath)) {
