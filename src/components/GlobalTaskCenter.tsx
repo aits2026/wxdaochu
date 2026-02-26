@@ -48,7 +48,7 @@ function TaskCard({
   const showResultCounts = hasResultCounts && !(isSingleSessionChatExport && resultTotal <= 1)
   const displayPhase = !isFinished ? (task.phase || '') : ''
   const displayCurrentName = task.currentName && task.currentName !== task.sessionName ? task.currentName : ''
-  const isInspectable = (task.kind === 'chat-export-batch' || task.kind === 'emoji-export-batch') && Boolean(onInspect)
+  const isInspectable = (task.kind === 'chat-export-batch' || task.kind === 'emoji-export-batch' || task.kind === 'voice-export-batch') && Boolean(onInspect)
 
   let displayDetail = task.detail || ''
   if (displayDetail && task.phase) {
@@ -233,7 +233,7 @@ function GlobalTaskCenter({ variant = 'titlebar', label = '任务中心' }: Glob
   }
 
   const handleInspectTask = useCallback((task: GlobalTaskRecord) => {
-    if (task.kind !== 'chat-export-batch' && task.kind !== 'emoji-export-batch') return
+    if (task.kind !== 'chat-export-batch' && task.kind !== 'emoji-export-batch' && task.kind !== 'voice-export-batch') return
     setTaskCenterOpen(false)
     window.dispatchEvent(new CustomEvent(OPEN_EXPORT_OVERVIEW_EVENT, {
       detail: { taskId: task.id, source: 'task-center', taskKind: task.kind }

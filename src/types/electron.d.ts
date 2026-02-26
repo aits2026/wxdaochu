@@ -584,10 +584,12 @@ export interface ElectronAPI {
       outputDir?: string
       outputTargetType?: 'file' | 'directory'
       exportEmojisIncluded?: boolean
+      exportVoicesIncluded?: boolean
     }[]>
     getLatestExportTimes: (sessionUsernames: string[]) => Promise<Record<string, number>>
     getEmojiExportFlags: (sessionUsernames: string[]) => Promise<Record<string, boolean>>
     getLatestEmojiExportTimes: (sessionUsernames: string[]) => Promise<Record<string, number>>
+    getLatestVoiceExportTimes: (sessionUsernames: string[]) => Promise<Record<string, number>>
     saveExportRecord: (
       sessionUsername: string,
       format: string,
@@ -596,7 +598,8 @@ export interface ElectronAPI {
       outputTargetType?: 'file' | 'directory',
       exportEmojisIncluded?: boolean,
       extra?: {
-        exportKind?: 'chat' | 'emoji-assets'
+        exportKind?: 'chat' | 'emoji-assets' | 'voice-assets'
+        exportVoicesIncluded?: boolean
         sourceLatestMessageTimestamp?: number
         emojiItemCount?: number
       }
@@ -845,11 +848,13 @@ export interface ExportOptions {
   exportEmojis?: boolean
   exportVoices?: boolean
   emojiOnlyMode?: boolean
+  voiceOnlyMode?: boolean
   dedupeVideoFiles?: boolean
   skipIfUnchanged?: boolean
   currentMessageCountHint?: number
   latestMessageTimestampHint?: number
   currentEmojiCountHint?: number
+  currentVoiceCountHint?: number
 }
 
 export interface ContactExportOptions {

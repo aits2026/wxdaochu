@@ -39,10 +39,12 @@ interface ExportOptions {
   exportEmojis: boolean
   exportVoices: boolean
   emojiOnlyMode?: boolean
+  voiceOnlyMode?: boolean
   skipIfUnchanged?: boolean
   currentMessageCountHint?: number
   latestMessageTimestampHint?: number
   currentEmojiCountHint?: number
+  currentVoiceCountHint?: number
 }
 
 interface ContactExportOptions {
@@ -90,6 +92,7 @@ const SESSION_SORT_STATS_WARMUP_START_DELAY_MS = 160
 const SESSION_SORT_STATS_WARMUP_YIELD_EVERY = 6
 const CHAT_TEXT_EXPORT_SUBDIR_NAME = '聊天文本'
 const EMOJI_EXPORT_SUBDIR_NAME = '表情包'
+const VOICE_EXPORT_SUBDIR_NAME = '语音'
 const OPEN_EXPORT_OVERVIEW_EVENT = 'vxdaochu:open-export-overview'
 
 interface SessionImageDecryptOverview {
@@ -266,6 +269,24 @@ interface EmojiExportBatchTaskProgress {
 interface EmojiBatchSessionOutcome {
   status: 'exported' | 'skipped'
   at: number
+}
+
+interface QueuedVoiceExportJob {
+  taskId: string
+  sessionId: string
+  sessionName: string
+  voiceCount?: number
+  latestMessageTimestamp?: number
+  outputDir: string
+  queuedAt: number
+  batchTaskId: string
+}
+
+interface VoiceExportBatchTaskProgress {
+  total: number
+  completed: number
+  successCount: number
+  failCount: number
 }
 
 interface SessionExportRecord {
@@ -715,6 +736,7 @@ function ExportPage() {
   const [sessionLatestExportTimeMap, setSessionLatestExportTimeMap] = useState<Record<string, number | null>>({})
   const [sessionEmojiExportFlagMap, setSessionEmojiExportFlagMap] = useState<Record<string, boolean | null>>({})
   const [sessionEmojiLatestExportTimeMap, setSessionEmojiLatestExportTimeMap] = useState<Record<string, number | null>>({})
+  const [sessionVoiceLatestExportTimeMap, setSessionVoiceLatestExportTimeMap] = useState<Record<string, number | null>>({})
   const [searchKeyword, setSearchKeyword] = useState('')
   const [sessionTypeFilter, setSessionTypeFilter] = useState<SessionTypeFilter>('private')
   const [sessionListSortKey, setSessionListSortKey] = useState<SessionListSortKey>('messageCount')
@@ -812,6 +834,8 @@ function ExportPage() {
   const [showChatTextCardExportFormatPicker, setShowChatTextCardExportFormatPicker] = useState(false)
   const [showEmojiCardExportModal, setShowEmojiCardExportModal] = useState(false)
   const [showEmojiCardStatusModal, setShowEmojiCardStatusModal] = useState(false)
+  const [showVoiceCardExportModal, setShowVoiceCardExportModal] = useState(false)
+  const [showVoiceCardStatusModal, setShowVoiceCardStatusModal] = useState(false)
   const [chatTextCardExportOptions, setChatTextCardExportOptions] = useState<ExportOptions>({
     format: 'json',
     startDate: '',
@@ -828,6 +852,8 @@ function ExportPage() {
   const [runningEmojiExportSessionId, setRunningEmojiExportSessionId] = useState<string | null>(null)
   const [queuedEmojiExportSessionIds, setQueuedEmojiExportSessionIds] = useState<Set<string>>(new Set())
   const [sessionEmojiBatchOutcomeMap, setSessionEmojiBatchOutcomeMap] = useState<Record<string, EmojiBatchSessionOutcome>>({})
+  const [runningVoiceExportSessionId, setRunningVoiceExportSessionId] = useState<string | null>(null)
+  const [queuedVoiceExportSessionIds, setQueuedVoiceExportSessionIds] = useState<Set<string>>(new Set())
   const hasRunningChatExportTask = Boolean(runningChatExportSessionId)
   const hasPendingChatExportTask = queuedChatExportSessionIds.size > 0
   const chatTextExportFolder = useMemo(
@@ -836,6 +862,10 @@ function ExportPage() {
   )
   const emojiExportFolder = useMemo(
     () => appendPathSegment(exportFolder, EMOJI_EXPORT_SUBDIR_NAME),
+    [exportFolder]
+  )
+  const voiceExportFolder = useMemo(
+    () => appendPathSegment(exportFolder, VOICE_EXPORT_SUBDIR_NAME),
     [exportFolder]
   )
 
@@ -884,12 +914,16 @@ function ExportPage() {
   const sessionLatestExportTimesRequestIdRef = useRef(0)
   const sessionEmojiExportFlagsRequestIdRef = useRef(0)
   const sessionEmojiLatestExportTimesRequestIdRef = useRef(0)
+  const sessionVoiceLatestExportTimesRequestIdRef = useRef(0)
   const chatExportQueueRef = useRef<QueuedChatExportJob[]>([])
   const chatExportWorkerRunningRef = useRef(false)
   const chatExportBatchTaskProgressRef = useRef<Record<string, ChatExportBatchTaskProgress>>({})
   const emojiExportQueueRef = useRef<QueuedEmojiExportJob[]>([])
   const emojiExportWorkerRunningRef = useRef(false)
   const emojiExportBatchTaskProgressRef = useRef<Record<string, EmojiExportBatchTaskProgress>>({})
+  const voiceExportQueueRef = useRef<QueuedVoiceExportJob[]>([])
+  const voiceExportWorkerRunningRef = useRef(false)
+  const voiceExportBatchTaskProgressRef = useRef<Record<string, VoiceExportBatchTaskProgress>>({})
 
   useEffect(() => {
     sessionTypeFilterRef.current = sessionTypeFilter
@@ -913,6 +947,16 @@ function ExportPage() {
       nextQueued.add(job.sessionId)
     }
     setQueuedEmojiExportSessionIds(nextQueued)
+  }, [])
+
+  const syncVoiceExportQueueStatus = useCallback((nextRunningSessionId: string | null) => {
+    setRunningVoiceExportSessionId(nextRunningSessionId)
+    const nextQueued = new Set<string>()
+    for (const job of voiceExportQueueRef.current) {
+      if (nextRunningSessionId && job.sessionId === nextRunningSessionId) continue
+      nextQueued.add(job.sessionId)
+    }
+    setQueuedVoiceExportSessionIds(nextQueued)
   }, [])
 
   useEffect(() => {
@@ -1557,6 +1601,7 @@ function ExportPage() {
       setSessionLatestExportTimeMap({})
       setSessionEmojiExportFlagMap({})
       setSessionEmojiLatestExportTimeMap({})
+      setSessionVoiceLatestExportTimeMap({})
       setSessionEmojiBatchOutcomeMap({})
       return
     }
@@ -1587,6 +1632,18 @@ function ExportPage() {
       return changed ? next : prev
     })
     setSessionEmojiLatestExportTimeMap(prev => {
+      let changed = false
+      const next: Record<string, number | null> = {}
+      for (const [username, value] of Object.entries(prev)) {
+        if (currentUsernames.has(username)) {
+          next[username] = value
+        } else {
+          changed = true
+        }
+      }
+      return changed ? next : prev
+    })
+    setSessionVoiceLatestExportTimeMap(prev => {
       let changed = false
       const next: Record<string, number | null> = {}
       for (const [username, value] of Object.entries(prev)) {
@@ -1722,6 +1779,43 @@ function ExportPage() {
       }
     })()
   }, [activeTab, sessions, sessionEmojiLatestExportTimeMap])
+
+  useEffect(() => {
+    if (activeTab !== 'chat' || sessions.length === 0) return
+
+    const missingUsernames = sessions
+      .map(session => session.username)
+      .filter(username => !(username in sessionVoiceLatestExportTimeMap))
+
+    if (missingUsernames.length === 0) return
+
+    const requestId = ++sessionVoiceLatestExportTimesRequestIdRef.current
+
+    void (async () => {
+      try {
+        const latestMap = await window.electronAPI.export.getLatestVoiceExportTimes(missingUsernames)
+        if (requestId !== sessionVoiceLatestExportTimesRequestIdRef.current) return
+
+        setSessionVoiceLatestExportTimeMap(prev => {
+          const next = { ...prev }
+          for (const username of missingUsernames) {
+            next[username] = typeof latestMap?.[username] === 'number' ? latestMap[username] : null
+          }
+          return next
+        })
+      } catch (e) {
+        console.error('加载会话语音最近导出时间失败:', e)
+        if (requestId !== sessionVoiceLatestExportTimesRequestIdRef.current) return
+        setSessionVoiceLatestExportTimeMap(prev => {
+          const next = { ...prev }
+          for (const username of missingUsernames) {
+            if (!(username in next)) next[username] = null
+          }
+          return next
+        })
+      }
+    })()
+  }, [activeTab, sessions, sessionVoiceLatestExportTimeMap])
 
   const sessionByUsername = useMemo(() => {
     const map = new Map<string, ChatSession>()
@@ -2918,6 +3012,63 @@ function ExportPage() {
     }
     return { running, queued, exported, skipped, notExported, total: sessionEmojiCardTotalSessions }
   }, [emojiStatusRows, sessionEmojiCardTotalSessions])
+  const voiceCardTotalSessions = sessions.length
+  const voiceCardExportedSessions = useMemo(() => (
+    sessions.reduce((count, session) => {
+      const latestExportTime = sessionVoiceLatestExportTimeMap[session.username]
+      return (typeof latestExportTime === 'number' && Number.isFinite(latestExportTime) && latestExportTime > 0)
+        ? count + 1
+        : count
+    }, 0)
+  ), [sessionVoiceLatestExportTimeMap, sessions])
+  const voiceStatusRows = useMemo(() => {
+    const statusPriority: Record<'running' | 'queued' | 'not-exported' | 'exported', number> = {
+      running: 0,
+      queued: 1,
+      'not-exported': 2,
+      exported: 3
+    }
+    return sessions
+      .map((session) => {
+        const latestExportTime = sessionVoiceLatestExportTimeMap[session.username]
+        const hasExported = typeof latestExportTime === 'number' && Number.isFinite(latestExportTime) && latestExportTime > 0
+        const status: 'running' | 'queued' | 'not-exported' | 'exported' =
+          runningVoiceExportSessionId === session.username
+            ? 'running'
+            : queuedVoiceExportSessionIds.has(session.username)
+              ? 'queued'
+              : hasExported
+                ? 'exported'
+                : 'not-exported'
+
+        return {
+          session,
+          status,
+          latestExportTime: hasExported ? latestExportTime : null
+        }
+      })
+      .sort((a, b) => {
+        const statusDiff = statusPriority[a.status] - statusPriority[b.status]
+        if (statusDiff !== 0) return statusDiff
+        if (a.status === 'exported' && b.status === 'exported') {
+          return (b.latestExportTime || 0) - (a.latestExportTime || 0)
+        }
+        return (b.session.lastTimestamp || 0) - (a.session.lastTimestamp || 0)
+      })
+  }, [queuedVoiceExportSessionIds, runningVoiceExportSessionId, sessionVoiceLatestExportTimeMap, sessions])
+  const voiceStatusSummary = useMemo(() => {
+    let running = 0
+    let queued = 0
+    let exported = 0
+    let notExported = 0
+    for (const row of voiceStatusRows) {
+      if (row.status === 'running') running += 1
+      else if (row.status === 'queued') queued += 1
+      else if (row.status === 'exported') exported += 1
+      else notExported += 1
+    }
+    return { running, queued, exported, notExported, total: voiceCardTotalSessions }
+  }, [voiceCardTotalSessions, voiceStatusRows])
   const groupFriendMembersForPopup = useMemo(() => {
     const friendMembers = sessionDetail?.groupInfo?.friendMembers || []
     if (friendMembers.length <= 1) return friendMembers
@@ -3721,7 +3872,10 @@ function ExportPage() {
               job.messageCount,
               exportOpenTargetPath,
               exportOpenTargetType,
-              job.options.exportEmojis
+              job.options.exportEmojis,
+              {
+                exportVoicesIncluded: job.options.exportVoices
+              }
             )
             const records = await window.electronAPI.export.getExportRecords(job.sessionId)
             if (selectedSession === job.sessionId) {
@@ -3731,6 +3885,9 @@ function ExportPage() {
             if (job.options.exportEmojis) {
               setSessionEmojiExportFlagMap(prev => ({ ...prev, [job.sessionId]: true }))
               setSessionEmojiLatestExportTimeMap(prev => ({ ...prev, [job.sessionId]: Date.now() }))
+            }
+            if (job.options.exportVoices) {
+              setSessionVoiceLatestExportTimeMap(prev => ({ ...prev, [job.sessionId]: Date.now() }))
             }
           }
           finishBatchJob(true)
@@ -4313,6 +4470,284 @@ function ExportPage() {
     taskCenterUpsertTask
   ])
 
+  const executeQueuedVoiceExportJob = useCallback(async (job: QueuedVoiceExportJob) => {
+    const finishBatchJob = (ok: boolean, errorMessage?: string) => {
+      const batch = voiceExportBatchTaskProgressRef.current[job.batchTaskId]
+      if (!batch) return
+      batch.completed += 1
+      if (ok) batch.successCount += 1
+      else batch.failCount += 1
+
+      const isComplete = batch.completed >= batch.total
+      const hasAnySuccess = batch.successCount > 0
+      taskCenterPatchTask(job.batchTaskId, {
+        status: isComplete ? (hasAnySuccess ? 'success' : 'error') : 'running',
+        progressCurrent: batch.completed,
+        progressTotal: batch.total,
+        successCount: batch.successCount,
+        failCount: batch.failCount,
+        phase: isComplete ? '导出完成' : '正在导出...',
+        detail: isComplete
+          ? `共 ${batch.total.toLocaleString()} 个会话，成功 ${batch.successCount.toLocaleString()}，失败 ${batch.failCount.toLocaleString()}`
+          : `共 ${batch.total.toLocaleString()} 个会话，可继续操作页面`,
+        currentName: isComplete ? '' : job.sessionName,
+        error: isComplete && !hasAnySuccess ? (errorMessage || '批量导出失败') : undefined
+      })
+      if (isComplete) {
+        delete voiceExportBatchTaskProgressRef.current[job.batchTaskId]
+      }
+    }
+
+    const exportOptions: ExportOptions = {
+      format: 'json',
+      startDate: '',
+      endDate: '',
+      exportAvatars: false,
+      exportImages: false,
+      exportVideos: false,
+      exportEmojis: false,
+      exportVoices: true,
+      voiceOnlyMode: true,
+      latestMessageTimestampHint: job.latestMessageTimestamp
+    }
+    if (typeof job.voiceCount === 'number' && Number.isFinite(job.voiceCount) && job.voiceCount >= 0) {
+      exportOptions.currentVoiceCountHint = job.voiceCount
+    }
+
+    try {
+      const result = await window.electronAPI.export.exportSessions(
+        [job.sessionId],
+        job.outputDir,
+        exportOptions
+      )
+
+      if (result.success) {
+        const sessionOutput = result.sessionOutputs?.find(item => item.sessionId === job.sessionId) || result.sessionOutputs?.[0]
+        const exportOpenTargetPath = sessionOutput?.openTargetPath || job.outputDir
+        const exportOpenTargetType = sessionOutput?.openTargetType || 'directory'
+        const wasSkipped = sessionOutput?.skipped === true
+        const skipReason = sessionOutput?.skipReason
+
+        if (!wasSkipped) {
+          await window.electronAPI.export.saveExportRecord(
+            job.sessionId,
+            'voice-assets',
+            typeof job.voiceCount === 'number' ? job.voiceCount : 0,
+            exportOpenTargetPath,
+            exportOpenTargetType,
+            false,
+            {
+              exportKind: 'voice-assets',
+              exportVoicesIncluded: true
+            }
+          )
+          setSessionVoiceLatestExportTimeMap(prev => ({ ...prev, [job.sessionId]: Date.now() }))
+        } else if (skipReason !== 'voice-empty-session') {
+          setSessionVoiceLatestExportTimeMap(prev => ({
+            ...prev,
+            [job.sessionId]: (typeof prev[job.sessionId] === 'number' && Number.isFinite(prev[job.sessionId]) && (prev[job.sessionId] || 0) > 0)
+              ? prev[job.sessionId]
+              : Date.now()
+          }))
+        }
+
+        finishBatchJob(true)
+        return
+      }
+
+      finishBatchJob(false, result.error || '导出失败')
+    } catch (e) {
+      console.error('批量导出语音失败:', e)
+      const errorMessage = e instanceof Error ? e.message : String(e)
+      finishBatchJob(false, errorMessage)
+    }
+  }, [taskCenterPatchTask])
+
+  const processNextQueuedVoiceExport = useCallback(async () => {
+    if (voiceExportWorkerRunningRef.current) return
+    const nextJob = voiceExportQueueRef.current[0]
+    if (!nextJob) return
+
+    voiceExportWorkerRunningRef.current = true
+    syncVoiceExportQueueStatus(nextJob.sessionId)
+    taskCenterPatchTask(nextJob.batchTaskId, {
+      status: 'running',
+      phase: '正在导出...',
+      detail: `共 ${(voiceExportBatchTaskProgressRef.current[nextJob.batchTaskId]?.total || 0).toLocaleString()} 个会话，可继续操作页面`,
+      currentName: nextJob.sessionName
+    })
+    taskCenterSetActiveExportTaskId(null)
+
+    try {
+      await executeQueuedVoiceExportJob(nextJob)
+    } finally {
+      voiceExportQueueRef.current = voiceExportQueueRef.current.filter(job => job.taskId !== nextJob.taskId)
+      voiceExportWorkerRunningRef.current = false
+      taskCenterSetActiveExportTaskId(null)
+      syncVoiceExportQueueStatus(null)
+      window.setTimeout(() => { void processNextQueuedVoiceExport() }, 0)
+    }
+  }, [executeQueuedVoiceExportJob, syncVoiceExportQueueStatus, taskCenterPatchTask, taskCenterSetActiveExportTaskId])
+
+  const enqueueBatchVoiceExportJobsChunked = useCallback(async (params: {
+    sessionIds: string[]
+    batchTaskId: string
+    chunkSize?: number
+  }) => {
+    const { sessionIds, batchTaskId, chunkSize = 120 } = params
+
+    if (!exportFolder || !voiceExportFolder || sessionIds.length === 0) return 0
+
+    const queueStartedAt = Date.now()
+    let queuedCount = 0
+    let hasStartedWorker = false
+
+    taskCenterHighlightTask(batchTaskId)
+    taskCenterOpen()
+
+    for (let offset = 0; offset < sessionIds.length; offset += chunkSize) {
+      const chunk = sessionIds.slice(offset, offset + chunkSize)
+      if (chunk.length === 0) continue
+
+      const jobs: QueuedVoiceExportJob[] = chunk.map((sessionId, index) => {
+        const absoluteIndex = offset + index
+        const sessionMeta = sessionByUsername.get(sessionId)
+        const sessionName =
+          (sessionDetail?.wxid === sessionId ? (sessionDetail?.remark || sessionDetail?.nickName || sessionDetail?.alias) : undefined) ||
+          sessionMeta?.displayName ||
+          sessionId
+        const voiceCount =
+          (sessionDetail?.wxid === sessionId ? sessionDetail.voiceCount : undefined) ??
+          sessionCardStatsMap[sessionId]?.voiceCount
+        const queuedAt = queueStartedAt + absoluteIndex
+
+        return {
+          taskId: `voice-export:${sessionId}:${queuedAt}`,
+          sessionId,
+          sessionName,
+          voiceCount,
+          latestMessageTimestamp: sessionMeta?.lastTimestamp,
+          outputDir: voiceExportFolder,
+          queuedAt,
+          batchTaskId
+        }
+      })
+
+      voiceExportQueueRef.current = [...voiceExportQueueRef.current, ...jobs]
+      queuedCount += jobs.length
+
+      taskCenterPatchTask(batchTaskId, {
+        phase: queuedCount < sessionIds.length ? '准备队列...' : '等待执行',
+        detail: queuedCount < sessionIds.length
+          ? `正在准备导出队列 ${queuedCount.toLocaleString()} / ${sessionIds.length.toLocaleString()} 个会话`
+          : `共 ${sessionIds.length.toLocaleString()} 个会话，已加入队列`
+      })
+
+      syncVoiceExportQueueStatus(voiceExportWorkerRunningRef.current ? runningVoiceExportSessionId : null)
+      if (!hasStartedWorker) {
+        hasStartedWorker = true
+        void processNextQueuedVoiceExport()
+      }
+
+      if (queuedCount < sessionIds.length) {
+        await yieldToMainThread()
+      }
+    }
+
+    return queuedCount
+  }, [
+    exportFolder,
+    processNextQueuedVoiceExport,
+    runningVoiceExportSessionId,
+    sessionByUsername,
+    sessionCardStatsMap,
+    sessionDetail?.alias,
+    sessionDetail?.nickName,
+    sessionDetail?.remark,
+    sessionDetail?.voiceCount,
+    sessionDetail?.wxid,
+    syncVoiceExportQueueStatus,
+    taskCenterHighlightTask,
+    taskCenterOpen,
+    taskCenterPatchTask,
+    voiceExportFolder
+  ])
+
+  const startVoiceCardExportAll = useCallback(async () => {
+    if (!exportFolder) {
+      alert('请先在顶部设置导出目录')
+      return
+    }
+    if (sessions.length === 0) return
+
+    const totalSessions = sessions.length
+    const batchTaskId = `voice-export-batch:${Date.now()}`
+    voiceExportBatchTaskProgressRef.current[batchTaskId] = {
+      total: totalSessions,
+      completed: 0,
+      successCount: 0,
+      failCount: 0
+    }
+    taskCenterUpsertTask({
+      id: batchTaskId,
+      kind: 'voice-export-batch',
+      typeLabel: '语音批量导出',
+      sessionName: '全部会话',
+      status: 'pending',
+      progressCurrent: 0,
+      progressTotal: totalSessions,
+      successCount: 0,
+      failCount: 0,
+      unitLabel: '个会话',
+      outputDir: voiceExportFolder,
+      outputTargetType: 'directory',
+      phase: '准备队列...',
+      detail: `正在准备导出队列 0 / ${totalSessions.toLocaleString()} 个会话`,
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    })
+    setShowVoiceCardExportModal(false)
+
+    await yieldToMainThread()
+
+    const orderedSessionIds = sessions
+      .map((session, index) => ({ session, index }))
+      .sort((a, b) => {
+        const priority = (accountType?: ChatSession['accountType']) => {
+          if (accountType === 'friend') return 0
+          if (accountType === 'group') return 1
+          if (accountType === 'official') return 2
+          return 3
+        }
+        const diff = priority(a.session.accountType) - priority(b.session.accountType)
+        if (diff !== 0) return diff
+        return a.index - b.index
+      })
+      .map(item => item.session.username)
+
+    const queuedCount = await enqueueBatchVoiceExportJobsChunked({
+      sessionIds: orderedSessionIds,
+      batchTaskId
+    })
+
+    if (queuedCount <= 0) {
+      delete voiceExportBatchTaskProgressRef.current[batchTaskId]
+      taskCenterPatchTask(batchTaskId, {
+        status: 'error',
+        phase: '导出失败',
+        detail: '未能创建导出队列',
+        error: '未能创建导出队列'
+      })
+    }
+  }, [
+    enqueueBatchVoiceExportJobsChunked,
+    exportFolder,
+    sessions,
+    taskCenterPatchTask,
+    taskCenterUpsertTask,
+    voiceExportFolder
+  ])
+
   // 导出聊天记录（支持排队）
   const startExport = useCallback(async () => {
     if (!selectedSession || !exportFolder) return
@@ -4329,6 +4764,8 @@ function ExportPage() {
   ])
 
   const openChatTextCardExportModal = useCallback(() => {
+    setShowVoiceCardExportModal(false)
+    setShowVoiceCardStatusModal(false)
     setShowEmojiCardExportModal(false)
     setShowEmojiCardStatusModal(false)
     setShowChatTextCardStatusModal(false)
@@ -4337,6 +4774,8 @@ function ExportPage() {
   }, [])
 
   const openChatTextCardStatusModal = useCallback(() => {
+    setShowVoiceCardExportModal(false)
+    setShowVoiceCardStatusModal(false)
     setShowEmojiCardExportModal(false)
     setShowEmojiCardStatusModal(false)
     setShowChatTextCardExportModal(false)
@@ -4345,6 +4784,8 @@ function ExportPage() {
   }, [])
 
   const openEmojiCardExportModal = useCallback(() => {
+    setShowVoiceCardExportModal(false)
+    setShowVoiceCardStatusModal(false)
     setShowChatTextCardExportModal(false)
     setShowChatTextCardStatusModal(false)
     setShowChatTextCardExportFormatPicker(false)
@@ -4353,11 +4794,33 @@ function ExportPage() {
   }, [])
 
   const openEmojiCardStatusModal = useCallback(() => {
+    setShowVoiceCardExportModal(false)
+    setShowVoiceCardStatusModal(false)
     setShowChatTextCardExportModal(false)
     setShowChatTextCardStatusModal(false)
     setShowChatTextCardExportFormatPicker(false)
     setShowEmojiCardExportModal(false)
     setShowEmojiCardStatusModal(true)
+  }, [])
+
+  const openVoiceCardExportModal = useCallback(() => {
+    setShowChatTextCardExportModal(false)
+    setShowChatTextCardStatusModal(false)
+    setShowChatTextCardExportFormatPicker(false)
+    setShowEmojiCardExportModal(false)
+    setShowEmojiCardStatusModal(false)
+    setShowVoiceCardStatusModal(false)
+    setShowVoiceCardExportModal(true)
+  }, [])
+
+  const openVoiceCardStatusModal = useCallback(() => {
+    setShowChatTextCardExportModal(false)
+    setShowChatTextCardStatusModal(false)
+    setShowChatTextCardExportFormatPicker(false)
+    setShowEmojiCardExportModal(false)
+    setShowEmojiCardStatusModal(false)
+    setShowVoiceCardExportModal(false)
+    setShowVoiceCardStatusModal(true)
   }, [])
 
   useEffect(() => {
@@ -4368,13 +4831,17 @@ function ExportPage() {
         openEmojiCardStatusModal()
         return
       }
+      if (detail?.taskKind === 'voice-export-batch') {
+        openVoiceCardStatusModal()
+        return
+      }
       openChatTextCardStatusModal()
     }
     window.addEventListener(OPEN_EXPORT_OVERVIEW_EVENT, handleOpenFromTaskCenter as EventListener)
     return () => {
       window.removeEventListener(OPEN_EXPORT_OVERVIEW_EVENT, handleOpenFromTaskCenter as EventListener)
     }
-  }, [openChatTextCardStatusModal, openEmojiCardStatusModal])
+  }, [openChatTextCardStatusModal, openEmojiCardStatusModal, openVoiceCardStatusModal])
 
   const startChatTextCardExportAll = useCallback(async () => {
     if (!exportFolder) {
@@ -4750,6 +5217,44 @@ function ExportPage() {
                       }}
                       disabled={sessions.length === 0}
                       title="导出全部会话表情包"
+                    >
+                      导出
+                    </button>
+                  </div>
+                </div>
+                <div
+                  className="emoji-overview-trigger-card is-emoji-card"
+                  title="点击查看全部会话语音导出状态"
+                  role="button"
+                  tabIndex={0}
+                  onClick={openVoiceCardStatusModal}
+                  onKeyDown={(e) => {
+                    if (e.key !== 'Enter' && e.key !== ' ') return
+                    e.preventDefault()
+                    openVoiceCardStatusModal()
+                  }}
+                >
+                  <div className="emoji-overview-trigger-head">
+                    <span className="emoji-overview-trigger-icon" aria-hidden="true">
+                      <Mic size={14} />
+                    </span>
+                    <span className="emoji-overview-trigger-title">语音</span>
+                  </div>
+                  <div className="emoji-overview-trigger-summary">
+                    <strong>
+                      {voiceCardExportedSessions.toLocaleString()} / {voiceCardTotalSessions.toLocaleString()}
+                    </strong>
+                  </div>
+                  <div className="emoji-overview-trigger-actions">
+                    <button
+                      type="button"
+                      className="emoji-overview-trigger-action-btn"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        openVoiceCardExportModal()
+                      }}
+                      disabled={sessions.length === 0}
+                      title="导出全部会话语音"
                     >
                       导出
                     </button>
@@ -7546,6 +8051,169 @@ function ExportPage() {
                 type="button"
                 className="chat-text-card-modal-btn"
                 onClick={() => setShowEmojiCardStatusModal(false)}
+              >
+                关闭
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showVoiceCardExportModal && (
+        <div
+          className="export-overlay"
+          onClick={() => setShowVoiceCardExportModal(false)}
+        >
+          <div className="chat-text-card-export-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="chat-text-card-modal-header">
+              <div>
+                <h3>导出语音</h3>
+                <p>范围：全部会话（使用顶部统一导出目录）</p>
+              </div>
+              <button
+                type="button"
+                className="group-friends-close-btn"
+                onClick={() => setShowVoiceCardExportModal(false)}
+                aria-label="关闭语音导出弹窗"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="chat-text-card-modal-body">
+              <div className="chat-text-card-setting-block">
+                <div className="chat-text-card-setting-row">
+                  <h4>导出内容</h4>
+                  <div className="chat-text-card-setting-row-value">
+                    <Mic size={16} />
+                    <span>全部会话语音</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className={`chat-text-card-export-path-note ${exportFolder ? '' : 'is-empty'}`}>
+                <span className="label">导出目录</span>
+                <span className="path" title={voiceExportFolder || '未设置导出目录'}>{voiceExportFolder || '未设置导出目录'}</span>
+              </div>
+            </div>
+
+            <div className="chat-text-card-modal-actions">
+              <button
+                type="button"
+                className="chat-text-card-modal-btn"
+                onClick={() => setShowVoiceCardExportModal(false)}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                className="chat-text-card-modal-btn primary"
+                onClick={startVoiceCardExportAll}
+                disabled={!exportFolder || sessions.length === 0}
+              >
+                开始导出
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showVoiceCardStatusModal && (
+        <div
+          className="export-overlay"
+          onClick={() => setShowVoiceCardStatusModal(false)}
+        >
+          <div className="chat-text-card-status-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="chat-text-card-modal-header">
+              <div>
+                <h3>语音导出状态</h3>
+              </div>
+              <button
+                type="button"
+                className="group-friends-close-btn"
+                onClick={() => setShowVoiceCardStatusModal(false)}
+                aria-label="关闭语音导出状态弹窗"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="chat-text-card-status-summary">
+              <span className="chat-text-card-status-summary-item compact">
+                <span className="label">已导出</span>
+                <strong>{voiceStatusSummary.exported.toLocaleString()} / {voiceStatusSummary.total.toLocaleString()}</strong>
+              </span>
+              <span className="chat-text-card-status-summary-item compact">
+                <span className="label">导出中</span>
+                <strong>{voiceStatusSummary.running.toLocaleString()}</strong>
+              </span>
+              <span className="chat-text-card-status-summary-item compact">
+                <span className="label">排队中</span>
+                <strong>{voiceStatusSummary.queued.toLocaleString()}</strong>
+              </span>
+              <span className="chat-text-card-status-summary-item compact">
+                <span className="label">未导出</span>
+                <strong>{voiceStatusSummary.notExported.toLocaleString()}</strong>
+              </span>
+            </div>
+
+            <div className="chat-text-card-status-list" role="list" aria-label="全部会话语音导出状态">
+              {voiceStatusRows.length === 0 ? (
+                <div className="chat-text-card-status-empty">暂无会话</div>
+              ) : (
+                voiceStatusRows.map(({ session, status, latestExportTime }) => {
+                  const statusLabel = status === 'running'
+                    ? '导出中'
+                    : status === 'queued'
+                      ? '排队中'
+                      : status === 'exported'
+                        ? '已导出'
+                        : '未导出'
+                  const statusClass = status === 'running'
+                    ? 'running'
+                    : status === 'queued'
+                      ? 'checking'
+                      : status === 'exported'
+                        ? 'success'
+                        : 'warning'
+                  const recentLabel = latestExportTime ? formatRecentExportTime(latestExportTime) : '--'
+                  const accountTypeLabel = session.accountType === 'group'
+                    ? '群聊'
+                    : session.accountType === 'official'
+                      ? '公众号'
+                      : '私聊'
+
+                  return (
+                    <div key={session.username} className="chat-text-card-status-card" role="listitem" title={session.username}>
+                      <div className="chat-text-card-status-card-head">
+                        <span className="chat-text-card-status-session-name" title={session.displayName || session.username}>
+                          {session.displayName || session.username}
+                        </span>
+                        <span className={`session-media-status-pill ${statusClass}`}>
+                          {status === 'running' && <Loader2 size={11} className="spin" />}
+                          <span>{statusLabel}</span>
+                        </span>
+                      </div>
+                      <div className="chat-text-card-status-card-meta">
+                        <span className="chat-text-card-status-type-pill">{accountTypeLabel}</span>
+                        <span
+                          className="chat-text-card-status-time"
+                          title={latestExportTime ? new Date(latestExportTime).toLocaleString('zh-CN') : '未导出'}
+                        >
+                          {recentLabel || '--'}
+                        </span>
+                      </div>
+                    </div>
+                  )
+                })
+              )}
+            </div>
+
+            <div className="chat-text-card-modal-actions">
+              <button
+                type="button"
+                className="chat-text-card-modal-btn"
+                onClick={() => setShowVoiceCardStatusModal(false)}
               >
                 关闭
               </button>

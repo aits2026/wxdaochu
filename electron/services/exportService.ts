@@ -95,6 +95,8 @@ export interface ExportOptions {
   exportVoices?: boolean
   // 仅导出表情包资源（不生成聊天文本文件）
   emojiOnlyMode?: boolean
+  // 仅导出语音资源（不生成聊天文本文件）
+  voiceOnlyMode?: boolean
   // 视频文件去重（多个消息可引用同一文件）；默认开启以节省空间
   dedupeVideoFiles?: boolean
   // 媒体路径映射表：消息实例键 -> 相对路径（避免仅用 createTime 发生同秒覆盖）
@@ -105,6 +107,7 @@ export interface ExportOptions {
   // Unix 秒级时间戳（会话最新消息时间）
   latestMessageTimestampHint?: number
   currentEmojiCountHint?: number
+  currentVoiceCountHint?: number
 }
 
 export interface ContactExportOptions {
@@ -2428,9 +2431,17 @@ class ExportService {
           !options.exportVideos &&
           !options.exportVoices
         )
+        const voiceOnlyMode = Boolean(
+          options.voiceOnlyMode &&
+          options.exportVoices &&
+          !options.exportImages &&
+          !options.exportVideos &&
+          !options.exportEmojis
+        )
+        const mediaOnlyMode = emojiOnlyMode || voiceOnlyMode
         const hasMedia = Boolean(options.exportImages || options.exportVideos || options.exportEmojis || options.exportVoices)
         const sessionOutputDir = hasMedia ? path.join(outputDir, safeName) : outputDir
-        if (hasMedia && !emojiOnlyMode && !fs.existsSync(sessionOutputDir)) {
+        if (hasMedia && !mediaOnlyMode && !fs.existsSync(sessionOutputDir)) {
           fs.mkdirSync(sessionOutputDir, { recursive: true })
         }
 
@@ -2438,7 +2449,7 @@ class ExportService {
 
         const canTrySkipTextUnchanged = Boolean(
           options.skipIfUnchanged &&
-          !emojiOnlyMode &&
+          !mediaOnlyMode &&
           !hasMedia &&
           Number.isFinite(options.currentMessageCountHint) &&
           Number.isFinite(options.latestMessageTimestampHint) &&
@@ -2519,6 +2530,31 @@ class ExportService {
           }
         }
 
+        if (
+          voiceOnlyMode &&
+          Number.isFinite(options.currentVoiceCountHint) &&
+          Number(options.currentVoiceCountHint) === 0
+        ) {
+          emitProgress({
+            current: 100,
+            total: 100,
+            currentSession: sessionInfo.displayName,
+            phase: 'complete',
+            detail: '无语音，已跳过'
+          })
+          successCount++
+          sessionOutputs.push({
+            sessionId,
+            outputPath: sessionOutputDir,
+            openTargetPath: outputDir,
+            openTargetType: 'directory',
+            skipped: true,
+            skipReason: 'voice-empty-session'
+          })
+          await new Promise(resolve => setImmediate(resolve))
+          continue
+        }
+
         emitProgress({
           current: 5,
           total: 100,
@@ -2552,7 +2588,7 @@ class ExportService {
         const exportOpts = mediaPathMap ? { ...options, mediaPathMap } : options
 
         let result: { success: boolean; error?: string }
-        if (emojiOnlyMode) {
+        if (emojiOnlyMode || voiceOnlyMode) {
           if (!this.dirHasAnyFile(sessionOutputDir)) {
             try {
               if (fs.existsSync(sessionOutputDir)) {
@@ -2569,7 +2605,7 @@ class ExportService {
               total: 100,
               currentSession: sessionInfo.displayName,
               phase: 'complete',
-              detail: '无表情包，已跳过'
+              detail: emojiOnlyMode ? '无表情包，已跳过' : '无语音，已跳过'
             })
             successCount++
             sessionOutputs.push({
@@ -2578,7 +2614,7 @@ class ExportService {
               openTargetPath: outputDir,
               openTargetType: 'directory',
               skipped: true,
-              skipReason: 'emoji-empty-session'
+              skipReason: emojiOnlyMode ? 'emoji-empty-session' : 'voice-empty-session'
             })
             await new Promise(resolve => setImmediate(resolve))
             continue
@@ -2588,7 +2624,7 @@ class ExportService {
             total: 100,
             currentSession: sessionInfo.displayName,
             phase: 'complete',
-            detail: '表情包导出完成'
+            detail: emojiOnlyMode ? '表情包导出完成' : '语音导出完成'
           })
           result = { success: true }
         } else if (options.format === 'json') {
@@ -2608,7 +2644,7 @@ class ExportService {
           successCount++
           sessionOutputs.push({
             sessionId,
-            outputPath: emojiOnlyMode ? sessionOutputDir : outputPath,
+            outputPath: mediaOnlyMode ? sessionOutputDir : outputPath,
             openTargetPath: hasMedia ? sessionOutputDir : outputPath,
             openTargetType: hasMedia ? 'directory' : 'file'
           })
@@ -2662,6 +2698,9 @@ class ExportService {
     const emojiOutDir = options.exportEmojis
       ? (options.emojiOnlyMode ? outputDir : path.join(outputDir, 'emojis'))
       : ''
+    const voiceOutDir = options.exportVoices
+      ? (options.voiceOnlyMode ? outputDir : path.join(outputDir, 'voices'))
+      : ''
 
     if (options.exportImages && !fs.existsSync(imageOutDir)) {
       fs.mkdirSync(imageOutDir, { recursive: true })
@@ -2671,6 +2710,9 @@ class ExportService {
     }
     if (options.exportEmojis && !options.emojiOnlyMode && !fs.existsSync(emojiOutDir)) {
       fs.mkdirSync(emojiOutDir, { recursive: true })
+    }
+    if (options.exportVoices && !options.voiceOnlyMode && !fs.existsSync(voiceOutDir)) {
+      fs.mkdirSync(voiceOutDir, { recursive: true })
     }
 
     let imageCount = 0
@@ -3131,11 +3173,6 @@ class ExportService {
     // === 语音导出（独立流程：需要从 MediaDb 读取） ===
     let voiceCount = 0
     if (options.exportVoices) {
-      const voiceOutDir = path.join(outputDir, 'voices')
-      if (!fs.existsSync(voiceOutDir)) {
-        fs.mkdirSync(voiceOutDir, { recursive: true })
-      }
-
       emitMediaProgress('正在处理语音消息...', 0, 0, '条')
 
       // 1. 收集所有语音消息的 createTime
@@ -3282,6 +3319,9 @@ class ExportService {
                 const pcmData = Buffer.from(result.data)
                 const wavData = this.createWavBuffer(pcmData, 24000)
                 try {
+                  if (!fs.existsSync(voiceOutDir)) {
+                    fs.mkdirSync(voiceOutDir, { recursive: true })
+                  }
                   fs.writeFileSync(destPath, wavData)
                 } catch {
                   voiceFailCount++

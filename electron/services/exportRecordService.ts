@@ -9,7 +9,8 @@ export interface ExportRecord {
   outputDir?: string   // 导出位置（兼容旧数据；新数据可能为文件或目录路径）
   outputTargetType?: 'file' | 'directory'
   exportEmojisIncluded?: boolean
-  exportKind?: 'chat' | 'emoji-assets'
+  exportVoicesIncluded?: boolean
+  exportKind?: 'chat' | 'emoji-assets' | 'voice-assets'
   sourceLatestMessageTimestamp?: number // Unix 秒
   emojiItemCount?: number
 }
@@ -88,6 +89,23 @@ export class ExportRecordService {
     return result
   }
 
+  getLatestVoiceExportTimes(sessionUsernames: string[]): Record<string, number> {
+    const result: Record<string, number> = {}
+    for (const sessionUsername of sessionUsernames) {
+      const records = this.store[sessionUsername]
+      if (!records || records.length === 0) continue
+      for (let i = records.length - 1; i >= 0; i--) {
+        const record = records[i]
+        if (!record) continue
+        if (record.exportVoicesIncluded === true || record.exportKind === 'voice-assets') {
+          if (record.exportTime) result[sessionUsername] = record.exportTime
+          break
+        }
+      }
+    }
+    return result
+  }
+
   getLatestRecord(sessionUsername: string, format?: string): ExportRecord | null {
     const records = this.store[sessionUsername]
     if (!records || records.length === 0) return null
@@ -111,7 +129,8 @@ export class ExportRecordService {
     outputTargetType?: 'file' | 'directory',
     exportEmojisIncluded?: boolean,
     extra?: {
-      exportKind?: 'chat' | 'emoji-assets'
+      exportKind?: 'chat' | 'emoji-assets' | 'voice-assets'
+      exportVoicesIncluded?: boolean
       sourceLatestMessageTimestamp?: number
       emojiItemCount?: number
     }
@@ -126,6 +145,7 @@ export class ExportRecordService {
       outputDir,
       outputTargetType,
       exportEmojisIncluded,
+      exportVoicesIncluded: extra?.exportVoicesIncluded,
       exportKind: extra?.exportKind,
       sourceLatestMessageTimestamp: extra?.sourceLatestMessageTimestamp,
       emojiItemCount: extra?.emojiItemCount

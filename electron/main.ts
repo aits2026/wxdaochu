@@ -2138,6 +2138,10 @@ function registerIpcHandlers() {
     return exportRecordService.getLatestEmojiExportTimes(Array.isArray(sessionUsernames) ? sessionUsernames : [])
   })
 
+  ipcMain.handle('export:getLatestVoiceExportTimes', (_, sessionUsernames: string[]) => {
+    return exportRecordService.getLatestVoiceExportTimes(Array.isArray(sessionUsernames) ? sessionUsernames : [])
+  })
+
   ipcMain.handle(
     'export:saveExportRecord',
     (
@@ -2149,7 +2153,8 @@ function registerIpcHandlers() {
       outputTargetType?: 'file' | 'directory',
       exportEmojisIncluded?: boolean,
       extra?: {
-        exportKind?: 'chat' | 'emoji-assets'
+        exportKind?: 'chat' | 'emoji-assets' | 'voice-assets'
+        exportVoicesIncluded?: boolean
         sourceLatestMessageTimestamp?: number
         emojiItemCount?: number
       }
