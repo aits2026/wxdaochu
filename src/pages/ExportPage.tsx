@@ -3069,6 +3069,10 @@ function ExportPage() {
     }
     return { running, queued, exported, notExported, total: voiceCardTotalSessions }
   }, [voiceCardTotalSessions, voiceStatusRows])
+  const bulkExportEligibleSessions = useMemo(
+    () => sessions.filter(session => session.accountType !== 'official'),
+    [sessions]
+  )
   const groupFriendMembersForPopup = useMemo(() => {
     const friendMembers = sessionDetail?.groupInfo?.friendMembers || []
     if (friendMembers.length <= 1) return friendMembers
@@ -4399,9 +4403,12 @@ function ExportPage() {
       alert('请先在顶部设置导出目录')
       return
     }
-    if (sessions.length === 0) return
+    if (bulkExportEligibleSessions.length === 0) {
+      alert('暂无可导出的私聊或群聊会话')
+      return
+    }
 
-    const totalSessions = sessions.length
+    const totalSessions = bulkExportEligibleSessions.length
     const batchTaskId = `emoji-export-batch:${Date.now()}`
     emojiExportBatchTaskProgressRef.current[batchTaskId] = {
       total: totalSessions,
@@ -4432,7 +4439,7 @@ function ExportPage() {
 
     await yieldToMainThread()
 
-    const orderedSessionIds = sessions
+    const orderedSessionIds = bulkExportEligibleSessions
       .map((session, index) => ({ session, index }))
       .sort((a, b) => {
         const priority = (accountType?: ChatSession['accountType']) => {
@@ -4462,10 +4469,10 @@ function ExportPage() {
       })
     }
   }, [
+    bulkExportEligibleSessions,
     emojiExportFolder,
     enqueueBatchEmojiExportJobsChunked,
     exportFolder,
-    sessions,
     taskCenterPatchTask,
     taskCenterUpsertTask
   ])
@@ -4678,9 +4685,12 @@ function ExportPage() {
       alert('请先在顶部设置导出目录')
       return
     }
-    if (sessions.length === 0) return
+    if (bulkExportEligibleSessions.length === 0) {
+      alert('暂无可导出的私聊或群聊会话')
+      return
+    }
 
-    const totalSessions = sessions.length
+    const totalSessions = bulkExportEligibleSessions.length
     const batchTaskId = `voice-export-batch:${Date.now()}`
     voiceExportBatchTaskProgressRef.current[batchTaskId] = {
       total: totalSessions,
@@ -4710,7 +4720,7 @@ function ExportPage() {
 
     await yieldToMainThread()
 
-    const orderedSessionIds = sessions
+    const orderedSessionIds = bulkExportEligibleSessions
       .map((session, index) => ({ session, index }))
       .sort((a, b) => {
         const priority = (accountType?: ChatSession['accountType']) => {
@@ -4740,9 +4750,9 @@ function ExportPage() {
       })
     }
   }, [
+    bulkExportEligibleSessions,
     enqueueBatchVoiceExportJobsChunked,
     exportFolder,
-    sessions,
     taskCenterPatchTask,
     taskCenterUpsertTask,
     voiceExportFolder
@@ -4848,9 +4858,12 @@ function ExportPage() {
       alert('请先在顶部设置导出目录')
       return
     }
-    if (sessions.length === 0) return
+    if (bulkExportEligibleSessions.length === 0) {
+      alert('暂无可导出的私聊或群聊会话')
+      return
+    }
 
-    const totalSessions = sessions.length
+    const totalSessions = bulkExportEligibleSessions.length
     const batchTaskId = `chat-export-batch:${Date.now()}`
     const batchFormat = chatTextCardExportOptions.format.toUpperCase()
     chatExportBatchTaskProgressRef.current[batchTaskId] = {
@@ -4884,7 +4897,7 @@ function ExportPage() {
     await yieldToMainThread()
 
     const queuedCount = await enqueueBatchChatTextExportJobsChunked({
-      sessionIds: sessions.map(session => session.username),
+      sessionIds: bulkExportEligibleSessions.map(session => session.username),
       exportOptions: {
         ...chatTextCardExportOptions,
         exportImages: false,
@@ -4905,11 +4918,11 @@ function ExportPage() {
       })
     }
   }, [
+    bulkExportEligibleSessions,
     chatTextCardExportOptions,
     chatTextExportFolder,
     enqueueBatchChatTextExportJobsChunked,
     exportFolder,
-    sessions,
     taskCenterPatchTask,
     taskCenterUpsertTask
   ])
@@ -5177,7 +5190,7 @@ function ExportPage() {
                         e.stopPropagation()
                         openChatTextCardExportModal()
                       }}
-                      disabled={sessions.length === 0}
+                      disabled={bulkExportEligibleSessions.length === 0}
                       title="导出全部会话聊天文本"
                     >
                       导出
@@ -5215,7 +5228,7 @@ function ExportPage() {
                         e.stopPropagation()
                         openEmojiCardExportModal()
                       }}
-                      disabled={sessions.length === 0}
+                      disabled={bulkExportEligibleSessions.length === 0}
                       title="导出全部会话表情包"
                     >
                       导出
@@ -5253,7 +5266,7 @@ function ExportPage() {
                         e.stopPropagation()
                         openVoiceCardExportModal()
                       }}
-                      disabled={sessions.length === 0}
+                      disabled={bulkExportEligibleSessions.length === 0}
                       title="导出全部会话语音"
                     >
                       导出
@@ -7638,7 +7651,7 @@ function ExportPage() {
             <div className="chat-text-card-modal-header">
               <div>
                 <h3>导出聊天文本</h3>
-                <p>范围：全部会话（使用顶部统一导出目录）</p>
+                <p>范围：全部会话（仅私聊、群聊；不包含公众号，使用顶部统一导出目录）</p>
               </div>
               <button
                 type="button"
@@ -7768,7 +7781,7 @@ function ExportPage() {
                 type="button"
                 className="chat-text-card-modal-btn primary"
                 onClick={startChatTextCardExportAll}
-                disabled={!exportFolder || sessions.length === 0}
+                disabled={!exportFolder || bulkExportEligibleSessions.length === 0}
               >
                 开始导出
               </button>
@@ -7890,7 +7903,7 @@ function ExportPage() {
             <div className="chat-text-card-modal-header">
               <div>
                 <h3>导出表情包</h3>
-                <p>范围：全部会话（使用顶部统一导出目录）</p>
+                <p>范围：全部会话（仅私聊、群聊；不包含公众号，使用顶部统一导出目录）</p>
               </div>
               <button
                 type="button"
@@ -7908,7 +7921,7 @@ function ExportPage() {
                   <h4>导出内容</h4>
                   <div className="chat-text-card-setting-row-value">
                     <Smile size={16} />
-                    <span>全部会话表情包</span>
+                    <span>全部私聊/群聊表情包</span>
                   </div>
                 </div>
               </div>
@@ -7940,7 +7953,7 @@ function ExportPage() {
                 type="button"
                 className="chat-text-card-modal-btn primary"
                 onClick={startEmojiCardExportAll}
-                disabled={!exportFolder || sessions.length === 0}
+                disabled={!exportFolder || bulkExportEligibleSessions.length === 0}
               >
                 开始导出
               </button>
@@ -8068,7 +8081,7 @@ function ExportPage() {
             <div className="chat-text-card-modal-header">
               <div>
                 <h3>导出语音</h3>
-                <p>范围：全部会话（使用顶部统一导出目录）</p>
+                <p>范围：全部会话（仅私聊、群聊；不包含公众号，使用顶部统一导出目录）</p>
               </div>
               <button
                 type="button"
@@ -8086,7 +8099,7 @@ function ExportPage() {
                   <h4>导出内容</h4>
                   <div className="chat-text-card-setting-row-value">
                     <Mic size={16} />
-                    <span>全部会话语音</span>
+                    <span>全部私聊/群聊语音</span>
                   </div>
                 </div>
               </div>
@@ -8109,7 +8122,7 @@ function ExportPage() {
                 type="button"
                 className="chat-text-card-modal-btn primary"
                 onClick={startVoiceCardExportAll}
-                disabled={!exportFolder || sessions.length === 0}
+                disabled={!exportFolder || bulkExportEligibleSessions.length === 0}
               >
                 开始导出
               </button>
