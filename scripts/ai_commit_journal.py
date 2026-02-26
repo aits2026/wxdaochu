@@ -712,34 +712,13 @@ def patch_journal_commit_metadata_in_file(path: pathlib.Path, info: HeadCommitIn
     if MARKER not in original:
         return False
 
+    has_pending_commit_time = GIT_COMMIT_TIME_PLACEHOLDER in original
+    if not has_pending_commit_time:
+        # Only patch freshly generated journals that still contain the placeholder.
+        return False
+
     updated = original
     updated = updated.replace(GIT_COMMIT_TIME_PLACEHOLDER, info.committer_time_iso)
-    # Backfill older generated docs that only had a hash placeholder sentence and no explicit Git commit time line.
-    if "- 提交时间（Git，committer）：" not in updated:
-        pattern = r"(^- 提交记录时间（近似，提交前生成）：`[^`]+`\\n)"
-        repl = r"\\1- 提交时间（Git，committer）：`" + info.committer_time_iso + r"`\n"
-        updated, _ = re.subn(pattern, repl, updated, count=1, flags=re.M)
-    updated, _ = re.subn(
-        r"^- 提交哈希：提交完成后可通过 `git log -- docs/changes` 或对应 commit 查看$",
-        "- 提交哈希（Git）：同一提交内无法稳定自引用（写入会改变 hash），请通过 `git log -- docs/changes` 或对应提交查看",
-        updated,
-        count=1,
-        flags=re.M,
-    )
-    updated, _ = re.subn(
-        r"^- 提交哈希（Git）：`(?:[0-9a-f]{7,64})`$",
-        "- 提交哈希（Git）：同一提交内无法稳定自引用（写入会改变 hash），请通过 `git log -- docs/changes` 或对应提交查看",
-        updated,
-        count=1,
-        flags=re.M,
-    )
-    updated, _ = re.subn(
-        r"^- 提交时间（Git，committer）：`(?:__AI_COMMIT_JOURNAL_GIT_COMMIT_TIME_PENDING__|[^`]+)`$",
-        f"- 提交时间（Git，committer）：`{info.committer_time_iso}`",
-        updated,
-        count=1,
-        flags=re.M,
-    )
 
     if updated == original:
         return False
