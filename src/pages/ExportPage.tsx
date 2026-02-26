@@ -38,6 +38,9 @@ interface ExportOptions {
   exportVideos: boolean
   exportEmojis: boolean
   exportVoices: boolean
+  skipIfUnchanged?: boolean
+  currentMessageCountHint?: number
+  latestMessageTimestampHint?: number
 }
 
 interface ContactExportOptions {
@@ -60,6 +63,8 @@ interface ExportResult {
     outputPath: string
     openTargetPath: string
     openTargetType: 'file' | 'directory'
+    skipped?: boolean
+    skipReason?: string
   }>
   error?: string
 }
@@ -227,6 +232,7 @@ interface QueuedChatExportJob {
   queuedAt: number
   suppressResultModal?: boolean
   batchTaskId?: string
+  latestMessageTimestamp?: number
 }
 
 interface ChatExportBatchTaskProgress {
@@ -3494,7 +3500,10 @@ function ExportPage() {
       exportImages: job.options.exportImages,
       exportVideos: job.options.exportVideos,
       exportEmojis: job.options.exportEmojis,
-      exportVoices: job.options.exportVoices
+      exportVoices: job.options.exportVoices,
+      skipIfUnchanged: !job.options.exportImages && !job.options.exportVideos && !job.options.exportEmojis && !job.options.exportVoices,
+      currentMessageCountHint: job.messageCount,
+      latestMessageTimestampHint: job.latestMessageTimestamp
     }
 
     try {
@@ -3511,6 +3520,7 @@ function ExportPage() {
           const sessionOutput = result.sessionOutputs?.find(item => item.sessionId === job.sessionId) || result.sessionOutputs?.[0]
           const exportOpenTargetPath = sessionOutput?.openTargetPath || job.outputDir
           const exportOpenTargetType = sessionOutput?.openTargetType || 'directory'
+          const wasSkipped = sessionOutput?.skipped === true
 
           patchSingleJobTask({
             status: 'success',
@@ -3518,28 +3528,30 @@ function ExportPage() {
             progressTotal: 1,
             successCount: result.successCount ?? 1,
             failCount: result.failCount ?? 0,
-            phase: '导出完成',
-            detail: '',
+            phase: wasSkipped ? '已导出' : '导出完成',
+            detail: wasSkipped ? '无变化，已跳过' : '',
             outputDir: exportOpenTargetPath,
             outputTargetType: exportOpenTargetType,
             format: formatLabel
           })
 
-          await window.electronAPI.export.saveExportRecord(
-            job.sessionId,
-            job.options.format,
-            job.messageCount,
-            exportOpenTargetPath,
-            exportOpenTargetType,
-            job.options.exportEmojis
-          )
-          const records = await window.electronAPI.export.getExportRecords(job.sessionId)
-          if (selectedSession === job.sessionId) {
-            setExportRecords(records)
-          }
-          setSessionLatestExportTimeMap(prev => ({ ...prev, [job.sessionId]: Date.now() }))
-          if (job.options.exportEmojis) {
-            setSessionEmojiExportFlagMap(prev => ({ ...prev, [job.sessionId]: true }))
+          if (!wasSkipped) {
+            await window.electronAPI.export.saveExportRecord(
+              job.sessionId,
+              job.options.format,
+              job.messageCount,
+              exportOpenTargetPath,
+              exportOpenTargetType,
+              job.options.exportEmojis
+            )
+            const records = await window.electronAPI.export.getExportRecords(job.sessionId)
+            if (selectedSession === job.sessionId) {
+              setExportRecords(records)
+            }
+            setSessionLatestExportTimeMap(prev => ({ ...prev, [job.sessionId]: Date.now() }))
+            if (job.options.exportEmojis) {
+              setSessionEmojiExportFlagMap(prev => ({ ...prev, [job.sessionId]: true }))
+            }
           }
           finishBatchJob(true)
         } else {
@@ -3662,6 +3674,7 @@ function ExportPage() {
         sessionId,
         sessionName,
         messageCount,
+        latestMessageTimestamp: sessionMeta?.lastTimestamp,
         outputDir: chatTextExportFolder,
         options: { ...exportOptions },
         queuedAt,
@@ -3770,6 +3783,7 @@ function ExportPage() {
           sessionId,
           sessionName,
           messageCount,
+          latestMessageTimestamp: sessionMeta?.lastTimestamp,
           outputDir: chatTextExportFolder,
           options: { ...exportOptions },
           queuedAt,

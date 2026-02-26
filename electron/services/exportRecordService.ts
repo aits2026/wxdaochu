@@ -68,6 +68,21 @@ export class ExportRecordService {
     return result
   }
 
+  getLatestRecord(sessionUsername: string, format?: string): ExportRecord | null {
+    const records = this.store[sessionUsername]
+    if (!records || records.length === 0) return null
+
+    if (!format) {
+      return records[records.length - 1] || null
+    }
+
+    for (let i = records.length - 1; i >= 0; i--) {
+      const record = records[i]
+      if (record?.format === format) return record
+    }
+    return null
+  }
+
   saveRecord(
     sessionUsername: string,
     format: string,

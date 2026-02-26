@@ -10,6 +10,7 @@ import * as XLSX from 'xlsx'
 import { HtmlExportGenerator } from './htmlExportGenerator'
 import { imageDecryptService } from './imageDecryptService'
 import { videoService } from './videoService'
+import { exportRecordService } from './exportRecordService'
 
 // ChatLab 0.0.2 格式类型定义
 interface ChatLabHeader {
@@ -96,6 +97,11 @@ export interface ExportOptions {
   dedupeVideoFiles?: boolean
   // 媒体路径映射表：消息实例键 -> 相对路径（避免仅用 createTime 发生同秒覆盖）
   mediaPathMap?: Map<string, string>
+  // 导出前跳过检查（renderer 传入 hint，主要用于聊天文本批量导出）
+  skipIfUnchanged?: boolean
+  currentMessageCountHint?: number
+  // Unix 秒级时间戳（会话最新消息时间）
+  latestMessageTimestampHint?: number
 }
 
 export interface ContactExportOptions {
@@ -129,6 +135,8 @@ export interface ExportSessionOutputTarget {
   outputPath: string
   openTargetPath: string
   openTargetType: 'file' | 'directory'
+  skipped?: boolean
+  skipReason?: string
 }
 
 interface ExportMediaProgress {
@@ -2387,14 +2395,6 @@ class ExportService {
           })
         }
 
-        emitProgress({
-          current: 5,
-          total: 100,
-          currentSession: sessionInfo.displayName,
-          phase: 'exporting',
-          detail: '正在读取消息...'
-        })
-
         // 生成文件名（清理非法字符）
         const safeName = sessionInfo.displayName.replace(/[<>:"\/\\|?*]/g, '_')
         let ext = '.json'
@@ -2410,6 +2410,55 @@ class ExportService {
         }
 
         const outputPath = path.join(sessionOutputDir, `${safeName}${ext}`)
+
+        const canTrySkipUnchanged = Boolean(
+          options.skipIfUnchanged &&
+          !hasMedia &&
+          Number.isFinite(options.currentMessageCountHint) &&
+          Number.isFinite(options.latestMessageTimestampHint) &&
+          Number(options.currentMessageCountHint) >= 0 &&
+          Number(options.latestMessageTimestampHint) > 0
+        )
+        if (canTrySkipUnchanged) {
+          const latestRecord = exportRecordService.getLatestRecord(sessionId, options.format)
+          const currentMessageCount = Number(options.currentMessageCountHint ?? -1)
+          const latestMessageTimestampMs = Math.floor(Number(options.latestMessageTimestampHint || 0) * 1000)
+          const exportFileExists = fs.existsSync(outputPath)
+          const hasNoDataChange = Boolean(
+            latestRecord &&
+            latestRecord.messageCount === currentMessageCount &&
+            latestRecord.exportTime >= latestMessageTimestampMs
+          )
+
+          if (hasNoDataChange && exportFileExists) {
+            emitProgress({
+              current: 100,
+              total: 100,
+              currentSession: sessionInfo.displayName,
+              phase: 'complete',
+              detail: '已导出（无变化，已跳过）'
+            })
+            successCount++
+            sessionOutputs.push({
+              sessionId,
+              outputPath,
+              openTargetPath: outputPath,
+              openTargetType: 'file',
+              skipped: true,
+              skipReason: 'unchanged-existing-file'
+            })
+            await new Promise(resolve => setImmediate(resolve))
+            continue
+          }
+        }
+
+        emitProgress({
+          current: 5,
+          total: 100,
+          currentSession: sessionInfo.displayName,
+          phase: 'exporting',
+          detail: '正在读取消息...'
+        })
 
         // 先导出媒体文件，收集路径映射表
         let mediaPathMap: Map<string, string> | undefined

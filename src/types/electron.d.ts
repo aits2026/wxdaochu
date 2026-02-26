@@ -551,6 +551,8 @@ export interface ElectronAPI {
         outputPath: string
         openTargetPath: string
         openTargetType: 'file' | 'directory'
+        skipped?: boolean
+        skipReason?: string
       }>
       error?: string
     }>
@@ -832,7 +834,14 @@ export interface ExportOptions {
   dateRange?: { start: number; end: number } | null
   exportMedia?: boolean
   exportAvatars?: boolean
+  exportImages?: boolean
+  exportVideos?: boolean
+  exportEmojis?: boolean
+  exportVoices?: boolean
   dedupeVideoFiles?: boolean
+  skipIfUnchanged?: boolean
+  currentMessageCountHint?: number
+  latestMessageTimestampHint?: number
 }
 
 export interface ContactExportOptions {
