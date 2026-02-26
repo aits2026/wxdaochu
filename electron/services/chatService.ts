@@ -4279,7 +4279,7 @@ class ChatService extends EventEmitter {
 
             const fileRows = db.prepare(`
               SELECT * FROM ${tableName}
-              WHERE ${typeCol} = 49
+              WHERE ${typeCol} = 49 OR ${typeCol} = 8589934592049
             `).all() as any[]
 
             for (const row of fileRows) {
