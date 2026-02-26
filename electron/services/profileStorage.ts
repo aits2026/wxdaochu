@@ -24,7 +24,18 @@ const PROFILE_REGISTRY_FILENAME = 'profiles-registry.json'
 const PROFILE_PENDING_RESETS_FILENAME = 'profiles-pending-resets.json'
 const PROFILES_DIRNAME = 'profiles'
 const PROFILE_CONFIG_FILENAME = 'vxdaochu-config.db'
+const PROFILE_EXPORT_RECORDS_FILENAME = 'export-records.json'
+const SHARED_MACHINE_CONFIG_FILENAME = 'vxdaochu-machine-config.json'
 const DEFAULT_PROFILE_ID = 'default'
+
+interface SharedMachineConfig {
+  version?: number
+  cachePath?: string
+}
+
+interface ExportRecordLike {
+  outputDir?: string
+}
 
 function ensureDir(dirPath: string): void {
   if (!fs.existsSync(dirPath)) {
@@ -58,6 +69,10 @@ export function getProfileRegistryPath(): string {
 
 function getProfilePendingResetsPath(): string {
   return path.join(getUserDataPath(), PROFILE_PENDING_RESETS_FILENAME)
+}
+
+function getSharedMachineConfigPath(): string {
+  return path.join(getUserDataPath(), SHARED_MACHINE_CONFIG_FILENAME)
 }
 
 function defaultRegistry(): ProfileRegistry {
@@ -140,28 +155,118 @@ function migrateLegacyConfigIfNeeded(registry: ProfileRegistry): void {
 }
 
 function getSuggestedCacheBasePath(profileId: string): string {
-  if (profileId === DEFAULT_PROFILE_ID) {
-    return path.join(app.getPath('documents'), 'VXdaochu')
-  }
-  return path.join(app.getPath('documents'), 'VXdaochuProfiles', profileId)
+  void profileId
+  return path.join(app.getPath('documents'), 'VXdaochu')
 }
 
 function readProfileCachePath(profileId: string): string | null {
+  const value = readProfileConfigValue(profileId, 'cachePath')
+  return typeof value === 'string' && value.trim().length > 0 ? value : null
+}
+
+function readProfileConfigValue(profileId: string, key: string): unknown {
   const dbPath = getProfileConfigDbPath(profileId)
   if (!fs.existsSync(dbPath)) return null
 
   let db: Database.Database | null = null
   try {
     db = new Database(dbPath, { readonly: true })
-    const row = db.prepare("SELECT value FROM config WHERE key = 'cachePath'").get() as { value: string } | undefined
+    const row = db.prepare('SELECT value FROM config WHERE key = ?').get(key) as { value: string } | undefined
     if (!row) return null
-    const parsed = JSON.parse(row.value)
-    return typeof parsed === 'string' && parsed.trim().length > 0 ? parsed : null
+    return JSON.parse(row.value)
   } catch {
     return null
   } finally {
     db?.close()
   }
+}
+
+function readProfileWxid(profileId: string): string | null {
+  const value = readProfileConfigValue(profileId, 'myWxid')
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null
+}
+
+function readSharedMachineCachePath(): string | null {
+  const filePath = getSharedMachineConfigPath()
+  if (!fs.existsSync(filePath)) return null
+  try {
+    const raw = fs.readFileSync(filePath, 'utf-8')
+    const parsed = JSON.parse(raw) as SharedMachineConfig
+    return typeof parsed.cachePath === 'string' && parsed.cachePath.trim().length > 0
+      ? parsed.cachePath.trim()
+      : null
+  } catch {
+    return null
+  }
+}
+
+function collectProfileExportOutputPaths(profileId: string): string[] {
+  const filePath = path.join(getProfileDir(profileId), PROFILE_EXPORT_RECORDS_FILENAME)
+  if (!fs.existsSync(filePath)) return []
+
+  try {
+    const raw = fs.readFileSync(filePath, 'utf-8')
+    const parsed = JSON.parse(raw) as Record<string, ExportRecordLike[]>
+    if (!parsed || typeof parsed !== 'object') return []
+
+    const result = new Set<string>()
+    for (const records of Object.values(parsed)) {
+      if (!Array.isArray(records)) continue
+      for (const record of records) {
+        const outputDir = record?.outputDir
+        if (typeof outputDir === 'string' && outputDir.trim().length > 0) {
+          result.add(outputDir.trim())
+        }
+      }
+    }
+    return Array.from(result)
+  } catch (e) {
+    console.warn('[ProfileStorage] 读取导出记录用于清理失败:', e)
+    return []
+  }
+}
+
+function getWxidCacheDirCandidates(wxid: string): string[] {
+  const normalized = wxid.trim()
+  if (!normalized) return []
+  const candidates = new Set<string>([normalized])
+  const cleaned = normalized.replace(/^wxid_/, '')
+  if (cleaned) {
+    candidates.add(cleaned)
+  }
+  return Array.from(candidates)
+}
+
+function collectProfileCacheCleanupTargets(profileId: string): string[] {
+  const wxid = readProfileWxid(profileId)
+  if (!wxid) return []
+
+  const cacheRootCandidates = new Set<string>()
+  const sharedCachePath = readSharedMachineCachePath()
+  if (sharedCachePath) {
+    cacheRootCandidates.add(sharedCachePath)
+  }
+  const legacyProfileCachePath = readProfileCachePath(profileId)
+  if (legacyProfileCachePath) {
+    cacheRootCandidates.add(legacyProfileCachePath)
+  }
+  cacheRootCandidates.add(getSuggestedCacheBasePath(profileId))
+
+  const accountNames = getWxidCacheDirCandidates(wxid)
+  if (accountNames.length === 0) return []
+
+  const targets = new Set<string>()
+  for (const cacheRoot of cacheRootCandidates) {
+    if (!cacheRoot) continue
+    for (const accountName of accountNames) {
+      targets.add(path.join(cacheRoot, accountName))
+      targets.add(path.join(cacheRoot, 'databases', accountName))
+      targets.add(path.join(cacheRoot, 'images', accountName))
+      targets.add(path.join(cacheRoot, 'Images', accountName))
+      targets.add(path.join(cacheRoot, 'sns_cache', accountName))
+    }
+  }
+  return Array.from(targets)
 }
 
 function readPendingProfileResets(): string[] {
@@ -232,11 +337,27 @@ function applyPendingProfileResets(registry: ProfileRegistry): ProfileRegistry {
   const now = Date.now()
 
   for (const profileId of dedupedIds) {
+    const exportOutputTargets = collectProfileExportOutputPaths(profileId)
+    const cacheTargets = collectProfileCacheCleanupTargets(profileId)
     const profileDir = getProfileDir(profileId)
 
     const targets = [profileDir]
     if (profileId === DEFAULT_PROFILE_ID) {
       targets.push(getLegacyConfigDbPath())
+    }
+
+    for (const target of exportOutputTargets) {
+      const resolved = path.resolve(target)
+      if (deletedPaths.has(resolved)) continue
+      safeRemovePath(resolved, 'generic')
+      deletedPaths.add(resolved)
+    }
+
+    for (const target of cacheTargets) {
+      const resolved = path.resolve(target)
+      if (deletedPaths.has(resolved)) continue
+      safeRemovePath(resolved, 'cachePath')
+      deletedPaths.add(resolved)
     }
 
     for (const target of targets) {

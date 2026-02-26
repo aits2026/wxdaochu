@@ -1196,6 +1196,23 @@
       .spin {
         animation: exportSpin 1s linear infinite;
       }
+
+      &.danger {
+        color: #c62828;
+
+        svg {
+          color: #c62828;
+        }
+
+        &:hover {
+          background: rgba(198, 40, 40, 0.08);
+        }
+      }
+
+      &:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
     }
   }
 

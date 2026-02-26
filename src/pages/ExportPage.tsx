@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useDeferredValue, useMemo, useRef, startTransition } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Search, Download, FolderOpen, RefreshCw, Check, FileJson, FileText, Table, Loader2, X, FileSpreadsheet, Database, FileCode, CheckCircle, XCircle, ExternalLink, MessageSquare, Users, User, Filter, Image, Video, CircleUserRound, Smile, Mic, Newspaper, ChevronDown, MoreHorizontal, ArrowLeft, Eye, Aperture, CircleHelp, Copy } from 'lucide-react'
+import { Search, Download, FolderOpen, RefreshCw, Check, FileJson, FileText, Table, Loader2, X, FileSpreadsheet, Database, FileCode, CheckCircle, XCircle, ExternalLink, MessageSquare, Users, User, Filter, Image, Video, CircleUserRound, Smile, Mic, Newspaper, ChevronDown, MoreHorizontal, ArrowLeft, Eye, Aperture, CircleHelp, Copy, Trash2 } from 'lucide-react'
 import { List, RowComponentProps } from 'react-window'
 import DateRangePicker from '../components/DateRangePicker'
 import { useTitleBarStore } from '../stores/titleBarStore'
@@ -905,7 +905,7 @@ function ExportPage() {
   const [showProfileSwitcher, setShowProfileSwitcher] = useState(false)
   const [localProfiles, setLocalProfiles] = useState<LocalProfileSummary[]>([])
   const [isLoadingProfiles, setIsLoadingProfiles] = useState(false)
-  const [profileActionPending, setProfileActionPending] = useState<{ type: 'switch' | 'create'; profileId?: string } | null>(null)
+  const [profileActionPending, setProfileActionPending] = useState<{ type: 'switch' | 'create' | 'wipe'; profileId?: string } | null>(null)
   const [profileSwitchHint, setProfileSwitchHint] = useState<string | null>(null)
   const [snsUserPostCounts, setSnsUserPostCounts] = useState<Record<string, number>>({})
   const [snsUserPostCountsStatus, setSnsUserPostCountsStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
@@ -6437,6 +6437,53 @@ function ExportPage() {
     }
   }, [profileActionPending])
 
+  const handleClearCurrentProfileLocalData = useCallback(async () => {
+    if (profileActionPending) return
+
+    const currentProfile = localProfiles.find(profile => profile.isCurrent) || null
+    const displayName = currentProfile?.nickName || currentProfile?.wxid || exportAccountInfo.nickName || exportAccountInfo.wxid || '当前账号'
+
+    const input = window.prompt(
+      [
+        `将清除「${displayName}」在本机保存的数据。`,
+        '',
+        '将尝试清除：',
+        '- 本账号登录状态 / 本机密码 / 本地配置',
+        '- 本账号导出记录',
+        '- 本账号导出的文件（按导出记录定位）',
+        '- 本账号相关缓存（按账号 wxid 定向清理）',
+        '',
+        '应用将自动重启，清除后会回到欢迎页。',
+        '',
+        '请输入“清除”以确认：'
+      ].join('\n'),
+      ''
+    )
+
+    if (input === null) return
+    if (input.trim() !== '清除') {
+      window.alert('未输入“清除”，已取消操作。')
+      return
+    }
+
+    setShowMoreMenu(false)
+    setShowProfileSwitcher(false)
+    setShowUsageTipsPopover(false)
+    setProfileActionPending({ type: 'wipe' })
+
+    try {
+      const result = await localProfileService.resetCurrentProfileAndRelaunch()
+      if (!result.success) {
+        setProfileActionPending(null)
+        window.alert(result.error || '清除本账号数据失败')
+      }
+    } catch (e) {
+      console.error('清除本账号数据失败:', e)
+      setProfileActionPending(null)
+      window.alert('清除本账号数据失败，请重试')
+    }
+  }, [profileActionPending, localProfiles, exportAccountInfo.nickName, exportAccountInfo.wxid])
+
   useEffect(() => {
     if (!showProfileSwitcher) return
     void loadLocalProfiles()
@@ -6548,6 +6595,14 @@ function ExportPage() {
                           >
                             <Users size={14} />
                             <span>导出通讯录</span>
+                          </button>
+                          <button
+                            className="more-menu-item danger"
+                            onClick={() => { void handleClearCurrentProfileLocalData() }}
+                            disabled={!!profileActionPending}
+                          >
+                            {profileActionPending?.type === 'wipe' ? <Loader2 size={14} className="spin" /> : <Trash2 size={14} />}
+                            <span>清除本账号数据</span>
                           </button>
                         </div>
                       </>
