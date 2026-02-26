@@ -2787,12 +2787,16 @@ function ExportPage() {
     let totalMissingCount = 0
     let totalCheckingCount = 0
     let knownEmojiCountSessions = 0
+    let completedSessions = 0
     let errorSessions = 0
 
     for (const item of sessionEmojiOverviewItems) {
       if (typeof item.emojiCount === 'number') {
         totalEmojiCount += item.emojiCount
         knownEmojiCountSessions++
+        if (item.emojiCount > 0 && item.checkStatus === 'ready' && item.downloadedCount >= item.emojiCount) {
+          completedSessions++
+        }
       }
       totalDownloadedCount += item.downloadedCount
       totalMissingCount += item.missingCount
@@ -2806,6 +2810,7 @@ function ExportPage() {
       totalMissingCount,
       totalCheckingCount,
       knownEmojiCountSessions,
+      completedSessions,
       totalSessions: sessionEmojiOverviewItems.length,
       errorSessions
     }
@@ -2822,12 +2827,19 @@ function ExportPage() {
     }
     return { total, known, totalSessions: sessions.length }
   }, [sessionCardStatsMap, sessions])
-  const sessionEmojiOverviewDisplayedTotal = sessionEmojiOverviewItems.length > 0
-    ? sessionEmojiOverviewAggregate.totalEmojiCount
-    : fallbackEmojiTotalFromLoadedStats.total
   const sessionEmojiOverviewTotalKnown = sessionEmojiOverviewItems.length > 0
     ? sessionEmojiOverviewAggregate.knownEmojiCountSessions >= sessionEmojiOverviewAggregate.totalSessions
     : fallbackEmojiTotalFromLoadedStats.known >= fallbackEmojiTotalFromLoadedStats.totalSessions
+  const sessionEmojiOverviewCardTotalSessions = sessionEmojiOverviewItems.length > 0
+    ? sessionEmojiOverviewAggregate.totalSessions
+    : fallbackEmojiTotalFromLoadedStats.totalSessions
+  const sessionEmojiOverviewCardCompletedSessions = sessionEmojiOverviewItems.length > 0
+    ? sessionEmojiOverviewAggregate.completedSessions
+    : 0
+  const sessionEmojiOverviewCardCompletionRatio = sessionEmojiOverviewCardTotalSessions > 0
+    ? Math.min(1, Math.max(0, sessionEmojiOverviewCardCompletedSessions / sessionEmojiOverviewCardTotalSessions))
+    : 0
+  const sessionEmojiOverviewCardCompletionPercent = Math.round(sessionEmojiOverviewCardCompletionRatio * 100)
   const filteredSessionEmojiOverviewItems = useMemo(() => {
     const keyword = sessionEmojiOverviewSearchKeyword.trim().toLowerCase()
     return sessionEmojiOverviewItems.filter(item => {
@@ -3855,9 +3867,59 @@ function ExportPage() {
                       ? (exportAccountInfo.nickName || exportAccountInfo.wxid || '当前账号')
                       : '未连接数据库'}
                   </div>
-                  {exportAccountInfo.connected && (
-                    <span className="session-account-badge">当前导出账号</span>
-                  )}
+                  <div className="session-more-wrap">
+                    <button
+                      className="session-more-btn"
+                      onClick={() => {
+                        setShowMoreMenu(v => {
+                          const next = !v
+                          if (next) {
+                            setShowUsageTipsPopover(false)
+                          }
+                          return next
+                        })
+                      }}
+                      title="更多操作"
+                    >
+                      <MoreHorizontal size={16} />
+                    </button>
+                    {showMoreMenu && (
+                      <>
+                        <div className="more-menu-overlay" onClick={() => setShowMoreMenu(false)} />
+                        <div className="more-menu-dropdown">
+                          <button
+                            className="more-menu-item"
+                            onClick={() => { loadSessions(); setShowMoreMenu(false) }}
+                          >
+                            <RefreshCw size={14} className={isLoading ? 'spin' : ''} />
+                            <span>刷新</span>
+                          </button>
+                          <button
+                            className="more-menu-item"
+                            onClick={async () => {
+                              try {
+                                await window.electronAPI.window.openMomentsWindow({ preset: 'self' })
+                              } catch (e) {
+                                console.error('打开我的朋友圈失败:', e)
+                              } finally {
+                                setShowMoreMenu(false)
+                              }
+                            }}
+                          >
+                            <Aperture size={14} />
+                            <span>我的朋友圈</span>
+                          </button>
+                          <button
+                            className="more-menu-item"
+                            onClick={() => { setActiveTab('contacts'); setShowMoreMenu(false) }}
+                          >
+                            <Users size={14} />
+                            <span>导出通讯录</span>
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
                 </div>
                 <div className="session-account-id">
                   {exportAccountInfo.connected
@@ -3872,27 +3934,6 @@ function ExportPage() {
                       <span className="status-dot" />
                       <span>{exportAccountInfo.connected ? '已连接数据库' : '未连接'}</span>
                     </div>
-                    {runningImageDecryptTask && (
-                      <button
-                        type="button"
-                        className="session-account-status session-account-status-btn image-decrypt-running"
-                        onClick={() => {
-                          taskCenterHighlightTask(runningImageDecryptTask.id)
-                          taskCenterOpen()
-                        }}
-                        title="图片解密任务进行中，点击查看任务中心"
-                      >
-                        <Loader2 size={12} className="spin" />
-                        <span>图片解密中</span>
-                        {runningImageDecryptTask.progressTotal > 0 && (
-                          <span className="status-progress">
-                            {runningImageDecryptTask.progressCurrent}/{runningImageDecryptTask.progressTotal}
-                          </span>
-                        )}
-                      </button>
-                    )}
-                  </div>
-                  <div className="session-account-status-actions">
                     <div className="session-account-tips-wrap">
                       <button
                         type="button"
@@ -3924,62 +3965,66 @@ function ExportPage() {
                         </>
                       )}
                     </div>
+                    {runningImageDecryptTask && (
+                      <button
+                        type="button"
+                        className="session-account-status session-account-status-btn image-decrypt-running"
+                        onClick={() => {
+                          taskCenterHighlightTask(runningImageDecryptTask.id)
+                          taskCenterOpen()
+                        }}
+                        title="图片解密任务进行中，点击查看任务中心"
+                      >
+                        <Loader2 size={12} className="spin" />
+                        <span>图片解密中</span>
+                        {runningImageDecryptTask.progressTotal > 0 && (
+                          <span className="status-progress">
+                            {runningImageDecryptTask.progressCurrent}/{runningImageDecryptTask.progressTotal}
+                          </span>
+                        )}
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
-              <div className="session-more-wrap">
-                <button
-                  className="session-more-btn"
-                  onClick={() => {
-                    setShowMoreMenu(v => {
-                      const next = !v
-                      if (next) {
-                        setShowUsageTipsPopover(false)
-                      }
-                      return next
-                    })
-                  }}
-                  title="更多操作"
-                >
-                  <MoreHorizontal size={16} />
-                </button>
-                {showMoreMenu && (
-                  <>
-                    <div className="more-menu-overlay" onClick={() => setShowMoreMenu(false)} />
-                    <div className="more-menu-dropdown">
-                      <button
-                        className="more-menu-item"
-                        onClick={() => { loadSessions(); setShowMoreMenu(false) }}
-                      >
-                        <RefreshCw size={14} className={isLoading ? 'spin' : ''} />
-                        <span>刷新</span>
-                      </button>
-                      <button
-                        className="more-menu-item"
-                        onClick={async () => {
-                          try {
-                            await window.electronAPI.window.openMomentsWindow({ preset: 'self' })
-                          } catch (e) {
-                            console.error('打开我的朋友圈失败:', e)
-                          } finally {
-                            setShowMoreMenu(false)
-                          }
-                        }}
-                      >
-                        <Aperture size={14} />
-                        <span>我的朋友圈</span>
-                      </button>
-                      <button
-                        className="more-menu-item"
-                        onClick={() => { setActiveTab('contacts'); setShowMoreMenu(false) }}
-                      >
-                        <Users size={14} />
-                        <span>导出通讯录</span>
-                      </button>
-                    </div>
-                  </>
+              <button
+                type="button"
+                className="emoji-overview-trigger-card"
+                onClick={() => { void openSessionEmojiOverviewModal() }}
+                title="查看所有会话表情包总数与下载状态"
+              >
+                <div className="emoji-overview-trigger-head">
+                  <span className="emoji-overview-trigger-icon" aria-hidden="true">
+                    <Smile size={14} />
+                  </span>
+                  <span className="emoji-overview-trigger-title">表情包</span>
+                  {(sessionEmojiOverviewLoading || sessionEmojiOverviewChecking || !sessionEmojiOverviewTotalKnown) && (
+                    <Loader2 size={12} className="spin" />
+                  )}
+                </div>
+                <div className="emoji-overview-trigger-summary">
+                  <span className="label">已完成会话</span>
+                  <strong>
+                    {sessionEmojiOverviewCardCompletedSessions.toLocaleString()} / {sessionEmojiOverviewCardTotalSessions.toLocaleString()}
+                  </strong>
+                </div>
+                <div className="emoji-overview-trigger-progress" aria-hidden="true">
+                  <div className="emoji-overview-trigger-progress-bar">
+                    <div
+                      className="emoji-overview-trigger-progress-fill"
+                      style={{ width: `${sessionEmojiOverviewCardCompletionPercent}%` }}
+                    />
+                  </div>
+                  <span className="emoji-overview-trigger-progress-text">
+                    {sessionEmojiOverviewCardCompletionPercent}%
+                  </span>
+                </div>
+                {!sessionEmojiOverviewTotalKnown && (
+                  <div className="emoji-overview-trigger-hint">
+                    统计中 {sessionEmojiOverviewItems.length > 0 ? sessionEmojiOverviewAggregate.knownEmojiCountSessions : fallbackEmojiTotalFromLoadedStats.known}/{sessionEmojiOverviewItems.length > 0 ? sessionEmojiOverviewAggregate.totalSessions : fallbackEmojiTotalFromLoadedStats.totalSessions} 个会话
+                  </div>
                 )}
-              </div>
+              </button>
             </div>
 
             <div className="session-list-controls">
@@ -4036,37 +4081,6 @@ function ExportPage() {
                     </button>
                   )}
                 </div>
-                <button
-                  type="button"
-                  className="emoji-overview-trigger-card"
-                  onClick={() => { void openSessionEmojiOverviewModal() }}
-                  title="查看所有会话表情包总数与下载状态"
-                >
-                  <div className="emoji-overview-trigger-head">
-                    <span className="emoji-overview-trigger-icon" aria-hidden="true">
-                      <Smile size={14} />
-                    </span>
-                    <span className="emoji-overview-trigger-title">表情包总览</span>
-                    {(sessionEmojiOverviewLoading || sessionEmojiOverviewChecking || !sessionEmojiOverviewTotalKnown) && (
-                      <Loader2 size={12} className="spin" />
-                    )}
-                  </div>
-                  <div className="emoji-overview-trigger-metrics">
-                    <div className="emoji-overview-trigger-metric">
-                      <span className="label">总数</span>
-                      <strong>{sessionEmojiOverviewDisplayedTotal.toLocaleString()}</strong>
-                    </div>
-                    <div className="emoji-overview-trigger-metric">
-                      <span className="label">已下载</span>
-                      <strong>{sessionEmojiOverviewAggregate.totalDownloadedCount.toLocaleString()}</strong>
-                    </div>
-                  </div>
-                  {!sessionEmojiOverviewTotalKnown && (
-                    <div className="emoji-overview-trigger-hint">
-                      统计中 {sessionEmojiOverviewItems.length > 0 ? sessionEmojiOverviewAggregate.knownEmojiCountSessions : fallbackEmojiTotalFromLoadedStats.known}/{sessionEmojiOverviewItems.length > 0 ? sessionEmojiOverviewAggregate.totalSessions : fallbackEmojiTotalFromLoadedStats.totalSessions} 个会话
-                    </div>
-                  )}
-                </button>
               </div>
               {isLoadingSessionCounts && (
                 <div className="session-count-loading-hint">
