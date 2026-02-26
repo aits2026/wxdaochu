@@ -4277,23 +4277,37 @@ class ChatService extends EventEmitter {
               emojiCount += typeCountResult.emoji_count || 0
             }
 
-            const hasMessageContentCol = colNames.includes('message_content')
-            const hasCompressContentCol = colNames.includes('compress_content')
-            if (hasMessageContentCol || hasCompressContentCol) {
-              const fileRows = db.prepare(`
-                SELECT
-                  ${hasMessageContentCol ? 'message_content' : 'NULL as message_content'},
-                  ${hasCompressContentCol ? 'compress_content' : 'NULL as compress_content'}
-                FROM ${tableName}
-                WHERE ${typeCol} = 49
-              `).all() as any[]
+            const fileRows = db.prepare(`
+              SELECT * FROM ${tableName}
+              WHERE ${typeCol} = 49
+            `).all() as any[]
 
-              for (const row of fileRows) {
-                const content = this.decodeMessageContent(row.message_content, row.compress_content)
-                if (!content) continue
-                if (this.extractXmlValue(content, 'type') === '6') {
-                  fileCount += 1
-                }
+            for (const row of fileRows) {
+              const messageContent = this.getRowField(row, [
+                'message_content',
+                'messageContent',
+                'MessageContent',
+                'WCDB_CT_message_content',
+                'WCDB_CT_MessageContent'
+              ])
+              const compressContent = this.getRowField(row, [
+                'compress_content',
+                'compressContent',
+                'CompressContent',
+                'WCDB_CT_compress_content',
+                'WCDB_CT_CompressContent'
+              ])
+              const content = this.decodeMessageContent(messageContent, compressContent)
+              if (!content) continue
+
+              const fileInfo = this.parseFileInfo(content)
+              if (fileInfo.fileName || fileInfo.fileMd5 || fileInfo.fileSize || fileInfo.fileExt) {
+                fileCount += 1
+                continue
+              }
+
+              if (this.extractXmlValue(content, 'type') === '6') {
+                fileCount += 1
               }
             }
           }

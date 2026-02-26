@@ -12,9 +12,11 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Tuple
 
 MARKER = "<!-- ai-commit-journal:v1 -->"
+GIT_COMMIT_TIME_PLACEHOLDER = "__AI_COMMIT_JOURNAL_GIT_COMMIT_TIME_PENDING__"
 DOCS_DIR_REL = pathlib.Path("docs") / "changes"
 HOOKS_DIR_REL = pathlib.Path(".githooks")
 PRECOMMIT_HOOK_REL = HOOKS_DIR_REL / "pre-commit"
+POSTCOMMIT_HOOK_REL = HOOKS_DIR_REL / "post-commit"
 MAX_USER_MSGS = 6
 MAX_AGENT_MSGS = 8
 MAX_EXCERPTS = 6
@@ -58,6 +60,12 @@ class JournalDraft:
     path: pathlib.Path
     generated_at_iso: str
     commit_subject_guess: str
+
+
+@dataclass
+class HeadCommitInfo:
+    commit_hash: str
+    committer_time_iso: str
 
 
 def eprint(msg: str) -> None:
@@ -573,9 +581,10 @@ def build_journal_markdown(
         "## 元信息",
         f"- 文档生成时间：`{human_time}`",
         f"- 提交记录时间（近似，提交前生成）：`{human_time}`",
+        f"- 提交时间（Git，committer）：`{GIT_COMMIT_TIME_PLACEHOLDER}`",
         f"- 提交方式：`{mode}`",
         f"- 提交说明（捕获）：`{subject_first}`",
-        "- 提交哈希：提交完成后可通过 `git log -- docs/changes` 或对应 commit 查看",
+        "- 提交哈希（Git）：同一提交内无法稳定自引用（写入会改变 hash），请通过 `git log -- docs/changes` 或对应提交查看",
         "",
         "## 这次改了什么（基于暂存区）",
         *[f"- {line}" if not line.startswith("主要") and not line.startswith("文件类型") and not line.startswith("变更类型") and not line.startswith("暂存区统计") else f"- {line}" for line in change_scope],
@@ -674,7 +683,93 @@ def generate_journal(repo_root: pathlib.Path, commit_message: Optional[str], mod
     return JournalDraft(path=path, generated_at_iso=generated_at.isoformat(timespec="seconds"), commit_subject_guess=subject_guess)
 
 
-def ensure_hook_template(repo_root: pathlib.Path) -> pathlib.Path:
+def get_head_commit_info(repo_root: pathlib.Path) -> HeadCommitInfo:
+    out = git_out(repo_root, ["show", "-s", "--format=%H%n%cI", "HEAD"])
+    parts = out.splitlines()
+    if len(parts) < 2:
+        raise JournalError("Unable to read HEAD commit metadata")
+    return HeadCommitInfo(commit_hash=parts[0].strip(), committer_time_iso=parts[1].strip())
+
+
+def list_head_changed_journal_paths(repo_root: pathlib.Path) -> List[pathlib.Path]:
+    out = git_out(repo_root, ["diff-tree", "--root", "--no-commit-id", "--name-only", "-r", "HEAD", "--", "docs/changes"])
+    paths: List[pathlib.Path] = []
+    for line in out.splitlines():
+        rel = line.strip()
+        if not rel or not rel.endswith(".md"):
+            continue
+        path = repo_root / rel
+        if path.exists():
+            paths.append(path)
+    return paths
+
+
+def patch_journal_commit_metadata_in_file(path: pathlib.Path, info: HeadCommitInfo) -> bool:
+    try:
+        original = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise JournalError(f"Failed to read journal file: {path}") from exc
+    if MARKER not in original:
+        return False
+
+    updated = original
+    updated = updated.replace(GIT_COMMIT_TIME_PLACEHOLDER, info.committer_time_iso)
+    # Backfill older generated docs that only had a hash placeholder sentence and no explicit Git commit time line.
+    if "- 提交时间（Git，committer）：" not in updated:
+        pattern = r"(^- 提交记录时间（近似，提交前生成）：`[^`]+`\\n)"
+        repl = r"\\1- 提交时间（Git，committer）：`" + info.committer_time_iso + r"`\n"
+        updated, _ = re.subn(pattern, repl, updated, count=1, flags=re.M)
+    updated, _ = re.subn(
+        r"^- 提交哈希：提交完成后可通过 `git log -- docs/changes` 或对应 commit 查看$",
+        "- 提交哈希（Git）：同一提交内无法稳定自引用（写入会改变 hash），请通过 `git log -- docs/changes` 或对应提交查看",
+        updated,
+        count=1,
+        flags=re.M,
+    )
+    updated, _ = re.subn(
+        r"^- 提交哈希（Git）：`(?:[0-9a-f]{7,64})`$",
+        "- 提交哈希（Git）：同一提交内无法稳定自引用（写入会改变 hash），请通过 `git log -- docs/changes` 或对应提交查看",
+        updated,
+        count=1,
+        flags=re.M,
+    )
+    updated, _ = re.subn(
+        r"^- 提交时间（Git，committer）：`(?:__AI_COMMIT_JOURNAL_GIT_COMMIT_TIME_PENDING__|[^`]+)`$",
+        f"- 提交时间（Git，committer）：`{info.committer_time_iso}`",
+        updated,
+        count=1,
+        flags=re.M,
+    )
+
+    if updated == original:
+        return False
+    path.write_text(updated, encoding="utf-8")
+    return True
+
+
+def finalize_head_journal_commit_metadata(repo_root: pathlib.Path, amend: bool) -> int:
+    info = get_head_commit_info(repo_root)
+    journal_paths = list_head_changed_journal_paths(repo_root)
+    changed_paths: List[pathlib.Path] = []
+    for path in journal_paths:
+        if patch_journal_commit_metadata_in_file(path, info):
+            changed_paths.append(path)
+    if not changed_paths:
+        return 0
+    for path in changed_paths:
+        stage_file(repo_root, path)
+    if amend:
+        env = os.environ.copy()
+        env["AI_COMMIT_JOURNAL_POST_COMMIT_RUNNING"] = "1"
+        env["AI_COMMIT_JOURNAL_NOOP_HOOK"] = "1"
+        env["GIT_COMMITTER_DATE"] = info.committer_time_iso
+        proc = subprocess.run(["git", "commit", "--amend", "--no-edit", "--no-verify"], cwd=str(repo_root), env=env)
+        if proc.returncode != 0:
+            raise JournalError("Failed to amend commit after backfilling Git commit metadata in journal")
+    return len(changed_paths)
+
+
+def ensure_precommit_hook_template(repo_root: pathlib.Path) -> pathlib.Path:
     ensure_tracked_dirs(repo_root)
     hook_path = repo_root / PRECOMMIT_HOOK_REL
     hook_text = """#!/bin/sh
@@ -706,11 +801,43 @@ python3 \"$repo_root/scripts/ai_commit_journal.py\" hook-pre-commit
     return hook_path
 
 
+def ensure_postcommit_hook_template(repo_root: pathlib.Path) -> pathlib.Path:
+    ensure_tracked_dirs(repo_root)
+    hook_path = repo_root / POSTCOMMIT_HOOK_REL
+    hook_text = """#!/bin/sh
+set -e
+
+if [ "${AI_COMMIT_JOURNAL_NOOP_HOOK:-}" = "1" ]; then
+  exit 0
+fi
+
+if [ "${AI_COMMIT_JOURNAL_POST_COMMIT_RUNNING:-}" = "1" ]; then
+  exit 0
+fi
+
+repo_root=$(git rev-parse --show-toplevel 2>/dev/null || true)
+if [ -z "$repo_root" ]; then
+  exit 0
+fi
+
+if ! command -v python3 >/dev/null 2>&1; then
+  exit 0
+fi
+
+python3 "$repo_root/scripts/ai_commit_journal.py" hook-post-commit
+"""
+    hook_path.write_text(hook_text, encoding="utf-8")
+    hook_path.chmod(0o755)
+    return hook_path
+
+
 def install_hooks(repo_root: pathlib.Path) -> None:
-    hook_template = ensure_hook_template(repo_root)
+    pre_hook = ensure_precommit_hook_template(repo_root)
+    post_hook = ensure_postcommit_hook_template(repo_root)
     git(repo_root, ["config", "core.hooksPath", str(HOOKS_DIR_REL)])
     print(f"Installed git hooksPath -> {HOOKS_DIR_REL}")
-    print(f"Hook file: {hook_template}")
+    print(f"Hook file: {pre_hook}")
+    print(f"Hook file: {post_hook}")
 
 
 def command_generate(args: argparse.Namespace) -> int:
@@ -731,6 +858,18 @@ def command_hook_pre_commit(_args: argparse.Namespace) -> int:
         eprint(f"ai-commit-journal: {exc}")
         return 1
     print(f"ai-commit-journal: staged journal -> {draft.path.relative_to(repo_root)}")
+    return 0
+
+
+def command_hook_post_commit(_args: argparse.Namespace) -> int:
+    repo_root = get_repo_root()
+    try:
+        changed_count = finalize_head_journal_commit_metadata(repo_root, amend=True)
+    except JournalError as exc:
+        eprint(f"ai-commit-journal: {exc}")
+        return 1
+    if changed_count > 0:
+        print(f"ai-commit-journal: backfilled git commit metadata in {changed_count} journal file(s)")
     return 0
 
 
@@ -803,7 +942,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_hook = sub.add_parser("hook-pre-commit", help=argparse.SUPPRESS)
     p_hook.set_defaults(func=command_hook_pre_commit)
 
-    p_install = sub.add_parser("install-hooks", help="Create .githooks/pre-commit and set git core.hooksPath")
+    p_post = sub.add_parser("hook-post-commit", help=argparse.SUPPRESS)
+    p_post.set_defaults(func=command_hook_post_commit)
+
+    p_install = sub.add_parser("install-hooks", help="Create .githooks/pre-commit and .githooks/post-commit, then set git core.hooksPath")
     p_install.set_defaults(func=command_install_hooks)
 
     p_init = sub.add_parser("init", help="Create docs/changes directory if missing")
