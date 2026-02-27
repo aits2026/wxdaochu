@@ -325,6 +325,7 @@ export interface ElectronAPI {
     getSessionDetail: (sessionId: string, options?: { includeGroupInfo?: boolean }) => Promise<{
       success: boolean
       detail?: {
+        sessionId: string
         wxid: string
         displayName: string
         remark?: string

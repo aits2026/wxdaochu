@@ -152,6 +152,12 @@ class ChatService extends EventEmitter {
   // 记录每个会话已读取的最大 sortSeq (用于此后的增量查询)
   private sessionCursor: Map<string, number> = new Map()
 
+  private looksLikeSystemSessionId(value: string): boolean {
+    const trimmed = String(value || '').trim()
+    if (!trimmed) return false
+    return trimmed.startsWith('wxid_') || trimmed.includes('@')
+  }
+
   constructor() {
     super()
     this.configService = new ConfigService()
@@ -704,14 +710,26 @@ class ChatService extends EventEmitter {
         FROM contact
         WHERE username = ?
       `)
+      const aliasStmt = this.contactDb.prepare(`
+        SELECT ${selectCols.join(', ')}
+        FROM contact
+        WHERE alias = ?
+        LIMIT 1
+      `)
 
       // 与 getContacts() 中好友判定完全一致的排除名单
       const excludeNames = ['medianote', 'floatbottle', 'qmessage', 'qqmail', 'fmessage']
 
       for (const session of sessions) {
         try {
-          const contact = stmt.get(session.username) as any
-          const username = session.username
+          const username = String(session.username || '').trim()
+          let contact = stmt.get(username) as any
+          if (!contact && username && !this.looksLikeSystemSessionId(username)) {
+            contact = stmt.get(`wxid_${username}`) as any
+          }
+          if (!contact && username) {
+            contact = aliasStmt.get(username) as any
+          }
           const localType = (contact && hasLocalType) ? (contact.local_type || 0) : 0
 
           // 账号类型判定（与 getContacts() 逻辑完全一致）
@@ -4137,6 +4155,7 @@ class ChatService extends EventEmitter {
   ): Promise<{
     success: boolean
     detail?: {
+      sessionId: string
       wxid: string
       displayName: string
       remark?: string
@@ -4174,7 +4193,9 @@ class ChatService extends EventEmitter {
       }
 
       // 获取联系人信息
-      let displayName = sessionId
+      const normalizedSessionId = String(sessionId || '').trim()
+      let displayName = normalizedSessionId
+      let resolvedWxid = this.looksLikeSystemSessionId(normalizedSessionId) ? normalizedSessionId : ''
       let remark: string | undefined
       let nickName: string | undefined
       let alias: string | undefined
@@ -4198,17 +4219,37 @@ class ChatService extends EventEmitter {
 
           const { hasBigHeadUrl, hasSmallHeadUrl, selectCols } = this.contactColumnsCache
 
-          const contact = this.contactDb.prepare(`
+          let contact = this.contactDb.prepare(`
             SELECT ${selectCols.join(', ')}
             FROM contact
             WHERE username = ?
-          `).get(sessionId) as any
+          `).get(normalizedSessionId) as any
+
+          if (!contact && normalizedSessionId && !this.looksLikeSystemSessionId(normalizedSessionId)) {
+            contact = this.contactDb.prepare(`
+              SELECT ${selectCols.join(', ')}
+              FROM contact
+              WHERE username = ?
+              LIMIT 1
+            `).get(`wxid_${normalizedSessionId}`) as any
+          }
+
+          if (!contact && normalizedSessionId) {
+            contact = this.contactDb.prepare(`
+              SELECT ${selectCols.join(', ')}
+              FROM contact
+              WHERE alias = ?
+              LIMIT 1
+            `).get(normalizedSessionId) as any
+          }
 
           if (contact) {
+            const contactUsername = String(contact.username || '').trim()
+            if (contactUsername) resolvedWxid = contactUsername
             remark = contact.remark || undefined
             nickName = contact.nick_name || undefined
             alias = contact.alias || undefined
-            displayName = remark || nickName || alias || sessionId
+            displayName = remark || nickName || alias || normalizedSessionId
 
             if (hasBigHeadUrl && contact.big_head_url) {
               avatarUrl = contact.big_head_url
@@ -4343,7 +4384,8 @@ class ChatService extends EventEmitter {
       return {
         success: true,
         detail: {
-          wxid: sessionId,
+          sessionId: normalizedSessionId,
+          wxid: resolvedWxid,
           displayName,
           remark,
           nickName,

@@ -550,6 +550,43 @@ class ExportService {
     }
   }
 
+  private async resolveSessionWechatIdentity(sessionId: string): Promise<{ wxid: string; alias: string | null }> {
+    const raw = String(sessionId || '').trim()
+    if (!raw) return { wxid: '', alias: null }
+
+    if (!this.contactDb) {
+      if (raw.startsWith('wxid_') || raw.includes('@')) return { wxid: raw, alias: null }
+      return { wxid: '', alias: raw || null }
+    }
+
+    try {
+      const byUsername = this.contactDb.prepare(`
+        SELECT username, alias FROM contact WHERE username = ? LIMIT 1
+      `)
+      const byAlias = this.contactDb.prepare(`
+        SELECT username, alias FROM contact WHERE alias = ? LIMIT 1
+      `)
+
+      let row = byUsername.get(raw) as { username?: string; alias?: string } | undefined
+      if (!row && raw && !raw.startsWith('wxid_') && !raw.includes('@')) {
+        row = byUsername.get(`wxid_${raw}`) as { username?: string; alias?: string } | undefined
+      }
+      if (!row) {
+        row = byAlias.get(raw) as { username?: string; alias?: string } | undefined
+      }
+
+      if (row?.username) {
+        return {
+          wxid: String(row.username),
+          alias: row.alias ? String(row.alias) : null
+        }
+      }
+    } catch { }
+
+    if (raw.startsWith('wxid_') || raw.includes('@')) return { wxid: raw, alias: null }
+    return { wxid: '', alias: raw || null }
+  }
+
   private normalizeWechatIdentity(
     rawValue: string,
     resolved?: Partial<Pick<ResolvedContactInfo, 'wechatId' | 'wechatAlias'>>
@@ -2214,6 +2251,9 @@ class ExportService {
 
       // 获取会话信息
       const sessionInfo = await this.getContactInfo(sessionId)
+      const sessionIdentity = await this.resolveSessionWechatIdentity(sessionId)
+      const sessionWxid = sessionIdentity.wxid || ''
+      const sessionAlias = sessionIdentity.alias || sessionInfo.wechatAlias || null
       const myIdentitySource = cleanedMyWxid || myWxid
       const myInfo = await this.getContactInfo(myIdentitySource)
       const contactInfoCache = new Map<string, ResolvedContactInfo>()
@@ -2416,9 +2456,9 @@ class ExportService {
           format: 'detailed-json'
         },
         session: {
-          wechatId: sessionInfo.wechatId || sessionId,
-          wechatAlias: sessionInfo.wechatAlias || null,
-          wxid: sessionId,
+          wechatId: sessionWxid || null,
+          wechatAlias: sessionAlias,
+          wxid: sessionWxid,
           nickname: sessionInfo.nickName || '',
           remark: sessionInfo.remark || '',
           displayName: sessionInfo.displayName,
@@ -2474,6 +2514,9 @@ class ExportService {
       const isGroup = sessionId.includes('@chatroom')
 
       const sessionInfo = await this.getContactInfo(sessionId)
+      const sessionIdentity = await this.resolveSessionWechatIdentity(sessionId)
+      const sessionWxid = sessionIdentity.wxid || ''
+      const sessionAlias = sessionIdentity.alias || sessionInfo.wechatAlias || null
       const myIdentitySource = cleanedMyWxid || myWxid
       const myInfo = await this.getContactInfo(myIdentitySource)
       const contactInfoCache = new Map<string, ResolvedContactInfo>()
@@ -2694,9 +2737,9 @@ class ExportService {
           schema: 'arkme.chat.export.v1'
         },
         session: {
-          wechatId: sessionInfo.wechatId || sessionId,
-          wechatAlias: sessionInfo.wechatAlias || null,
-          wxid: sessionId,
+          wechatId: sessionWxid || null,
+          wechatAlias: sessionAlias,
+          wxid: sessionWxid,
           nickname: sessionInfo.nickName || '',
           remark: sessionInfo.remark || '',
           displayName: sessionInfo.displayName,

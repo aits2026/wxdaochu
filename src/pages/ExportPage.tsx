@@ -377,6 +377,7 @@ interface SessionCardGroupInfo {
 interface SessionCardStats {
   status: 'idle' | 'loading' | 'ready' | 'error'
   error?: string
+  wxid?: string
   remark?: string
   nickName?: string
   alias?: string
@@ -599,7 +600,8 @@ const ExportSessionRow = (props: RowComponentProps<ExportSessionRowData>) => {
     .filter((v): v is string => Boolean(v))
     .filter((v, i, arr) => v !== primaryName && arr.indexOf(v) === i)
   const openChatLabel = isGroup ? '打开群聊' : isPrivate ? '打开私聊' : '打开公众号'
-  const infoIdLine = cardStats?.alias ? `${session.username} · ${cardStats.alias}` : session.username
+  const wxidLine = (cardStats?.wxid || '').trim() || '--'
+  const infoIdLine = cardStats?.alias ? `${wxidLine} · ${cardStats.alias}` : wxidLine
   const recentExportTimeLabel = formatRecentExportTime(sessionLatestExportTimeMap[session.username])
   const isExportingThisSession = exportingSessionId === session.username
   const isQueuedThisSession = !isExportingThisSession && queuedExportSessionIds.has(session.username)
@@ -864,6 +866,7 @@ function ExportPage() {
   const [selectedSession, setSelectedSession] = useState<string | null>(null)
   const [sessionCardStatsMap, setSessionCardStatsMap] = useState<Record<string, SessionCardStats>>({})
   const [sessionDetail, setSessionDetail] = useState<{
+    sessionId: string
     wxid: string
     remark?: string
     nickName?: string
@@ -2214,10 +2217,11 @@ function ExportPage() {
   }, [])
 
   useEffect(() => {
-    if (!selectedSession || !sessionDetail || sessionDetail.wxid !== selectedSession) return
+    if (!selectedSession || !sessionDetail || sessionDetail.sessionId !== selectedSession) return
 
     patchSessionCardStats(selectedSession, {
       status: 'ready',
+      wxid: sessionDetail.wxid,
       remark: sessionDetail.remark,
       nickName: sessionDetail.nickName,
       alias: sessionDetail.alias,
@@ -2265,6 +2269,7 @@ function ExportPage() {
 
       patchSessionCardStats(username, {
         status: 'ready',
+        wxid: detailResult.detail.wxid,
         remark: detailResult.detail.remark,
         nickName: detailResult.detail.nickName,
         alias: detailResult.detail.alias,
@@ -2568,14 +2573,14 @@ function ExportPage() {
   }
 
   const getSessionDisplayName = useCallback((sessionId: string) => {
-    const detailMatchesTarget = sessionDetail?.wxid === sessionId
+    const detailMatchesTarget = sessionDetail?.sessionId === sessionId
     return (
       (detailMatchesTarget ? sessionDetail?.remark : undefined) ||
       (detailMatchesTarget ? sessionDetail?.nickName : undefined) ||
       sessionByUsername.get(sessionId)?.displayName ||
       sessionId
     )
-  }, [sessionByUsername, sessionDetail?.nickName, sessionDetail?.remark, sessionDetail?.wxid])
+  }, [sessionByUsername, sessionDetail?.nickName, sessionDetail?.remark, sessionDetail?.sessionId])
 
   const copyIdentityValue = useCallback(async (value: string, chip: 'wxid' | 'alias') => {
     if (!value) return
@@ -3208,7 +3213,7 @@ function ExportPage() {
   }, [sessionVideoAssetsSessionId, sessionVideoOverviews])
   const sessionVideoAssetsTotalCount = sessionVideoAssetsOverview?.total ?? sessionVideoAssets.length
   const sessionVideoAssetsRawMessageCount = sessionVideoAssetsOverview?.rawMessageCount ??
-    (sessionDetail && sessionVideoAssetsSessionId && sessionDetail.wxid === sessionVideoAssetsSessionId ? sessionDetail.videoCount : undefined) ??
+    (sessionDetail && sessionVideoAssetsSessionId && sessionDetail.sessionId === sessionVideoAssetsSessionId ? sessionDetail.videoCount : undefined) ??
     sessionVideoAssetsTotalCount
   const sessionVideoAssetsParsedMessageCount = sessionVideoAssetsOverview?.parsedMessageCount ?? sessionVideoAssetsTotalCount
   const sessionVideoAssetsDuplicateCount = sessionVideoAssetsOverview?.duplicateMessageCount ?? Math.max(0, sessionVideoAssetsParsedMessageCount - sessionVideoAssetsTotalCount)
@@ -3973,6 +3978,7 @@ function ExportPage() {
         const isGroupChat = username.includes('@chatroom')
         const detailSummary = {
           success: detailResult.success,
+          sessionId: detailResult.detail.sessionId || username,
           wxid: detailResult.detail.wxid,
           messageCount: detailResult.detail.messageCount,
           imageCount: detailResult.detail.imageCount,
@@ -3985,6 +3991,7 @@ function ExportPage() {
           isGroupChat
         }
         setSessionDetail({
+          sessionId: detailResult.detail.sessionId || username,
           wxid: detailResult.detail.wxid,
           remark: detailResult.detail.remark,
           nickName: detailResult.detail.nickName,
@@ -4029,7 +4036,7 @@ function ExportPage() {
                 selfMessageCount: groupResult.groupInfo?.selfMessageCount
               }
               setSessionDetail(prev => {
-                if (!prev || prev.wxid !== username) return prev
+                if (!prev || prev.sessionId !== username) return prev
                 return {
                   ...prev,
                   groupInfo: groupResult.groupInfo || {}
@@ -4110,7 +4117,7 @@ function ExportPage() {
 
   const handleOpenCommonGroupsFromList = useCallback(async (session: ChatSession) => {
     if (session.accountType !== 'friend') return
-    const isCurrentReady = selectedSession === session.username && sessionDetail?.wxid === session.username
+    const isCurrentReady = selectedSession === session.username && sessionDetail?.sessionId === session.username
     if (!isCurrentReady) {
       await selectSession(session.username)
     }
@@ -4118,7 +4125,7 @@ function ExportPage() {
     setCommonGroupMessageCountsStatus('idle')
     setCommonGroupMessageCountsSessionId(null)
     setShowCommonGroupsPopup(true)
-  }, [selectSession, selectedSession, sessionDetail?.wxid])
+  }, [selectSession, selectedSession, sessionDetail?.sessionId])
 
   const handleOpenExportSettingsFromList = useCallback(async (session: ChatSession) => {
     await selectSession(session.username)
@@ -4143,7 +4150,7 @@ function ExportPage() {
   }, [selectSession])
 
   useEffect(() => {
-    if (!selectedSession || !sessionDetail || sessionDetail.wxid !== selectedSession) return
+    if (!selectedSession || !sessionDetail || sessionDetail.sessionId !== selectedSession) return
     if ((sessionDetail.videoCount ?? 0) <= 0) return
 
     const overview = sessionVideoOverviews[selectedSession]
@@ -4576,11 +4583,11 @@ function ExportPage() {
     const jobs: QueuedChatExportJob[] = sessionIds.map((sessionId, index) => {
       const sessionMeta = sessionByUsername.get(sessionId)
       const sessionName =
-        (sessionDetail?.wxid === sessionId ? (sessionDetail?.remark || sessionDetail?.nickName || sessionDetail?.alias) : undefined) ||
+        (sessionDetail?.sessionId === sessionId ? (sessionDetail?.remark || sessionDetail?.nickName || sessionDetail?.alias) : undefined) ||
         sessionMeta?.displayName ||
         sessionId
       const messageCount =
-        (sessionDetail?.wxid === sessionId ? sessionDetail.messageCount : undefined) ??
+        (sessionDetail?.sessionId === sessionId ? sessionDetail.messageCount : undefined) ??
         sessionMessageCounts[sessionId] ??
         0
       const queuedAt = queueStartedAt + index
@@ -4646,7 +4653,7 @@ function ExportPage() {
     sessionDetail?.messageCount,
     sessionDetail?.nickName,
     sessionDetail?.remark,
-    sessionDetail?.wxid,
+    sessionDetail?.sessionId,
     sessionMessageCounts,
     syncChatExportQueueStatus,
     taskCenterHighlightTask,
@@ -4685,11 +4692,11 @@ function ExportPage() {
         const absoluteIndex = offset + index
         const sessionMeta = sessionByUsername.get(sessionId)
         const sessionName =
-          (sessionDetail?.wxid === sessionId ? (sessionDetail?.remark || sessionDetail?.nickName || sessionDetail?.alias) : undefined) ||
+          (sessionDetail?.sessionId === sessionId ? (sessionDetail?.remark || sessionDetail?.nickName || sessionDetail?.alias) : undefined) ||
           sessionMeta?.displayName ||
           sessionId
         const messageCount =
-          (sessionDetail?.wxid === sessionId ? sessionDetail.messageCount : undefined) ??
+          (sessionDetail?.sessionId === sessionId ? sessionDetail.messageCount : undefined) ??
           sessionMessageCounts[sessionId] ??
           0
         const queuedAt = queueStartedAt + absoluteIndex
@@ -4740,7 +4747,7 @@ function ExportPage() {
     sessionDetail?.messageCount,
     sessionDetail?.nickName,
     sessionDetail?.remark,
-    sessionDetail?.wxid,
+    sessionDetail?.sessionId,
     sessionMessageCounts,
     syncChatExportQueueStatus,
     taskCenterHighlightTask,
@@ -4942,11 +4949,11 @@ function ExportPage() {
         const absoluteIndex = offset + index
         const sessionMeta = sessionByUsername.get(sessionId)
         const sessionName =
-          (sessionDetail?.wxid === sessionId ? (sessionDetail?.remark || sessionDetail?.nickName || sessionDetail?.alias) : undefined) ||
+          (sessionDetail?.sessionId === sessionId ? (sessionDetail?.remark || sessionDetail?.nickName || sessionDetail?.alias) : undefined) ||
           sessionMeta?.displayName ||
           sessionId
         const imageCount =
-          (sessionDetail?.wxid === sessionId ? sessionDetail.imageCount : undefined) ??
+          (sessionDetail?.sessionId === sessionId ? sessionDetail.imageCount : undefined) ??
           sessionCardStatsMap[sessionId]?.imageCount
         const queuedAt = queueStartedAt + absoluteIndex
 
@@ -4995,7 +5002,7 @@ function ExportPage() {
     sessionDetail?.imageCount,
     sessionDetail?.nickName,
     sessionDetail?.remark,
-    sessionDetail?.wxid,
+    sessionDetail?.sessionId,
     syncImageExportQueueStatus,
     taskCenterHighlightTask,
     taskCenterOpen,
@@ -5047,7 +5054,7 @@ function ExportPage() {
 
     const hasKnownImageCount = (session: ChatSession) => {
       if (
-        sessionDetail?.wxid === session.username &&
+        sessionDetail?.sessionId === session.username &&
         typeof sessionDetail.imageCount === 'number' &&
         Number.isFinite(sessionDetail.imageCount) &&
         sessionDetail.imageCount >= 0
@@ -5121,7 +5128,7 @@ function ExportPage() {
     const orderedSessionIds = bulkExportEligibleSessions
       .map((session, index) => {
         const selectedDetailCount = (
-          sessionDetail?.wxid === session.username &&
+          sessionDetail?.sessionId === session.username &&
           typeof sessionDetail.imageCount === 'number' &&
           Number.isFinite(sessionDetail.imageCount) &&
           sessionDetail.imageCount >= 0
@@ -5182,7 +5189,7 @@ function ExportPage() {
     imageCardExportOrder,
     sessionCardStatsMap,
     sessionDetail?.imageCount,
-    sessionDetail?.wxid,
+    sessionDetail?.sessionId,
     taskCenterPatchTask,
     taskCenterUpsertTask
   ])
@@ -5366,11 +5373,11 @@ function ExportPage() {
         const absoluteIndex = offset + index
         const sessionMeta = sessionByUsername.get(sessionId)
         const sessionName =
-          (sessionDetail?.wxid === sessionId ? (sessionDetail?.remark || sessionDetail?.nickName || sessionDetail?.alias) : undefined) ||
+          (sessionDetail?.sessionId === sessionId ? (sessionDetail?.remark || sessionDetail?.nickName || sessionDetail?.alias) : undefined) ||
           sessionMeta?.displayName ||
           sessionId
         const emojiCount =
-          (sessionDetail?.wxid === sessionId ? sessionDetail.emojiCount : undefined) ??
+          (sessionDetail?.sessionId === sessionId ? sessionDetail.emojiCount : undefined) ??
           sessionCardStatsMap[sessionId]?.emojiCount
         const queuedAt = queueStartedAt + absoluteIndex
 
@@ -5419,7 +5426,7 @@ function ExportPage() {
     sessionDetail?.emojiCount,
     sessionDetail?.nickName,
     sessionDetail?.remark,
-    sessionDetail?.wxid,
+    sessionDetail?.sessionId,
     syncEmojiExportQueueStatus,
     taskCenterHighlightTask,
     taskCenterOpen,
@@ -5663,11 +5670,11 @@ function ExportPage() {
         const absoluteIndex = offset + index
         const sessionMeta = sessionByUsername.get(sessionId)
         const sessionName =
-          (sessionDetail?.wxid === sessionId ? (sessionDetail?.remark || sessionDetail?.nickName || sessionDetail?.alias) : undefined) ||
+          (sessionDetail?.sessionId === sessionId ? (sessionDetail?.remark || sessionDetail?.nickName || sessionDetail?.alias) : undefined) ||
           sessionMeta?.displayName ||
           sessionId
         const videoCount =
-          (sessionDetail?.wxid === sessionId ? sessionDetail.videoCount : undefined) ??
+          (sessionDetail?.sessionId === sessionId ? sessionDetail.videoCount : undefined) ??
           sessionCardStatsMap[sessionId]?.videoCount
         const queuedAt = queueStartedAt + absoluteIndex
 
@@ -5715,7 +5722,7 @@ function ExportPage() {
     sessionDetail?.nickName,
     sessionDetail?.remark,
     sessionDetail?.videoCount,
-    sessionDetail?.wxid,
+    sessionDetail?.sessionId,
     syncVideoExportQueueStatus,
     taskCenterHighlightTask,
     taskCenterOpen,
@@ -5957,11 +5964,11 @@ function ExportPage() {
         const absoluteIndex = offset + index
         const sessionMeta = sessionByUsername.get(sessionId)
         const sessionName =
-          (sessionDetail?.wxid === sessionId ? (sessionDetail?.remark || sessionDetail?.nickName || sessionDetail?.alias) : undefined) ||
+          (sessionDetail?.sessionId === sessionId ? (sessionDetail?.remark || sessionDetail?.nickName || sessionDetail?.alias) : undefined) ||
           sessionMeta?.displayName ||
           sessionId
         const voiceCount =
-          (sessionDetail?.wxid === sessionId ? sessionDetail.voiceCount : undefined) ??
+          (sessionDetail?.sessionId === sessionId ? sessionDetail.voiceCount : undefined) ??
           sessionCardStatsMap[sessionId]?.voiceCount
         const queuedAt = queueStartedAt + absoluteIndex
 
@@ -6009,7 +6016,7 @@ function ExportPage() {
     sessionDetail?.nickName,
     sessionDetail?.remark,
     sessionDetail?.voiceCount,
-    sessionDetail?.wxid,
+    sessionDetail?.sessionId,
     syncVoiceExportQueueStatus,
     taskCenterHighlightTask,
     taskCenterOpen,
@@ -7496,6 +7503,8 @@ function ExportPage() {
                     const latestExportTimeLabel = latestExportRecord ? formatRecentExportTime(latestExportRecord.exportTime) : null
                     const isSelectedSessionExporting = Boolean(selectedSession && runningChatExportSessionId === selectedSession)
                     const isSelectedSessionQueued = Boolean(selectedSession && !isSelectedSessionExporting && queuedChatExportSessionIds.has(selectedSession))
+                    const wxidValue = (sessionDetail?.wxid || '').trim()
+                    const wxidDisplay = wxidValue || '--'
                     const diagStepSummary = diag ? SESSION_DETAIL_DIAG_STEP_ORDER.reduce((acc, stepKey) => {
                       const status = diag.steps[stepKey].status
                       acc[status] = (acc[status] || 0) + 1
@@ -7558,11 +7567,14 @@ function ExportPage() {
                                   <button
                                     type="button"
                                     className={`session-identity-chip session-identity-chip-mono ${copiedIdentityChip === 'wxid' ? 'copied' : ''}`}
-                                    title={`点击复制 wxid: ${sessionDetail.wxid}`}
-                                    onClick={() => { void copyIdentityValue(sessionDetail.wxid, 'wxid') }}
+                                    disabled={!wxidValue}
+                                    title={wxidValue ? `点击复制 wxid: ${wxidValue}` : '未识别系统 wxid'}
+                                    onClick={() => {
+                                      if (wxidValue) void copyIdentityValue(wxidValue, 'wxid')
+                                    }}
                                   >
                                     <span className="session-identity-chip-label">wxid</span>
-                                    <span className="session-identity-chip-value">{sessionDetail.wxid}</span>
+                                    <span className="session-identity-chip-value">{wxidDisplay}</span>
                                     {copiedIdentityChip === 'wxid' && (
                                       <span className="session-identity-chip-state">已复制</span>
                                     )}
