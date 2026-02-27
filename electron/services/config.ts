@@ -119,6 +119,7 @@ const SHARED_MACHINE_CONFIG_VERSION = 1
 
 interface SharedMachineConfig {
   version: number
+  dbPath?: string
   cachePath?: string
 }
 
@@ -179,6 +180,9 @@ export class ConfigService {
       const next: SharedMachineConfig = {
         version: SHARED_MACHINE_CONFIG_VERSION
       }
+      if (typeof parsed?.dbPath === 'string') {
+        next.dbPath = parsed.dbPath
+      }
       if (typeof parsed?.cachePath === 'string') {
         next.cachePath = parsed.cachePath
       }
@@ -195,6 +199,9 @@ export class ConfigService {
       const payload: SharedMachineConfig = {
         version: SHARED_MACHINE_CONFIG_VERSION
       }
+      if (typeof config.dbPath === 'string') {
+        payload.dbPath = config.dbPath
+      }
       if (typeof config.cachePath === 'string') {
         payload.cachePath = config.cachePath
       }
@@ -207,6 +214,25 @@ export class ConfigService {
   private static hasSharedCachePath(): boolean {
     const config = ConfigService.readSharedMachineConfig()
     return Object.prototype.hasOwnProperty.call(config, 'cachePath')
+  }
+
+  private static hasSharedDbPath(): boolean {
+    const config = ConfigService.readSharedMachineConfig()
+    return Object.prototype.hasOwnProperty.call(config, 'dbPath')
+  }
+
+  private static getSharedDbPathValue(): string | undefined {
+    const config = ConfigService.readSharedMachineConfig()
+    if (!Object.prototype.hasOwnProperty.call(config, 'dbPath')) {
+      return undefined
+    }
+    return typeof config.dbPath === 'string' ? config.dbPath : ''
+  }
+
+  private static setSharedDbPathValue(nextPath: string): void {
+    const config = ConfigService.readSharedMachineConfig()
+    config.dbPath = typeof nextPath === 'string' ? nextPath : ''
+    ConfigService.writeSharedMachineConfig(config)
   }
 
   private static getSharedCachePathValue(): string | undefined {
@@ -403,12 +429,12 @@ export class ConfigService {
     return path.join(app.getPath('documents'), 'VXdaochu')
   }
 
-  private readLegacyCachePathFromConfigDb(configDbPath: string): string | null {
+  private readLegacyStringConfigFromConfigDb(configDbPath: string, key: string): string | null {
     if (!fs.existsSync(configDbPath)) return null
     let db: Database.Database | null = null
     try {
       db = new Database(configDbPath, { readonly: true })
-      const row = db.prepare("SELECT value FROM config WHERE key = 'cachePath'").get() as { value: string } | undefined
+      const row = db.prepare('SELECT value FROM config WHERE key = ?').get(key) as { value: string } | undefined
       if (!row) return null
       const parsed = JSON.parse(row.value)
       if (typeof parsed !== 'string') return null
@@ -417,6 +443,31 @@ export class ConfigService {
       return null
     } finally {
       db?.close()
+    }
+  }
+
+  private readLegacyCachePathFromConfigDb(configDbPath: string): string | null {
+    return this.readLegacyStringConfigFromConfigDb(configDbPath, 'cachePath')
+  }
+
+  private readLegacyDbPathFromConfigDb(configDbPath: string): string | null {
+    return this.readLegacyStringConfigFromConfigDb(configDbPath, 'dbPath')
+  }
+
+  private ensureSharedDbPathInitialized(): void {
+    if (ConfigService.hasSharedDbPath()) return
+
+    const currentProfileDbPath = this.readLegacyDbPathFromConfigDb(this.dbPath)
+    if (typeof currentProfileDbPath === 'string' && currentProfileDbPath.trim().length > 0) {
+      ConfigService.setSharedDbPathValue(currentProfileDbPath)
+      return
+    }
+
+    if (this.profileId !== DEFAULT_PROFILE_ID) {
+      const defaultProfileDbPath = this.readLegacyDbPathFromConfigDb(getProfileConfigDbPath(DEFAULT_PROFILE_ID))
+      if (typeof defaultProfileDbPath === 'string' && defaultProfileDbPath.trim().length > 0) {
+        ConfigService.setSharedDbPathValue(defaultProfileDbPath)
+      }
     }
   }
 
@@ -482,6 +533,13 @@ export class ConfigService {
         console.error('迁移本机共享缓存目录配置失败:', e)
       }
 
+      // 兼容迁移：将旧版本账号级 dbPath 提升为本机共享配置（仅迁移一次）
+      try {
+        this.ensureSharedDbPathInitialized()
+      } catch (e) {
+        console.error('迁移本机共享数据库目录配置失败:', e)
+      }
+
       // 迁移：修复旧版本产生的空 STT 语言配置，默认为中文
       try {
         const sttRow = this.db.prepare("SELECT value FROM config WHERE key = 'sttLanguages'").get() as { value: string } | undefined
@@ -533,6 +591,21 @@ export class ConfigService {
 
   get<K extends keyof ConfigSchema>(key: K): ConfigSchema[K] {
     try {
+      if (String(key) === 'dbPath') {
+        const sharedDbPath = ConfigService.getSharedDbPathValue()
+        if (sharedDbPath !== undefined) {
+          return sharedDbPath as ConfigSchema[K]
+        }
+
+        const legacyDbPath = this.readLegacyDbPathFromConfigDb(this.dbPath)
+        if (typeof legacyDbPath === 'string' && legacyDbPath.trim().length > 0) {
+          ConfigService.setSharedDbPathValue(legacyDbPath)
+          return legacyDbPath as ConfigSchema[K]
+        }
+
+        return defaults[key]
+      }
+
       if (String(key) === 'cachePath') {
         const sharedCachePath = ConfigService.getSharedCachePathValue()
         if (sharedCachePath !== undefined) {
@@ -579,6 +652,11 @@ export class ConfigService {
 
   set<K extends keyof ConfigSchema>(key: K, value: ConfigSchema[K]): void {
     try {
+      if (String(key) === 'dbPath') {
+        ConfigService.setSharedDbPathValue(typeof value === 'string' ? value : '')
+        return
+      }
+
       if (String(key) === 'cachePath') {
         ConfigService.setSharedCachePathValue(typeof value === 'string' ? value : '')
         return
@@ -609,6 +687,7 @@ export class ConfigService {
       if (!this.db) {
         return {
           ...defaults,
+          dbPath: this.get('dbPath'),
           cachePath: this.get('cachePath')
         }
       }
@@ -619,6 +698,7 @@ export class ConfigService {
           (result as any)[row.key] = JSON.parse(row.value)
         }
       }
+      result.dbPath = this.get('dbPath')
       result.cachePath = this.get('cachePath')
       const envelope = this.getSecureSecretsEnvelope()
       if (envelope) {
@@ -745,7 +825,7 @@ export class ConfigService {
 
   hasConfiguredDatabaseConnection(): boolean {
     const wxid = this.getRawConfigValue<string>('myWxid') || ''
-    const dbPath = this.getRawConfigValue<string>('dbPath') || ''
+    const dbPath = this.get('dbPath') || ''
     const hasDecryptKey = this.hasConfiguredSensitiveValue('decryptKey')
     return !!wxid && !!dbPath && hasDecryptKey
   }
