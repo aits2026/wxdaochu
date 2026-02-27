@@ -4,9 +4,10 @@ import { useThemeStore } from '../stores/themeStore'
 import { useAppStore } from '../stores/appStore'
 import { dialog } from '../services/ipc'
 import * as configService from '../services/config'
+import * as localProfileService from '../services/profile'
 import {
   ArrowLeft, ArrowRight, CheckCircle2, Eye, EyeOff,
-  FolderOpen, ShieldCheck, Wand2, RotateCcw, Minus, X, Fingerprint, Lock
+  FolderOpen, ShieldCheck, Wand2, RotateCcw, Minus, X, Fingerprint, Lock, CircleUserRound, Loader2
 } from 'lucide-react'
 import { useAuthStore } from '../stores/authStore'
 import './WelcomePage.scss'
@@ -57,6 +58,11 @@ function WelcomePage({ standalone = false }: WelcomePageProps) {
   const [decryptStatus, setDecryptStatus] = useState('')
   const [countdown, setCountdown] = useState(0)
   const [hasCache, setHasCache] = useState(false)
+  const [profiles, setProfiles] = useState<localProfileService.LocalProfileSummary[]>([])
+  const [isLoadingProfiles, setIsLoadingProfiles] = useState(false)
+  const [showProfilePicker, setShowProfilePicker] = useState(false)
+  const [profileActionPending, setProfileActionPending] = useState<'switch' | 'discard' | null>(null)
+  const [profileActionMessage, setProfileActionMessage] = useState('')
 
   useEffect(() => {
     const removeStatus = window.electronAPI.wxKey?.onStatus?.((payload) => {
@@ -147,6 +153,22 @@ function WelcomePage({ standalone = false }: WelcomePageProps) {
     }
   }, [])
 
+  const loadProfiles = async () => {
+    setIsLoadingProfiles(true)
+    try {
+      const list = await localProfileService.listProfiles()
+      setProfiles(list)
+    } catch (e) {
+      console.error('加载账号列表失败:', e)
+    } finally {
+      setIsLoadingProfiles(false)
+    }
+  }
+
+  useEffect(() => {
+    void loadProfiles()
+  }, [])
+
   useEffect(() => {
     setWxidOptions([])
     // 注意：不要清空 wxid，因为它可能是从缓存加载的
@@ -173,6 +195,75 @@ function WelcomePage({ standalone = false }: WelcomePageProps) {
   const currentStep = steps[stepIndex]
   const rootClassName = `welcome-page${isClosing ? ' is-closing' : ''}${standalone ? ' is-standalone' : ''}`
   const showWindowControls = standalone
+  const currentProfile = profiles.find(profile => profile.isCurrent) || null
+  const otherProfiles = profiles.filter(profile => !profile.isCurrent)
+  const canReturnToExistingProfile = otherProfiles.length > 0
+  const shouldShowProfileEscapeActions = canReturnToExistingProfile && !!currentProfile && !currentProfile.isConfigured
+  const isProfileActionBusy = profileActionPending !== null
+
+  const openProfilePicker = () => {
+    if (!shouldShowProfileEscapeActions || isProfileActionBusy) return
+    setProfileActionMessage('')
+    setShowProfilePicker(true)
+    void loadProfiles()
+  }
+
+  const closeProfilePicker = () => {
+    if (isProfileActionBusy) return
+    setShowProfilePicker(false)
+    setProfileActionMessage('')
+  }
+
+  const handleSwitchExistingProfile = async (profile: localProfileService.LocalProfileSummary) => {
+    if (isProfileActionBusy) return
+    const displayName = profile.nickName || profile.wxid || '该账号'
+    const confirmed = window.confirm(
+      `将切换到「${displayName}」。\n\n当前引导会中断，应用会短暂重载。是否继续？`
+    )
+    if (!confirmed) return
+
+    setProfileActionPending('switch')
+    setProfileActionMessage(`正在切换到「${displayName}」，应用将自动重载...`)
+    try {
+      const result = await localProfileService.switchProfile(profile.id)
+      if (!result.success) {
+        setProfileActionPending(null)
+        setProfileActionMessage('')
+        window.alert(result.error || '切换账号失败')
+      }
+    } catch (e) {
+      console.error('切换已有账号失败:', e)
+      setProfileActionPending(null)
+      setProfileActionMessage('')
+      window.alert('切换账号失败，请重试')
+    }
+  }
+
+  const handleDiscardAndReturn = async () => {
+    if (!shouldShowProfileEscapeActions || isProfileActionBusy) return
+
+    const confirmed = window.confirm(
+      '将删除当前新账号并返回上一个已有账号。\n\n当前账号的本机数据会被清除，且不可撤销。是否继续？'
+    )
+    if (!confirmed) return
+
+    setShowProfilePicker(false)
+    setProfileActionPending('discard')
+    setProfileActionMessage('正在删除当前账号并返回已有账号，应用将自动重载...')
+    try {
+      const result = await localProfileService.discardCurrentProfileAndRelaunch()
+      if (!result.success) {
+        setProfileActionPending(null)
+        setProfileActionMessage('')
+        window.alert(result.error || '返回已有账号失败')
+      }
+    } catch (e) {
+      console.error('删除当前账号并返回失败:', e)
+      setProfileActionPending(null)
+      setProfileActionMessage('')
+      window.alert('返回已有账号失败，请重试')
+    }
+  }
 
   const handleMinimize = () => {
     window.electronAPI.window.minimize()
@@ -593,6 +684,18 @@ function WelcomePage({ standalone = false }: WelcomePageProps) {
               </div>
             ))}
           </div>
+          {shouldShowProfileEscapeActions && (
+            <div className="progress-header-actions">
+              <button
+                type="button"
+                className="btn btn-tertiary progress-switch-existing-btn"
+                onClick={openProfilePicker}
+                disabled={isProfileActionBusy}
+              >
+                切换已有账号
+              </button>
+            </div>
+          )}
         </div>
 
         {/* 底部内容区 */}
@@ -1005,18 +1108,99 @@ function WelcomePage({ standalone = false }: WelcomePageProps) {
 
             {error && <div className="error-message">{error}</div>}
 
+            {shouldShowProfileEscapeActions && (
+              <div className="welcome-return-actions">
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={openProfilePicker}
+                  disabled={isProfileActionBusy}
+                >
+                  切换已有账号
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-tertiary welcome-return-danger-btn"
+                  onClick={() => { void handleDiscardAndReturn() }}
+                  disabled={isProfileActionBusy}
+                >
+                  取消添加并返回上一个账号
+                </button>
+              </div>
+            )}
+
             <div className="setup-actions">
-              <button className="btn btn-tertiary" onClick={handleBack} disabled={stepIndex === 0 || isDecrypting}>
+              <button className="btn btn-tertiary" onClick={handleBack} disabled={stepIndex === 0 || isDecrypting || isProfileActionBusy}>
                 <ArrowLeft size={16} /> 上一步
               </button>
               {stepIndex < steps.length - 1 && (
-                <button className="btn btn-primary" onClick={handleNext} disabled={!canGoNext()}>
+                <button className="btn btn-primary" onClick={handleNext} disabled={!canGoNext() || isProfileActionBusy}>
                   下一步 <ArrowRight size={16} />
                 </button>
               )}
             </div>
           </div>
         </div>
+
+        {showProfilePicker && shouldShowProfileEscapeActions && (
+          <>
+            <div className="welcome-profile-picker-overlay" onClick={closeProfilePicker} />
+            <div className="welcome-profile-picker">
+              <div className="welcome-profile-picker-header">
+                <h3>切换到已有账号</h3>
+                <button
+                  type="button"
+                  className="welcome-profile-picker-close"
+                  onClick={closeProfilePicker}
+                  disabled={isProfileActionBusy}
+                  aria-label="关闭"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+              <div className="welcome-profile-picker-list">
+                {isLoadingProfiles && otherProfiles.length === 0 ? (
+                  <div className="welcome-profile-picker-empty">
+                    <Loader2 size={14} className="spin" />
+                    <span>正在加载账号列表...</span>
+                  </div>
+                ) : otherProfiles.length > 0 ? (
+                  otherProfiles.map(profile => (
+                    <div key={profile.id} className="welcome-profile-picker-item">
+                      <div className="welcome-profile-picker-avatar">
+                        {profile.avatarUrl ? <img src={profile.avatarUrl} alt="" /> : <CircleUserRound size={14} />}
+                      </div>
+                      <div className="welcome-profile-picker-main">
+                        <div className="welcome-profile-picker-name">{profile.nickName || profile.wxid || '未登录账号'}</div>
+                        <div className="welcome-profile-picker-meta">
+                          {profile.wxid || (profile.isConfigured ? '已配置' : '待配置')}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        onClick={() => { void handleSwitchExistingProfile(profile) }}
+                        disabled={isProfileActionBusy}
+                      >
+                        切换
+                      </button>
+                    </div>
+                  ))
+                ) : (
+                  <div className="welcome-profile-picker-empty">
+                    <span>暂无可切换的已有账号</span>
+                  </div>
+                )}
+              </div>
+              {profileActionMessage && (
+                <div className="welcome-profile-picker-hint">
+                  <Loader2 size={13} className="spin" />
+                  <span>{profileActionMessage}</span>
+                </div>
+              )}
+            </div>
+          </>
+        )}
       </div>
     </div>
   )

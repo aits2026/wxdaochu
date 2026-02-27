@@ -80,6 +80,7 @@ export interface ElectronAPI {
     createAndSwitch: () => Promise<{ success: boolean; error?: string; profile?: any }>
     switch: (profileId: string) => Promise<{ success: boolean; error?: string }>
     resetCurrentAndRelaunch: () => Promise<{ success: boolean; error?: string; profileId?: string }>
+    discardCurrentAndRelaunch: (targetProfileId?: string) => Promise<{ success: boolean; error?: string; removedProfileId?: string; targetProfileId?: string }>
   }
   profileSecurity: {
     enableWithPassword: (password: string) => Promise<{ success: boolean; error?: string }>

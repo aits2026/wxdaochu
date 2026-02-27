@@ -37,6 +37,13 @@ interface ExportRecordLike {
   outputDir?: string
 }
 
+type PendingProfileResetMode = 'reset' | 'delete'
+
+interface PendingProfileResetTask {
+  profileId: string
+  mode: PendingProfileResetMode
+}
+
 function ensureDir(dirPath: string): void {
   if (!fs.existsSync(dirPath)) {
     fs.mkdirSync(dirPath, { recursive: true })
@@ -269,23 +276,48 @@ function collectProfileCacheCleanupTargets(profileId: string): string[] {
   return Array.from(targets)
 }
 
-function readPendingProfileResets(): string[] {
+function normalizePendingTask(input: unknown): PendingProfileResetTask | null {
+  if (typeof input === 'string' && input.trim().length > 0) {
+    return { profileId: input.trim(), mode: 'reset' }
+  }
+  if (!input || typeof input !== 'object') return null
+  const item = input as { profileId?: unknown; mode?: unknown }
+  if (typeof item.profileId !== 'string' || item.profileId.trim().length === 0) return null
+  const mode: PendingProfileResetMode = item.mode === 'delete' ? 'delete' : 'reset'
+  return {
+    profileId: item.profileId.trim(),
+    mode
+  }
+}
+
+function readPendingProfileResets(): PendingProfileResetTask[] {
   const filePath = getProfilePendingResetsPath()
   if (!fs.existsSync(filePath)) return []
   try {
     const raw = fs.readFileSync(filePath, 'utf-8')
     const parsed = JSON.parse(raw)
     if (!Array.isArray(parsed)) return []
-    return parsed.filter((id): id is string => typeof id === 'string' && id.trim().length > 0)
+    const normalized: PendingProfileResetTask[] = []
+    for (const item of parsed) {
+      const task = normalizePendingTask(item)
+      if (task) normalized.push(task)
+    }
+    return normalized
   } catch {
     return []
   }
 }
 
-function writePendingProfileResets(ids: string[]): void {
+function writePendingProfileResets(tasks: PendingProfileResetTask[]): void {
   const filePath = getProfilePendingResetsPath()
-  const normalized = Array.from(new Set(ids.filter(Boolean)))
-  if (normalized.length === 0) {
+  const deduped = new Map<string, PendingProfileResetTask>()
+  for (const item of tasks) {
+    const task = normalizePendingTask(item)
+    if (!task) continue
+    deduped.set(task.profileId, task)
+  }
+  const normalized = Array.from(deduped.values())
+  if (!normalized.length) {
     try {
       if (fs.existsSync(filePath)) fs.unlinkSync(filePath)
     } catch {}
@@ -329,14 +361,14 @@ function safeRemovePath(targetPath: string | null | undefined, kind: 'generic' |
 }
 
 function applyPendingProfileResets(registry: ProfileRegistry): ProfileRegistry {
-  const pendingIds = readPendingProfileResets()
-  if (pendingIds.length === 0) return registry
+  const pendingTasks = readPendingProfileResets()
+  if (pendingTasks.length === 0) return registry
 
-  const dedupedIds = Array.from(new Set(pendingIds))
   const deletedPaths = new Set<string>()
   const now = Date.now()
 
-  for (const profileId of dedupedIds) {
+  for (const task of pendingTasks) {
+    const profileId = task.profileId
     const exportOutputTargets = collectProfileExportOutputPaths(profileId)
     const cacheTargets = collectProfileCacheCleanupTargets(profileId)
     const profileDir = getProfileDir(profileId)
@@ -368,6 +400,11 @@ function applyPendingProfileResets(registry: ProfileRegistry): ProfileRegistry {
       deletedPaths.add(resolved)
     }
 
+    if (task.mode === 'delete') {
+      registry.profiles = registry.profiles.filter(item => item.id !== profileId)
+      continue
+    }
+
     ensureDir(profileDir)
 
     registry.profiles = registry.profiles.map(item =>
@@ -379,6 +416,14 @@ function applyPendingProfileResets(registry: ProfileRegistry): ProfileRegistry {
           }
         : item
     )
+  }
+
+  if (!registry.profiles.length) {
+    const fallback = defaultRegistry()
+    registry.activeProfileId = fallback.activeProfileId
+    registry.profiles = fallback.profiles
+  } else if (!registry.profiles.some(item => item.id === registry.activeProfileId)) {
+    registry.activeProfileId = registry.profiles[0].id
   }
 
   writePendingProfileResets([])
@@ -495,7 +540,12 @@ export function deleteProfileRegistryItem(profileId: string): ProfileRegistry {
 
 export function queueProfileReset(profileId: string): void {
   const existing = readPendingProfileResets()
-  writePendingProfileResets([...existing, profileId])
+  writePendingProfileResets([...existing, { profileId, mode: 'reset' }])
+}
+
+export function queueProfileDelete(profileId: string): void {
+  const existing = readPendingProfileResets()
+  writePendingProfileResets([...existing, { profileId, mode: 'delete' }])
 }
 
 export { DEFAULT_PROFILE_ID }

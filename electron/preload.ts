@@ -17,7 +17,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     create: () => ipcRenderer.invoke('profile:create'),
     createAndSwitch: () => ipcRenderer.invoke('profile:createAndSwitch'),
     switch: (profileId: string) => ipcRenderer.invoke('profile:switch', profileId),
-    resetCurrentAndRelaunch: () => ipcRenderer.invoke('profile:resetCurrentAndRelaunch')
+    resetCurrentAndRelaunch: () => ipcRenderer.invoke('profile:resetCurrentAndRelaunch'),
+    discardCurrentAndRelaunch: (targetProfileId?: string) => ipcRenderer.invoke('profile:discardCurrentAndRelaunch', targetProfileId)
   },
 
   profileSecurity: {

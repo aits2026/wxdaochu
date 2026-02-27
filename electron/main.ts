@@ -1137,6 +1137,22 @@ function registerIpcHandlers() {
     return { success: true, profileId: result.profileId }
   })
 
+  ipcMain.handle('profile:discardCurrentAndRelaunch', async (_, targetProfileId?: string) => {
+    const result = profileService.discardCurrentProfileAndSwitch(targetProfileId)
+    if (!result.success) return result
+
+    setTimeout(() => {
+      app.relaunch()
+      app.exit(0)
+    }, 60)
+
+    return {
+      success: true,
+      removedProfileId: result.removedProfileId,
+      targetProfileId: result.targetProfileId
+    }
+  })
+
   // 当前 profile 敏感配置保护（按本机密码解密）
   ipcMain.handle('profileSecurity:enableWithPassword', async (_, password: string) => {
     if (!configService) configService = new ConfigService()

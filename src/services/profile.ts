@@ -28,3 +28,7 @@ export async function switchProfile(profileId: string): Promise<{ success: boole
 export async function resetCurrentProfileAndRelaunch(): Promise<{ success: boolean; error?: string; profileId?: string }> {
   return window.electronAPI.profile.resetCurrentAndRelaunch()
 }
+
+export async function discardCurrentProfileAndRelaunch(targetProfileId?: string): Promise<{ success: boolean; error?: string; removedProfileId?: string; targetProfileId?: string }> {
+  return window.electronAPI.profile.discardCurrentAndRelaunch(targetProfileId)
+}

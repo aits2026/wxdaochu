@@ -7,6 +7,7 @@ import {
   getActiveProfileId,
   getProfileConfigDbPath,
   getProfileDir,
+  queueProfileDelete,
   queueProfileReset,
   setActiveProfileId,
   upsertProfileRegistryItem,
@@ -144,6 +145,46 @@ class ProfileService {
       }
       queueProfileReset(profileId)
       return { success: true, profileId }
+    } catch (e) {
+      return { success: false, error: String(e) }
+    }
+  }
+
+  discardCurrentProfileAndSwitch(targetProfileId?: string): { success: boolean; removedProfileId?: string; targetProfileId?: string; error?: string } {
+    try {
+      const registry = ensureProfileRegistry()
+      const currentProfileId = registry.activeProfileId
+      const candidates = registry.profiles.filter(profile => profile.id !== currentProfileId)
+
+      if (!currentProfileId || candidates.length === 0) {
+        return { success: false, error: '没有可返回的已有账号' }
+      }
+
+      let target = candidates[0]
+      if (targetProfileId) {
+        const matched = candidates.find(profile => profile.id === targetProfileId)
+        if (!matched) {
+          return { success: false, error: '目标账号不存在或不可用' }
+        }
+        target = matched
+      } else {
+        target = candidates
+          .slice()
+          .sort((a, b) => {
+            const aScore = a.lastUsedAt || a.updatedAt || a.createdAt || 0
+            const bScore = b.lastUsedAt || b.updatedAt || b.createdAt || 0
+            return bScore - aScore
+          })[0]
+      }
+
+      setActiveProfileId(target.id)
+      queueProfileDelete(currentProfileId)
+
+      return {
+        success: true,
+        removedProfileId: currentProfileId,
+        targetProfileId: target.id
+      }
     } catch (e) {
       return { success: false, error: String(e) }
     }
