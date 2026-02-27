@@ -6640,14 +6640,6 @@ function ExportPage() {
                             <Users size={14} />
                             <span>导出通讯录</span>
                           </button>
-                          <button
-                            className="more-menu-item danger"
-                            onClick={() => { void handleClearCurrentProfileLocalData() }}
-                            disabled={!!profileActionPending}
-                          >
-                            {profileActionPending?.type === 'wipe' ? <Loader2 size={14} className="spin" /> : <Trash2 size={14} />}
-                            <span>清除本账号数据</span>
-                          </button>
                         </div>
                       </>
                     )}
@@ -6713,9 +6705,22 @@ function ExportPage() {
                                       </div>
                                     </div>
                                     {profile.isCurrent ? (
-                                      <span className="profile-switcher-item-check" title="当前账号">
-                                        <CheckCircle size={16} />
-                                      </span>
+                                      <>
+                                        <span className="profile-switcher-item-check" title="当前账号">
+                                          <CheckCircle size={16} />
+                                        </span>
+                                        <div className="profile-switcher-item-current-actions">
+                                          <button
+                                            type="button"
+                                            className="profile-switcher-item-danger-btn"
+                                            onClick={() => { void handleClearCurrentProfileLocalData() }}
+                                            disabled={!!profileActionPending}
+                                          >
+                                            {profileActionPending?.type === 'wipe' ? <Loader2 size={13} className="spin" /> : <Trash2 size={13} />}
+                                            <span>清除当前账号数据</span>
+                                          </button>
+                                        </div>
+                                      </>
                                     ) : (
                                       <button
                                         type="button"

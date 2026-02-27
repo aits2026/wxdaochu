@@ -1281,6 +1281,7 @@
   .profile-switcher-item {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 10px;
     padding: 8px;
     border-radius: 10px;
@@ -1364,6 +1365,37 @@
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
+  }
+
+  .profile-switcher-item-current-actions {
+    width: 100%;
+    display: flex;
+    justify-content: flex-end;
+    padding-left: 40px;
+    margin-top: 2px;
+  }
+
+  .profile-switcher-item-danger-btn {
+    border: 1px solid rgba(185, 28, 28, 0.2);
+    background: rgba(185, 28, 28, 0.08);
+    color: #b91c1c;
+    border-radius: 8px;
+    padding: 6px 10px;
+    font-size: 12px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+
+    &:hover:not(:disabled) {
+      background: rgba(185, 28, 28, 0.14);
+    }
+
+    &:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
   }
 
   .profile-switcher-item-action {
