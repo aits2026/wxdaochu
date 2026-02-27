@@ -85,7 +85,7 @@ const MESSAGE_TYPE_MAP: Record<number, number> = {
 }
 
 export interface ExportOptions {
-  format: 'chatlab' | 'chatlab-jsonl' | 'json' | 'html' | 'txt' | 'excel' | 'sql'
+  format: 'chatlab' | 'chatlab-jsonl' | 'json' | 'arkme-json' | 'html' | 'txt' | 'excel' | 'sql'
   dateRange?: { start: number; end: number } | null
   exportMedia?: boolean
   exportAvatars?: boolean
@@ -183,6 +183,42 @@ class ExportService {
     } catch {
       return false
     }
+  }
+
+  private getChatTextFilePrefix(sessionId: string): string {
+    if (sessionId.includes('@chatroom')) return '群聊_'
+    if (this.isPrivateSessionForExportPrefix(sessionId)) return '私聊_'
+    return ''
+  }
+
+  private isPrivateSessionForExportPrefix(sessionId: string): boolean {
+    const username = String(sessionId || '').trim().toLowerCase()
+    if (!username) return false
+    if (username.includes('@chatroom')) return false
+    if (username.startsWith('gh_')) return false
+    if (username.includes('@kefu.openim') || username.includes('@openim')) return false
+    if (username.includes('service_')) return false
+
+    const systemAccounts = [
+      'weixin',
+      'qqmail',
+      'fmessage',
+      'medianote',
+      'floatbottle',
+      'newsapp',
+      'brandsessionholder',
+      'brandservicesessionholder',
+      'notifymessage',
+      'opencustomerservicemsg',
+      'notification_messages',
+      'userexperience_alarm',
+      'filehelper',
+      'qmessage',
+      'tmessage'
+    ]
+    if (systemAccounts.includes(username)) return false
+
+    return username.startsWith('wxid_') || !username.includes('@')
   }
 
   private cleanAccountDirName(dirName: string): string {
@@ -428,6 +464,248 @@ class ExportService {
       }
     } catch { }
     return { displayName: username }
+  }
+
+  private quoteIdentifier(identifier: string): string {
+    return `"${String(identifier || '').replace(/"/g, '""')}"`
+  }
+
+  private getName2IdTableName(db: Database.Database): string | null {
+    try {
+      const row = db.prepare(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('Name2Id','name2id') LIMIT 1"
+      ).get() as { name?: string } | undefined
+      return row?.name || null
+    } catch {
+      return null
+    }
+  }
+
+  private getName2IdUserColumn(db: Database.Database, name2IdTable: string): 'user_name' | 'username' {
+    try {
+      const cols = db.prepare(`PRAGMA table_info(${this.quoteIdentifier(name2IdTable)})`).all() as any[]
+      const colNames = new Set(cols.map((c: any) => String(c.name || '')))
+      if (colNames.has('user_name')) return 'user_name'
+      if (colNames.has('username')) return 'username'
+    } catch { }
+    return 'user_name'
+  }
+
+  private sanitizeArkmeContactValue(value: unknown): unknown {
+    if (value === null || value === undefined) return undefined
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return value
+    if (Buffer.isBuffer(value)) return value.toString('base64')
+    if (value instanceof Date) return value.toISOString()
+    try {
+      return String(value)
+    } catch {
+      return undefined
+    }
+  }
+
+  private buildArkmeContactRaw(row: any, contactCols: string[]): Record<string, unknown> {
+    const raw: Record<string, unknown> = {}
+    for (const col of contactCols) {
+      const key = `contact_${col}`
+      const value = this.sanitizeArkmeContactValue(row?.[key])
+      if (value !== undefined && value !== '') {
+        raw[col] = value
+      }
+    }
+    return raw
+  }
+
+  private async getGroupMembersForArkme(
+    chatroomId: string,
+    myWxidRaw: string,
+    myWxidClean: string
+  ): Promise<Array<Record<string, unknown>>> {
+    if (!this.contactDb) return []
+
+    try {
+      const name2IdTable = this.getName2IdTableName(this.contactDb)
+      if (!name2IdTable) return []
+      const userCol = this.getName2IdUserColumn(this.contactDb, name2IdTable)
+      const tableQ = this.quoteIdentifier(name2IdTable)
+      const userColQ = this.quoteIdentifier(userCol)
+
+      const contactCols = this.contactDb.prepare('PRAGMA table_info(contact)').all() as any[]
+      const contactColNames = contactCols.map((col: any) => String(col.name || ''))
+      const hasLocalType = contactColNames.includes('local_type')
+      const contactSelect = contactColNames.length > 0
+        ? ', ' + contactColNames
+          .map(col => `c.${this.quoteIdentifier(col)} AS ${this.quoteIdentifier(`contact_${col}`)}`)
+          .join(', ')
+        : ''
+
+      const rows = this.contactDb.prepare(`
+        SELECT n.${userColQ} as username${contactSelect}
+        FROM chatroom_member m
+        JOIN ${tableQ} n ON m.member_id = n.rowid
+        LEFT JOIN contact c ON n.${userColQ} = c.username
+        WHERE m.room_id = (
+          SELECT rowid FROM ${tableQ} WHERE ${userColQ} = ? LIMIT 1
+        )
+      `).all(chatroomId) as any[]
+
+      const memberMap = new Map<string, Record<string, unknown>>()
+      const selfIdSet = new Set([myWxidRaw, myWxidClean].filter(Boolean))
+
+      for (const row of rows) {
+        const username = String(row?.username || '').trim()
+        if (!username) continue
+
+        const contactRaw = this.buildArkmeContactRaw(row, contactColNames)
+        const displayName = String(contactRaw.remark || contactRaw.nick_name || contactRaw.alias || username)
+        const localType = Number(contactRaw.local_type ?? NaN)
+        const isFriend = hasLocalType
+          ? Number.isFinite(localType) && localType === 1
+          : Boolean(contactRaw.username)
+        const isSelf = selfIdSet.has(username)
+        const avatarUrl = String(contactRaw.big_head_url || contactRaw.small_head_url || '')
+
+        const currentMember: Record<string, unknown> = {
+          username,
+          displayName,
+          isFriend,
+          isSelf,
+          ...(isSelf ? { selfRemark: '用户自己' } : {}),
+          ...(avatarUrl && { avatarUrl }),
+          ...(contactRaw.remark ? { remark: String(contactRaw.remark) } : {}),
+          ...(contactRaw.nick_name ? { nickName: String(contactRaw.nick_name) } : {}),
+          ...(contactRaw.alias ? { alias: String(contactRaw.alias) } : {}),
+          ...(Number.isFinite(localType) ? { localType } : {}),
+          contactRaw
+        }
+
+        const prevMember = memberMap.get(username)
+        if (!prevMember) {
+          memberMap.set(username, currentMember)
+          continue
+        }
+
+        const prevRaw = (prevMember.contactRaw as Record<string, unknown> | undefined) || {}
+        memberMap.set(username, {
+          ...prevMember,
+          ...currentMember,
+          isFriend: Boolean(prevMember.isFriend) || Boolean(currentMember.isFriend),
+          isSelf: Boolean(prevMember.isSelf) || Boolean(currentMember.isSelf),
+          avatarUrl: prevMember.avatarUrl || currentMember.avatarUrl,
+          displayName: String(prevMember.displayName || currentMember.displayName || username),
+          contactRaw: { ...prevRaw, ...(contactRaw || {}) }
+        })
+      }
+
+      const members = Array.from(memberMap.values())
+      for (const member of members) {
+        if (member.avatarUrl) continue
+        const username = String(member.username || '')
+        if (!username) continue
+        const avatarUrl = await this.getAvatarFromHeadImageDb(username)
+        if (avatarUrl) member.avatarUrl = avatarUrl
+      }
+
+      members.sort((a, b) =>
+        String(a.displayName || a.username || '').localeCompare(
+          String(b.displayName || b.username || ''),
+          'zh-Hans-CN'
+        )
+      )
+
+      return members
+    } catch (e) {
+      console.error('读取群成员全量信息失败:', e)
+      return []
+    }
+  }
+
+  private async getCommonGroupsForArkme(
+    friendUsername: string,
+    myWxidRaw: string,
+    myWxidClean: string
+  ): Promise<Array<Record<string, unknown>>> {
+    if (!this.contactDb) return []
+
+    try {
+      const name2IdTable = this.getName2IdTableName(this.contactDb)
+      if (!name2IdTable) return []
+      const userCol = this.getName2IdUserColumn(this.contactDb, name2IdTable)
+      const tableQ = this.quoteIdentifier(name2IdTable)
+      const userColQ = this.quoteIdentifier(userCol)
+
+      const resolveRowId = (candidates: string[]): number | null => {
+        for (const candidate of candidates) {
+          const target = String(candidate || '').trim()
+          if (!target) continue
+          try {
+            const row = this.contactDb!.prepare(
+              `SELECT rowid FROM ${tableQ} WHERE ${userColQ} = ? LIMIT 1`
+            ).get(target) as { rowid?: number } | undefined
+            if (row?.rowid != null) return Number(row.rowid)
+          } catch { }
+        }
+        return null
+      }
+
+      const myRowId = resolveRowId([myWxidRaw, myWxidClean])
+      const peerRowId = resolveRowId([friendUsername, this.cleanAccountDirName(friendUsername)])
+      if (myRowId == null || peerRowId == null) return []
+
+      const rows = this.contactDb.prepare(`
+        SELECT DISTINCT room.${userColQ} as username
+          , c.remark as remark
+          , c.nick_name as nick_name
+          , c.alias as alias
+          , c.big_head_url as big_head_url
+          , c.small_head_url as small_head_url
+        FROM chatroom_member m1
+        JOIN chatroom_member m2 ON m1.room_id = m2.room_id
+        JOIN ${tableQ} room ON room.rowid = m1.room_id
+        LEFT JOIN contact c ON c.username = room.${userColQ}
+        WHERE m1.member_id = ?
+          AND m2.member_id = ?
+          AND room.${userColQ} LIKE '%@chatroom'
+      `).all(myRowId, peerRowId) as Array<{
+        username?: string
+        remark?: string | null
+        nick_name?: string | null
+        alias?: string | null
+        big_head_url?: string | null
+        small_head_url?: string | null
+      }>
+
+      const groups: Array<Record<string, unknown>> = []
+      for (const row of rows) {
+        const groupId = String(row.username || '').trim()
+        if (!groupId) continue
+        const groupName = String(row.remark || row.nick_name || row.alias || groupId)
+        let avatarUrl = String(row.big_head_url || row.small_head_url || '')
+        if (!avatarUrl) {
+          avatarUrl = (await this.getContactInfo(groupId)).avatarUrl || ''
+        }
+
+        groups.push({
+          groupId,
+          groupName,
+          ...(row.remark ? { remark: String(row.remark) } : {}),
+          ...(row.nick_name ? { nickName: String(row.nick_name) } : {}),
+          ...(row.alias ? { alias: String(row.alias) } : {}),
+          ...(avatarUrl ? { avatarUrl } : {})
+        })
+      }
+
+      groups.sort((a, b) =>
+        String(a.groupName || a.groupId || '').localeCompare(
+          String(b.groupName || b.groupId || ''),
+          'zh-Hans-CN'
+        )
+      )
+
+      return groups
+    } catch (e) {
+      console.error('读取共同群聊信息失败:', e)
+      return []
+    }
   }
 
   /**
@@ -1840,6 +2118,248 @@ class ExportService {
   }
 
   /**
+   * 导出单个会话为 Arkme JSON 格式（包含会话头部增强信息）
+   */
+  async exportSessionToArkmeJson(
+    sessionId: string,
+    outputPath: string,
+    options: ExportOptions,
+    onProgress?: (progress: ExportProgress) => void
+  ): Promise<{ success: boolean; error?: string }> {
+    try {
+      if (!this.dbDir) {
+        const connectResult = await this.connect()
+        if (!connectResult.success) return connectResult
+      }
+
+      const myWxid = this.configService.get('myWxid') || ''
+      const cleanedMyWxid = this.cleanAccountDirName(myWxid)
+      const isGroup = sessionId.includes('@chatroom')
+
+      const sessionInfo = await this.getContactInfo(sessionId)
+      const myInfo = await this.getContactInfo(cleanedMyWxid)
+
+      onProgress?.({
+        current: 0,
+        total: 100,
+        currentSession: sessionInfo.displayName,
+        phase: 'preparing',
+        detail: '正在准备导出...'
+      })
+
+      const dbTablePairs = this.findSessionTables(sessionId)
+      if (dbTablePairs.length === 0) {
+        return { success: false, error: '未找到该会话的消息' }
+      }
+
+      const allMessages: any[] = []
+      let firstMessageTime: number | null = null
+      let lastMessageTime: number | null = null
+
+      for (const { db, tableName } of dbTablePairs) {
+        try {
+          const hasName2Id = db.prepare(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='Name2Id'"
+          ).get()
+
+          let sql: string
+          if (hasName2Id) {
+            sql = `SELECT m.*, n.user_name AS sender_username
+                   FROM ${tableName} m
+                   LEFT JOIN Name2Id n ON m.real_sender_id = n.rowid
+                   ORDER BY m.create_time ASC`
+          } else {
+            sql = `SELECT * FROM ${tableName} ORDER BY create_time ASC`
+          }
+
+          const rows = db.prepare(sql).all() as any[]
+
+          for (const row of rows) {
+            const createTime = row.create_time || 0
+            if (options.dateRange) {
+              if (createTime < options.dateRange.start || createTime > options.dateRange.end) continue
+            }
+
+            const content = this.decodeMessageContent(row.message_content, row.compress_content)
+            const localType = row.local_type || row.type || 1
+            const senderUsername = row.sender_username || ''
+            const isSend = row.is_send === 1 || senderUsername === cleanedMyWxid
+
+            let actualSender: string
+            if (localType === 10000 || localType === 266287972401) {
+              const revokeInfo = this.extractRevokerInfo(content)
+              if (revokeInfo.isRevoke) {
+                if (revokeInfo.isSelfRevoke) {
+                  actualSender = cleanedMyWxid
+                } else if (revokeInfo.revokerWxid) {
+                  actualSender = revokeInfo.revokerWxid
+                } else {
+                  actualSender = sessionId
+                }
+              } else {
+                actualSender = sessionId
+              }
+            } else {
+              actualSender = isSend ? cleanedMyWxid : (senderUsername || sessionId)
+            }
+
+            const senderInfo = await this.getContactInfo(actualSender)
+            let source = ''
+            const msgsourceMatch = /<msgsource>[\s\S]*?<\/msgsource>/i.exec(content)
+            if (msgsourceMatch) {
+              source = msgsourceMatch[0]
+            }
+
+            const platformMessageId = row.server_id ? String(row.server_id) : (row.local_id ? String(row.local_id) : undefined)
+            const localMessageId = row.local_id ? String(row.local_id) : undefined
+            const mediaMapKey = this.buildMediaPathMapKey({
+              platformMessageId,
+              localMessageId,
+              createTime,
+              localType,
+              senderUsername: actualSender,
+              isSend
+            })
+
+            let replyToMessageId: string | undefined
+            if (localType === 49 && content.includes('<type>57</type>')) {
+              const svridMatch = /<svrid>(\d+)<\/svrid>/i.exec(content)
+              if (svridMatch) replyToMessageId = svridMatch[1]
+            }
+
+            const groupNickname = isGroup ? this.extractGroupNickname(content, actualSender) : undefined
+            const xmlType = this.extractXmlValue(content, 'type')
+            let chatRecordList: any[] | undefined
+            if (xmlType === '19' || localType === 49) {
+              chatRecordList = this.parseChatHistory(content)
+            }
+
+            allMessages.push({
+              localId: row.local_id || allMessages.length + 1,
+              platformMessageId,
+              createTime,
+              formattedTime: this.formatTimestamp(createTime),
+              type: this.getMessageTypeName(localType, content),
+              localType,
+              chatLabType: this.convertMessageType(localType, content),
+              content: this.parseMessageContent(content, localType, sessionId, createTime, options.mediaPathMap, mediaMapKey),
+              rawContent: content,
+              isSend: isSend ? 1 : 0,
+              senderUsername: actualSender,
+              senderDisplayName: senderInfo.displayName,
+              ...(groupNickname && { groupNickname }),
+              ...(replyToMessageId && { replyToMessageId }),
+              ...(chatRecordList && { chatRecords: this.formatChatRecordsForJson(chatRecordList, options) }),
+              source
+            })
+
+            if (firstMessageTime === null || createTime < firstMessageTime) firstMessageTime = createTime
+            if (lastMessageTime === null || createTime > lastMessageTime) lastMessageTime = createTime
+          }
+        } catch (e) {
+          console.error('导出 Arkme JSON 消息失败:', e)
+        }
+      }
+
+      allMessages.sort((a, b) => a.createTime - b.createTime)
+
+      onProgress?.({
+        current: 70,
+        total: 100,
+        currentSession: sessionInfo.displayName,
+        phase: 'writing',
+        detail: '正在组装 Arkme 头部信息...'
+      })
+
+      for (const msg of allMessages) {
+        if (msg.content && msg.content.startsWith('[转账]') && msg.rawContent) {
+          const transferDesc = await this.resolveTransferDesc(
+            msg.rawContent,
+            myWxid,
+            new Map<string, string>(),
+            async (username: string) => {
+              const info = await this.getContactInfo(username)
+              return info.displayName || username
+            }
+          )
+          if (transferDesc) {
+            msg.content = msg.content.replace('[转账]', `[转账] (${transferDesc})`)
+          }
+        }
+      }
+
+      const compactMessages = allMessages.map(msg => ({
+        localId: msg.localId,
+        platformMessageId: msg.platformMessageId,
+        createTime: msg.createTime,
+        formattedTime: msg.formattedTime,
+        type: msg.type,
+        localType: msg.localType,
+        chatLabType: msg.chatLabType,
+        content: msg.content,
+        isSend: msg.isSend,
+        senderUsername: msg.senderUsername,
+        senderDisplayName: msg.senderDisplayName,
+        ...(msg.groupNickname && { groupNickname: msg.groupNickname }),
+        ...(msg.replyToMessageId && { replyToMessageId: msg.replyToMessageId }),
+        ...(msg.chatRecords && { chatRecords: msg.chatRecords }),
+        ...(msg.source ? { source: msg.source } : {})
+      }))
+
+      const groupMembers = isGroup
+        ? await this.getGroupMembersForArkme(sessionId, myWxid, cleanedMyWxid)
+        : undefined
+      const commonGroups = !isGroup
+        ? await this.getCommonGroupsForArkme(sessionId, myWxid, cleanedMyWxid)
+        : undefined
+
+      const arkmeExport = {
+        exportInfo: {
+          version: '1.0.0',
+          exportedAt: Math.floor(Date.now() / 1000),
+          generator: 'VXdaochu',
+          format: 'arkme-json',
+          schema: 'arkme.chat.export.v1'
+        },
+        session: {
+          wxid: sessionId,
+          nickname: sessionInfo.displayName,
+          remark: sessionInfo.displayName,
+          displayName: sessionInfo.displayName,
+          type: isGroup ? '群聊' : '私聊',
+          platform: 'wechat',
+          isGroup,
+          ownerId: cleanedMyWxid,
+          ownerDisplayName: myInfo.displayName,
+          ...(isGroup && { groupId: sessionId }),
+          ...(options.exportAvatars && sessionInfo.avatarUrl && { avatar: sessionInfo.avatarUrl }),
+          firstTimestamp: firstMessageTime,
+          lastTimestamp: lastMessageTime,
+          messageCount: compactMessages.length
+        },
+        ...(isGroup ? { members: groupMembers || [] } : {}),
+        ...(!isGroup ? { commonGroups: commonGroups || [] } : {}),
+        messages: compactMessages
+      }
+
+      fs.writeFileSync(outputPath, JSON.stringify(arkmeExport, null, 2), 'utf-8')
+
+      onProgress?.({
+        current: 100,
+        total: 100,
+        currentSession: sessionInfo.displayName,
+        phase: 'complete',
+        detail: '导出完成'
+      })
+
+      return { success: true }
+    } catch (e) {
+      console.error('ExportService: 导出 Arkme JSON 失败:', e)
+      return { success: false, error: String(e) }
+    }
+  }
+
+  /**
    * 导出单个会话为 Excel 格式
    */
   async exportSessionToExcel(
@@ -2424,6 +2944,8 @@ class ExportService {
 
         // 生成文件名（清理非法字符）
         const safeName = sessionInfo.displayName.replace(/[<>:"\/\\|?*]/g, '_')
+        const filePrefix = this.getChatTextFilePrefix(sessionId)
+        const safeFileName = `${filePrefix}${safeName}`
         let ext = '.json'
         if (options.format === 'chatlab-jsonl') ext = '.jsonl'
         else if (options.format === 'excel') ext = '.xlsx'
@@ -2465,7 +2987,7 @@ class ExportService {
           fs.mkdirSync(sessionOutputDir, { recursive: true })
         }
 
-        const outputPath = path.join(sessionOutputDir, `${safeName}${ext}`)
+        const outputPath = path.join(sessionOutputDir, `${safeFileName}${ext}`)
 
         const canTrySkipTextUnchanged = Boolean(
           options.skipIfUnchanged &&
@@ -2794,6 +3316,8 @@ class ExportService {
         } else if (options.format === 'json') {
           // 根据格式选择导出方法
           result = await this.exportSessionToDetailedJson(sessionId, outputPath, exportOpts, emitProgress)
+        } else if (options.format === 'arkme-json') {
+          result = await this.exportSessionToArkmeJson(sessionId, outputPath, exportOpts, emitProgress)
         } else if (options.format === 'chatlab' || options.format === 'chatlab-jsonl') {
           result = await this.exportSessionToChatLab(sessionId, outputPath, exportOpts, emitProgress)
         } else if (options.format === 'excel') {

@@ -32,7 +32,7 @@ interface Contact {
 }
 
 interface ExportOptions {
-  format: 'chatlab' | 'chatlab-jsonl' | 'json' | 'html' | 'txt' | 'excel' | 'sql'
+  format: 'chatlab' | 'chatlab-jsonl' | 'json' | 'arkme-json' | 'html' | 'txt' | 'excel' | 'sql'
   startDate: string
   endDate: string
   exportAvatars: boolean
@@ -103,6 +103,7 @@ const IMAGE_EXPORT_SUBDIR_NAME = 'images'
 const VIDEO_EXPORT_SUBDIR_NAME = 'videos'
 const EMOJI_EXPORT_SUBDIR_NAME = 'emojis'
 const VOICE_EXPORT_SUBDIR_NAME = 'voices'
+const DEFAULT_CHAT_EXPORT_FORMAT: ExportOptions['format'] = 'arkme-json'
 const PROFILE_CLEAR_CONFIRM_TEXT = '清除'
 const OPEN_EXPORT_OVERVIEW_EVENT = 'vxdaochu:open-export-overview'
 
@@ -923,7 +924,7 @@ function ExportPage() {
   const [snsUserPostCountsStatus, setSnsUserPostCountsStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
   const [copiedIdentityChip, setCopiedIdentityChip] = useState<'wxid' | 'alias' | null>(null)
   const [options, setOptions] = useState<ExportOptions>({
-    format: 'json',
+    format: DEFAULT_CHAT_EXPORT_FORMAT,
     startDate: '',
     endDate: '',
     exportAvatars: true,
@@ -945,7 +946,7 @@ function ExportPage() {
   const [showVoiceCardExportModal, setShowVoiceCardExportModal] = useState(false)
   const [showVoiceCardStatusModal, setShowVoiceCardStatusModal] = useState(false)
   const [chatTextCardExportOptions, setChatTextCardExportOptions] = useState<ExportOptions>({
-    format: 'json',
+    format: DEFAULT_CHAT_EXPORT_FORMAT,
     startDate: '',
     endDate: '',
     exportAvatars: true,
@@ -1143,6 +1144,15 @@ function ExportPage() {
   useEffect(() => {
     setHideImageDecryptExportTip(false)
   }, [selectedSession])
+
+  useEffect(() => {
+    setOptions(prev => (
+      prev.format === DEFAULT_CHAT_EXPORT_FORMAT ? prev : { ...prev, format: DEFAULT_CHAT_EXPORT_FORMAT }
+    ))
+    setChatTextCardExportOptions(prev => (
+      prev.format === DEFAULT_CHAT_EXPORT_FORMAT ? prev : { ...prev, format: DEFAULT_CHAT_EXPORT_FORMAT }
+    ))
+  }, [])
 
   const exportChatCacheKey = useMemo(() => {
     if (!isDbConnected) return ''
@@ -4390,7 +4400,7 @@ function ExportPage() {
     }
 
     try {
-      if (job.options.format === 'chatlab' || job.options.format === 'chatlab-jsonl' || job.options.format === 'json' || job.options.format === 'excel' || job.options.format === 'html') {
+      if (job.options.format === 'chatlab' || job.options.format === 'chatlab-jsonl' || job.options.format === 'json' || job.options.format === 'arkme-json' || job.options.format === 'excel' || job.options.format === 'html') {
         const result = await window.electronAPI.export.exportSessions(
           [job.sessionId],
           job.outputDir,
@@ -6565,6 +6575,7 @@ function ExportPage() {
     { value: 'chatlab', label: 'ChatLab', icon: FileCode, desc: '标准格式，支持其他软件导入' },
     { value: 'chatlab-jsonl', label: 'ChatLab JSONL', icon: FileCode, desc: '流式格式，适合大量消息' },
     { value: 'json', label: 'JSON', icon: FileJson, desc: '详细格式，包含完整消息信息' },
+    { value: 'arkme-json', label: 'ARKME JSON', icon: FileJson, desc: '群聊含全量成员（好友/本人标识），私聊含共同群聊信息' },
     { value: 'html', label: 'HTML', icon: FileText, desc: '网页格式，可直接浏览' },
     { value: 'txt', label: 'TXT', icon: Table, desc: '纯文本，通用格式' },
     { value: 'excel', label: 'Excel', icon: FileSpreadsheet, desc: '电子表格，适合统计分析' },
@@ -8321,7 +8332,10 @@ function ExportPage() {
                 <div className="settings-content">
                   <div className="setting-section">
                     {(() => {
-                      const currentFmt = chatFormatOptions.find(f => f.value === options.format) || chatFormatOptions[2]
+                      const currentFmt =
+                        chatFormatOptions.find(f => f.value === options.format) ||
+                        chatFormatOptions.find(f => f.value === DEFAULT_CHAT_EXPORT_FORMAT) ||
+                        chatFormatOptions[0]
                       return (
                         <div style={{ position: 'relative' }}>
                           <div
@@ -9575,7 +9589,10 @@ function ExportPage() {
 
             <div className="chat-text-card-modal-body">
               {(() => {
-                const currentFmt = chatFormatOptions.find(f => f.value === chatTextCardExportOptions.format) || chatFormatOptions[2]
+                const currentFmt =
+                  chatFormatOptions.find(f => f.value === chatTextCardExportOptions.format) ||
+                  chatFormatOptions.find(f => f.value === DEFAULT_CHAT_EXPORT_FORMAT) ||
+                  chatFormatOptions[0]
                 return (
                   <div className="chat-text-card-setting-block" style={{ position: 'relative' }}>
                     <div
