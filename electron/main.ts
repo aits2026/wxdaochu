@@ -187,10 +187,77 @@ function loadRendererPageWithRetry(
   loadOnce()
 }
 
-function relaunchAppGracefully() {
+function attachRendererRecovery(
+  win: BrowserWindow,
+  options: {
+    tag: string
+    maxRecoveries?: number
+    recoverDelayMs?: number
+    showOnHealthyLoad?: boolean
+    firstLoadTimeoutMs?: number
+  }
+) {
+  const maxRecoveries = Math.max(1, options.maxRecoveries ?? 2)
+  const recoverDelayMs = Math.max(160, options.recoverDelayMs ?? 360)
+  const firstLoadTimeoutMs = Math.max(2500, options.firstLoadTimeoutMs ?? 8000)
+  let recoveries = 0
+
+  const recover = (reason: string) => {
+    if (win.isDestroyed()) return
+    if (recoveries >= maxRecoveries) {
+      console.error(`[Window:${options.tag}] 页面恢复失败（已达上限）: ${reason}`)
+      if (!win.isVisible()) {
+        win.show()
+      }
+      return
+    }
+
+    recoveries += 1
+    const delay = recoverDelayMs * recoveries
+    console.warn(`[Window:${options.tag}] ${reason}，${delay}ms 后尝试恢复第 ${recoveries} 次`)
+    setTimeout(() => {
+      if (win.isDestroyed()) return
+      win.webContents.reloadIgnoringCache()
+    }, delay)
+  }
+
+  win.webContents.on('render-process-gone', (_event, details) => {
+    recover(`渲染进程异常退出(${details.reason})`)
+  })
+
+  win.webContents.on('unresponsive', () => {
+    recover('渲染进程无响应')
+  })
+
+  win.webContents.on('did-finish-load', () => {
+    const currentUrl = win.webContents.getURL()
+    if (currentUrl === 'about:blank' || currentUrl.startsWith('chrome-error://')) {
+      recover(`页面地址异常(${currentUrl})`)
+      return
+    }
+
+    recoveries = 0
+    if (options.showOnHealthyLoad !== false && !win.isVisible()) {
+      win.show()
+    }
+  })
+
   setTimeout(() => {
-    app.relaunch()
-    app.quit()
+    if (win.isDestroyed() || win.isVisible()) return
+    recover('首屏加载超时')
+  }, firstLoadTimeoutMs)
+}
+
+function relaunchAppGracefully() {
+  const args = process.argv.slice(1).filter(arg => arg !== '--profile-relaunch')
+  args.push('--profile-relaunch')
+
+  setTimeout(() => {
+    app.relaunch({
+      execPath: process.execPath,
+      args
+    })
+    app.exit(0)
   }, 80)
 }
 
@@ -234,11 +301,6 @@ function createWindow() {
     voiceTranscribeServiceWhisper.setGPUComponentsDir(cachePath)
   }
 
-  // 窗口准备好后显示
-  win.once('ready-to-show', () => {
-    win.show()
-  })
-
   // 开发环境加载 vite 服务器
   loadRendererPageWithRetry(win, {
     devUrl: process.env.VITE_DEV_SERVER_URL || '',
@@ -246,6 +308,15 @@ function createWindow() {
     maxRetries: 3,
     retryDelayMs: 420,
     tag: 'main'
+  })
+
+  // 主窗口白屏自恢复：检测异常 URL/渲染崩溃后自动重载
+  attachRendererRecovery(win, {
+    tag: 'main',
+    maxRecoveries: 3,
+    recoverDelayMs: 320,
+    showOnHealthyLoad: true,
+    firstLoadTimeoutMs: 8500
   })
 
   // 开发环境下按 F12 或 Ctrl+Shift+I 打开开发者工具
@@ -761,10 +832,6 @@ function createWelcomeWindow() {
     show: false
   })
 
-  welcomeWindow.once('ready-to-show', () => {
-    welcomeWindow?.show()
-  })
-
   loadRendererPageWithRetry(welcomeWindow, {
     devUrl: `${process.env.VITE_DEV_SERVER_URL || ''}#/welcome-window`,
     prodFile: join(__dirname, '../dist/index.html'),
@@ -772,6 +839,14 @@ function createWelcomeWindow() {
     maxRetries: 3,
     retryDelayMs: 420,
     tag: 'welcome'
+  })
+
+  attachRendererRecovery(welcomeWindow, {
+    tag: 'welcome',
+    maxRecoveries: 2,
+    recoverDelayMs: 320,
+    showOnHealthyLoad: true,
+    firstLoadTimeoutMs: 7000
   })
 
   welcomeWindow.on('closed', () => {
