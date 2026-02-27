@@ -27,6 +27,10 @@ interface ChatLabMeta {
   groupId?: string
   groupAvatar?: string
   ownerId?: string
+  groupWechatId?: string | null
+  groupWechatAlias?: string | null
+  ownerWechatId?: string | null
+  ownerWechatAlias?: string | null
 }
 
 interface MemberRole {
@@ -37,6 +41,8 @@ interface MemberRole {
 interface ChatLabMember {
   platformId: string
   accountName: string
+  wechatId?: string | null
+  wechatAlias?: string | null
   groupNickname?: string
   avatar?: string
   roles?: MemberRole[]
@@ -45,6 +51,8 @@ interface ChatLabMember {
 interface ChatLabMessage {
   sender: string
   accountName: string
+  senderWechatId?: string | null
+  senderWechatAlias?: string | null
   groupNickname?: string
   timestamp: number
   type: number
@@ -57,6 +65,8 @@ interface ChatLabMessage {
 interface ChatRecordItem {
   sender: string
   accountName: string
+  senderWechatId?: string | null
+  senderWechatAlias?: string | null
   timestamp: number
   type: number
   content: string
@@ -158,6 +168,15 @@ interface ExportMediaProgress {
   unit?: string
 }
 
+interface ResolvedContactInfo {
+  displayName: string
+  avatarUrl?: string
+  wechatId: string
+  wechatAlias?: string
+  remark?: string
+  nickName?: string
+}
+
 class ExportService {
   private configService: ConfigService
   private dbDir: string | null = null
@@ -182,6 +201,16 @@ class ExportService {
       return false
     } catch {
       return false
+    }
+  }
+
+  private async yieldMainThread(): Promise<void> {
+    await new Promise<void>(resolve => setImmediate(resolve))
+  }
+
+  private async yieldMainThreadEvery(counter: number, interval = 200): Promise<void> {
+    if (counter > 0 && counter % interval === 0) {
+      await this.yieldMainThread()
     }
   }
 
@@ -424,8 +453,16 @@ class ExportService {
   /**
    * 获取联系人信息
    */
-  private async getContactInfo(username: string): Promise<{ displayName: string; avatarUrl?: string }> {
-    if (!this.contactDb) return { displayName: username }
+  private async getContactInfo(username: string): Promise<ResolvedContactInfo> {
+    const input = String(username || '').trim()
+    if (!this.contactDb) {
+      const fallback = this.normalizeWechatIdentity(input)
+      return {
+        displayName: input,
+        wechatId: fallback.wechatId || input,
+        ...(fallback.wechatAlias ? { wechatAlias: fallback.wechatAlias } : {})
+      }
+    }
 
     try {
       if (!this.contactColumnsCache) {
@@ -440,12 +477,27 @@ class ExportService {
       }
 
       const { hasBigHeadUrl, hasSmallHeadUrl, selectCols } = this.contactColumnsCache
-      const contact = this.contactDb.prepare(`
+      let contact = this.contactDb.prepare(`
         SELECT ${selectCols.join(', ')} FROM contact WHERE username = ?
-      `).get(username) as any
+      `).get(input) as any
+
+      if (!contact && input && !input.startsWith('wxid_') && !input.includes('@')) {
+        const prefixedInput = `wxid_${input}`
+        contact = this.contactDb.prepare(`
+          SELECT ${selectCols.join(', ')} FROM contact WHERE username = ? LIMIT 1
+        `).get(prefixedInput) as any
+      }
+
+      if (!contact && input) {
+        contact = this.contactDb.prepare(`
+          SELECT ${selectCols.join(', ')} FROM contact WHERE alias = ? LIMIT 1
+        `).get(input) as any
+      }
 
       if (contact) {
-        const displayName = contact.remark || contact.nick_name || contact.alias || username
+        const resolvedWechatId = String(contact.username || input)
+        const resolvedWechatAlias = contact.alias ? String(contact.alias) : undefined
+        const displayName = contact.remark || contact.nick_name || resolvedWechatAlias || resolvedWechatId
         let avatarUrl: string | undefined
 
         // 优先使用 URL 头像
@@ -457,13 +509,51 @@ class ExportService {
 
         // 如果没有 URL 头像，尝试从 head_image.db 获取 base64
         if (!avatarUrl) {
-          avatarUrl = await this.getAvatarFromHeadImageDb(username)
+          avatarUrl = await this.getAvatarFromHeadImageDb(resolvedWechatId)
         }
 
-        return { displayName, avatarUrl }
+        return {
+          displayName,
+          avatarUrl,
+          wechatId: resolvedWechatId,
+          ...(resolvedWechatAlias ? { wechatAlias: resolvedWechatAlias } : {}),
+          ...(contact.remark ? { remark: String(contact.remark) } : {}),
+          ...(contact.nick_name ? { nickName: String(contact.nick_name) } : {})
+        }
       }
     } catch { }
-    return { displayName: username }
+    const fallback = this.normalizeWechatIdentity(input)
+    return {
+      displayName: input,
+      wechatId: fallback.wechatId || input,
+      ...(fallback.wechatAlias ? { wechatAlias: fallback.wechatAlias } : {})
+    }
+  }
+
+  private normalizeWechatIdentity(
+    rawValue: string,
+    resolved?: Partial<Pick<ResolvedContactInfo, 'wechatId' | 'wechatAlias'>>
+  ): { wechatId: string | null; wechatAlias: string | null } {
+    const raw = String(rawValue || '').trim()
+    let wechatId = String(resolved?.wechatId || '').trim()
+    let wechatAlias = String(resolved?.wechatAlias || '').trim()
+
+    if (!wechatId && raw && (raw.startsWith('wxid_') || raw.includes('@'))) {
+      wechatId = raw
+    }
+
+    if (!wechatAlias && raw && !raw.startsWith('wxid_') && !raw.includes('@')) {
+      wechatAlias = raw
+    }
+
+    if (!wechatId && raw) {
+      wechatId = raw
+    }
+
+    return {
+      wechatId: wechatId || null,
+      wechatAlias: wechatAlias || null
+    }
   }
 
   private quoteIdentifier(identifier: string): string {
@@ -556,16 +646,24 @@ class ExportService {
         if (!username) continue
 
         const contactRaw = this.buildArkmeContactRaw(row, contactColNames)
+        const identity = this.normalizeWechatIdentity(username, {
+          wechatId: String(contactRaw.username || username),
+          wechatAlias: contactRaw.alias ? String(contactRaw.alias) : undefined
+        })
         const displayName = String(contactRaw.remark || contactRaw.nick_name || contactRaw.alias || username)
         const localType = Number(contactRaw.local_type ?? NaN)
         const isFriend = hasLocalType
           ? Number.isFinite(localType) && localType === 1
           : Boolean(contactRaw.username)
-        const isSelf = selfIdSet.has(username)
+        const isSelf = selfIdSet.has(username) ||
+          (identity.wechatId ? selfIdSet.has(identity.wechatId) : false) ||
+          (identity.wechatAlias ? selfIdSet.has(identity.wechatAlias) : false)
         const avatarUrl = String(contactRaw.big_head_url || contactRaw.small_head_url || '')
 
         const currentMember: Record<string, unknown> = {
-          username,
+          username: identity.wechatId || username,
+          wechatId: identity.wechatId,
+          wechatAlias: identity.wechatAlias,
           displayName,
           isFriend,
           isSelf,
@@ -686,6 +784,8 @@ class ExportService {
 
         groups.push({
           groupId,
+          wechatId: groupId,
+          wechatAlias: row.alias ? String(row.alias) : null,
           groupName,
           ...(row.remark ? { remark: String(row.remark) } : {}),
           ...(row.nick_name ? { nickName: String(row.nick_name) } : {}),
@@ -1146,6 +1246,18 @@ class ExportService {
 
       // 获取会话信息
       const sessionInfo = await this.getContactInfo(sessionId)
+      const myIdentitySource = cleanedMyWxid || myWxid
+      const myInfo = await this.getContactInfo(myIdentitySource)
+      const contactInfoCache = new Map<string, ResolvedContactInfo>()
+      const getCachedContactInfo = async (username: string): Promise<ResolvedContactInfo> => {
+        const key = String(username || '')
+        if (contactInfoCache.has(key)) return contactInfoCache.get(key)!
+        const info = await this.getContactInfo(key)
+        contactInfoCache.set(key, info)
+        return info
+      }
+      contactInfoCache.set(sessionId, sessionInfo)
+      if (myIdentitySource) contactInfoCache.set(myIdentitySource, myInfo)
 
       onProgress?.({
         current: 0,
@@ -1166,6 +1278,7 @@ class ExportService {
       const memberSet = new Map<string, ChatLabMember>()
       // 群昵称缓存 (platformId -> groupNickname)
       const groupNicknameCache = new Map<string, string>()
+      let processedMessageRows = 0
 
       for (const { db, tableName, dbPath } of dbTablePairs) {
         try {
@@ -1288,10 +1401,13 @@ class ExportService {
 
             // 收集成员信息
             if (actualSender && !memberSet.has(actualSender)) {
-              const memberInfo = await this.getContactInfo(actualSender)
+              const memberInfo = await getCachedContactInfo(actualSender)
+              const memberIdentity = this.normalizeWechatIdentity(actualSender, memberInfo)
               memberSet.set(actualSender, {
                 platformId: actualSender,
                 accountName: memberInfo.displayName,
+                wechatId: memberIdentity.wechatId,
+                wechatAlias: memberIdentity.wechatAlias,
                 ...(groupNickname && { groupNickname }),
                 ...(options.exportAvatars && memberInfo.avatarUrl && { avatar: memberInfo.avatarUrl })
               })
@@ -1300,6 +1416,9 @@ class ExportService {
               const existing = memberSet.get(actualSender)!
               memberSet.set(actualSender, { ...existing, groupNickname })
             }
+
+            processedMessageRows++
+            await this.yieldMainThreadEvery(processedMessageRows)
           }
         } catch (e) {
           console.error('导出消息失败:', e)
@@ -1321,7 +1440,14 @@ class ExportService {
       const chatLabMessages: ChatLabMessage[] = []
 
       for (const msg of allMessages) {
-        const memberInfo = memberSet.get(msg.senderUsername) || { platformId: msg.senderUsername, accountName: msg.senderUsername }
+        const senderContactInfo = await getCachedContactInfo(msg.senderUsername)
+        const senderIdentity = this.normalizeWechatIdentity(msg.senderUsername, senderContactInfo)
+        const memberInfo = memberSet.get(msg.senderUsername) || {
+          platformId: msg.senderUsername,
+          accountName: senderContactInfo.displayName,
+          wechatId: senderIdentity.wechatId,
+          wechatAlias: senderIdentity.wechatAlias
+        }
         let parsedContent = this.parseMessageContent(
           msg.content,
           msg.localType,
@@ -1338,7 +1464,7 @@ class ExportService {
             myWxid,
             new Map<string, string>(),
             async (username) => {
-              const info = await this.getContactInfo(username)
+              const info = await getCachedContactInfo(username)
               return info.displayName || username
             }
           )
@@ -1350,6 +1476,8 @@ class ExportService {
         const message: ChatLabMessage = {
           sender: msg.senderUsername,
           accountName: memberInfo.accountName,
+          senderWechatId: senderIdentity.wechatId,
+          senderWechatAlias: senderIdentity.wechatAlias,
           timestamp: msg.createTime,
           type: this.convertMessageType(msg.localType, msg.content),
           content: parsedContent
@@ -1420,9 +1548,12 @@ class ExportService {
                 recordContent = record.datadesc || record.datatitle || '[消息]'
             }
 
+            const recordIdentity = this.normalizeWechatIdentity(record.sourcename || '')
             const chatRecord: ChatRecordItem = {
               sender: record.sourcename || 'unknown',
               accountName: record.sourcename || 'unknown',
+              senderWechatId: recordIdentity.wechatId,
+              senderWechatAlias: recordIdentity.wechatAlias,
               timestamp: recordTimestamp,
               type: recordType,
               content: recordContent
@@ -1437,9 +1568,12 @@ class ExportService {
 
             // 添加成员信息
             if (record.sourcename && !memberSet.has(record.sourcename)) {
+              const recordMemberIdentity = this.normalizeWechatIdentity(record.sourcename)
               memberSet.set(record.sourcename, {
                 platformId: record.sourcename,
                 accountName: record.sourcename,
+                wechatId: recordMemberIdentity.wechatId,
+                wechatAlias: recordMemberIdentity.wechatAlias,
                 ...(options.exportAvatars && record.sourceheadurl && { avatar: record.sourceheadurl })
               })
             }
@@ -1456,10 +1590,15 @@ class ExportService {
         name: sessionInfo.displayName,
         platform: 'wechat',
         type: isGroup ? 'group' : 'private',
-        ownerId: cleanedMyWxid
+        ownerId: cleanedMyWxid,
+        ownerWechatId: myInfo.wechatId || cleanedMyWxid || null,
+        ownerWechatAlias: myInfo.wechatAlias || null
       }
       if (isGroup) {
         meta.groupId = sessionId
+        const groupIdentity = this.normalizeWechatIdentity(sessionId, sessionInfo)
+        meta.groupWechatId = groupIdentity.wechatId
+        meta.groupWechatAlias = groupIdentity.wechatAlias
         // 添加群头像
         if (options.exportAvatars && sessionInfo.avatarUrl) {
           meta.groupAvatar = sessionInfo.avatarUrl
@@ -1662,8 +1801,11 @@ class ExportService {
           content = record.datadesc || record.datatitle || '[消息]'
       }
 
+      const chatRecordIdentity = this.normalizeWechatIdentity(record.sourcename || '')
       const chatRecord: any = {
         sender: record.sourcename || 'unknown',
+        senderWechatId: chatRecordIdentity.wechatId,
+        senderWechatAlias: chatRecordIdentity.wechatAlias,
         senderDisplayName: record.sourcename || 'unknown',
         timestamp,
         formattedTime: timestamp > 0 ? this.formatTimestamp(timestamp) : record.sourcetime,
@@ -1899,7 +2041,18 @@ class ExportService {
 
       // 获取会话信息
       const sessionInfo = await this.getContactInfo(sessionId)
-      const myInfo = await this.getContactInfo(cleanedMyWxid)
+      const myIdentitySource = cleanedMyWxid || myWxid
+      const myInfo = await this.getContactInfo(myIdentitySource)
+      const contactInfoCache = new Map<string, ResolvedContactInfo>()
+      const getCachedContactInfo = async (username: string): Promise<ResolvedContactInfo> => {
+        const key = String(username || '')
+        if (contactInfoCache.has(key)) return contactInfoCache.get(key)!
+        const info = await this.getContactInfo(key)
+        contactInfoCache.set(key, info)
+        return info
+      }
+      contactInfoCache.set(sessionId, sessionInfo)
+      if (myIdentitySource) contactInfoCache.set(myIdentitySource, myInfo)
 
       onProgress?.({
         current: 0,
@@ -1919,6 +2072,7 @@ class ExportService {
       const allMessages: any[] = []
       let firstMessageTime: number | null = null
       let lastMessageTime: number | null = null
+      let processedMessageRows = 0
 
       for (const { db, tableName } of dbTablePairs) {
         try {
@@ -1971,7 +2125,8 @@ class ExportService {
             } else {
               actualSender = isSend ? cleanedMyWxid : (senderUsername || sessionId)
             }
-            const senderInfo = await this.getContactInfo(actualSender)
+            const senderInfo = await getCachedContactInfo(actualSender)
+            const senderIdentity = this.normalizeWechatIdentity(actualSender, senderInfo)
 
             // 提取 source（msgsource）
             let source = ''
@@ -2023,6 +2178,8 @@ class ExportService {
               rawContent: content, // 保留原始内容（用于转账描述解析）
               isSend: isSend ? 1 : 0,
               senderUsername: actualSender,
+              senderWechatId: senderIdentity.wechatId,
+              senderWechatAlias: senderIdentity.wechatAlias,
               senderDisplayName: senderInfo.displayName,
               ...(groupNickname && { groupNickname }),
               ...(replyToMessageId && { replyToMessageId }),
@@ -2038,6 +2195,9 @@ class ExportService {
             if (lastMessageTime === null || createTime > lastMessageTime) {
               lastMessageTime = createTime
             }
+
+            processedMessageRows++
+            await this.yieldMainThreadEvery(processedMessageRows)
           }
         } catch (e) {
           console.error('导出消息失败:', e)
@@ -2063,7 +2223,7 @@ class ExportService {
             myWxid,
             new Map<string, string>(),
             async (username: string) => {
-              const info = await this.getContactInfo(username)
+              const info = await getCachedContactInfo(username)
               return info.displayName || username
             }
           )
@@ -2083,6 +2243,8 @@ class ExportService {
           format: 'detailed-json'
         },
         session: {
+          wechatId: sessionInfo.wechatId || sessionId,
+          wechatAlias: sessionInfo.wechatAlias || null,
           wxid: sessionId,
           nickname: sessionInfo.displayName,
           remark: sessionInfo.displayName,
@@ -2091,6 +2253,8 @@ class ExportService {
           platform: 'wechat',
           isGroup,
           ownerId: cleanedMyWxid,
+          ownerWechatId: myInfo.wechatId || cleanedMyWxid || null,
+          ownerWechatAlias: myInfo.wechatAlias || null,
           ...(isGroup && { groupId: sessionId }),
           ...(options.exportAvatars && sessionInfo.avatarUrl && { avatar: sessionInfo.avatarUrl }),
           firstTimestamp: firstMessageTime,
@@ -2137,7 +2301,18 @@ class ExportService {
       const isGroup = sessionId.includes('@chatroom')
 
       const sessionInfo = await this.getContactInfo(sessionId)
-      const myInfo = await this.getContactInfo(cleanedMyWxid)
+      const myIdentitySource = cleanedMyWxid || myWxid
+      const myInfo = await this.getContactInfo(myIdentitySource)
+      const contactInfoCache = new Map<string, ResolvedContactInfo>()
+      const getCachedContactInfo = async (username: string): Promise<ResolvedContactInfo> => {
+        const key = String(username || '')
+        if (contactInfoCache.has(key)) return contactInfoCache.get(key)!
+        const info = await this.getContactInfo(key)
+        contactInfoCache.set(key, info)
+        return info
+      }
+      contactInfoCache.set(sessionId, sessionInfo)
+      if (myIdentitySource) contactInfoCache.set(myIdentitySource, myInfo)
 
       onProgress?.({
         current: 0,
@@ -2155,6 +2330,7 @@ class ExportService {
       const allMessages: any[] = []
       let firstMessageTime: number | null = null
       let lastMessageTime: number | null = null
+      let processedMessageRows = 0
 
       for (const { db, tableName } of dbTablePairs) {
         try {
@@ -2203,7 +2379,8 @@ class ExportService {
               actualSender = isSend ? cleanedMyWxid : (senderUsername || sessionId)
             }
 
-            const senderInfo = await this.getContactInfo(actualSender)
+            const senderInfo = await getCachedContactInfo(actualSender)
+            const senderIdentity = this.normalizeWechatIdentity(actualSender, senderInfo)
             let source = ''
             const msgsourceMatch = /<msgsource>[\s\S]*?<\/msgsource>/i.exec(content)
             if (msgsourceMatch) {
@@ -2246,6 +2423,8 @@ class ExportService {
               rawContent: content,
               isSend: isSend ? 1 : 0,
               senderUsername: actualSender,
+              senderWechatId: senderIdentity.wechatId,
+              senderWechatAlias: senderIdentity.wechatAlias,
               senderDisplayName: senderInfo.displayName,
               ...(groupNickname && { groupNickname }),
               ...(replyToMessageId && { replyToMessageId }),
@@ -2255,6 +2434,9 @@ class ExportService {
 
             if (firstMessageTime === null || createTime < firstMessageTime) firstMessageTime = createTime
             if (lastMessageTime === null || createTime > lastMessageTime) lastMessageTime = createTime
+
+            processedMessageRows++
+            await this.yieldMainThreadEvery(processedMessageRows)
           }
         } catch (e) {
           console.error('导出 Arkme JSON 消息失败:', e)
@@ -2278,7 +2460,7 @@ class ExportService {
             myWxid,
             new Map<string, string>(),
             async (username: string) => {
-              const info = await this.getContactInfo(username)
+              const info = await getCachedContactInfo(username)
               return info.displayName || username
             }
           )
@@ -2299,6 +2481,8 @@ class ExportService {
         content: msg.content,
         isSend: msg.isSend,
         senderUsername: msg.senderUsername,
+        senderWechatId: msg.senderWechatId || null,
+        senderWechatAlias: msg.senderWechatAlias || null,
         senderDisplayName: msg.senderDisplayName,
         ...(msg.groupNickname && { groupNickname: msg.groupNickname }),
         ...(msg.replyToMessageId && { replyToMessageId: msg.replyToMessageId }),
@@ -2322,6 +2506,8 @@ class ExportService {
           schema: 'arkme.chat.export.v1'
         },
         session: {
+          wechatId: sessionInfo.wechatId || sessionId,
+          wechatAlias: sessionInfo.wechatAlias || null,
           wxid: sessionId,
           nickname: sessionInfo.displayName,
           remark: sessionInfo.displayName,
@@ -2330,6 +2516,8 @@ class ExportService {
           platform: 'wechat',
           isGroup,
           ownerId: cleanedMyWxid,
+          ownerWechatId: myInfo.wechatId || cleanedMyWxid || null,
+          ownerWechatAlias: myInfo.wechatAlias || null,
           ownerDisplayName: myInfo.displayName,
           ...(isGroup && { groupId: sessionId }),
           ...(options.exportAvatars && sessionInfo.avatarUrl && { avatar: sessionInfo.avatarUrl }),
@@ -2376,6 +2564,15 @@ class ExportService {
       const sessionInfo = await this.getContactInfo(sessionId)
       const cleanedMyWxid = (this.configService.get('myWxid') || '').replace(/^wxid_/, '')
       const fullMyWxid = `wxid_${cleanedMyWxid}`
+      const contactInfoCache = new Map<string, ResolvedContactInfo>()
+      const getCachedContactInfo = async (username: string): Promise<ResolvedContactInfo> => {
+        const key = String(username || '')
+        if (contactInfoCache.has(key)) return contactInfoCache.get(key)!
+        const info = await this.getContactInfo(key)
+        contactInfoCache.set(key, info)
+        return info
+      }
+      contactInfoCache.set(sessionId, sessionInfo)
 
       onProgress?.({
         current: 0,
@@ -2449,7 +2646,8 @@ class ExportService {
             } else {
               actualSender = isSend ? cleanedMyWxid : (senderUsername || sessionId)
             }
-            const senderInfo = await this.getContactInfo(actualSender)
+            const senderInfo = await getCachedContactInfo(actualSender)
+            const senderIdentity = this.normalizeWechatIdentity(actualSender, senderInfo)
             const platformMessageId = row.server_id ? String(row.server_id) : (row.local_id ? String(row.local_id) : undefined)
             const localMessageId = row.local_id ? String(row.local_id) : undefined
             const mediaMapKey = this.buildMediaPathMapKey({
@@ -2471,6 +2669,8 @@ class ExportService {
             allMessages.push({
               createTime,
               talker: actualSender,
+              talkerWechatId: senderIdentity.wechatId,
+              talkerWechatAlias: senderIdentity.wechatAlias,
               type: localType,
               content,
               senderName: senderInfo.displayName,
@@ -2527,7 +2727,7 @@ class ExportService {
             fullMyWxid,
             new Map<string, string>(),
             async (username: string) => {
-              const info = await this.getContactInfo(username)
+              const info = await getCachedContactInfo(username)
               return info.displayName || username
             }
           )
@@ -2551,6 +2751,8 @@ class ExportService {
           '星期': ['日', '一', '二', '三', '四', '五', '六'][time.getDay()],
           '发送者': msg.senderName,
           '微信ID': msg.talker,
+          '微信号(wxid)': msg.talkerWechatId || '',
+          '微信号(自定义)': msg.talkerWechatAlias || '',
           '消息类型': msgType,
           '消息内容': messageContent || '',
           '原始类型代码': msg.type,
@@ -2588,6 +2790,8 @@ class ExportService {
         { wch: 6 },   // 星期
         { wch: 15 },  // 发送者
         { wch: 25 },  // 微信ID
+        { wch: 25 },  // 微信号(wxid)
+        { wch: 22 },  // 微信号(自定义)
         { wch: 12 },  // 消息类型
         { wch: 50 },  // 消息内容
         { wch: 8 },   // 原始类型代码
@@ -2661,6 +2865,18 @@ class ExportService {
       const myWxid = this.configService.get('myWxid') || ''
       const cleanedMyWxid = this.cleanAccountDirName(myWxid)
       const isGroup = sessionId.includes('@chatroom')
+      const myIdentitySource = cleanedMyWxid || myWxid
+      const myInfo = await this.getContactInfo(myIdentitySource)
+      const contactInfoCache = new Map<string, ResolvedContactInfo>()
+      const getCachedContactInfo = async (username: string): Promise<ResolvedContactInfo> => {
+        const key = String(username || '')
+        if (contactInfoCache.has(key)) return contactInfoCache.get(key)!
+        const info = await this.getContactInfo(key)
+        contactInfoCache.set(key, info)
+        return info
+      }
+      contactInfoCache.set(sessionId, sessionInfo)
+      if (myIdentitySource) contactInfoCache.set(myIdentitySource, myInfo)
 
       onProgress?.({
         current: 0,
@@ -2731,7 +2947,8 @@ class ExportService {
             } else {
               actualSender = isSend ? cleanedMyWxid : (senderUsername || sessionId)
             }
-            const senderInfo = await this.getContactInfo(actualSender)
+            const senderInfo = await getCachedContactInfo(actualSender)
+            const senderIdentity = this.normalizeWechatIdentity(actualSender, senderInfo)
             const platformMessageId = row.server_id ? String(row.server_id) : (row.local_id ? String(row.local_id) : undefined)
             const localMessageId = row.local_id ? String(row.local_id) : undefined
             const mediaMapKey = this.buildMediaPathMapKey({
@@ -2753,6 +2970,8 @@ class ExportService {
             allMessages.push({
               timestamp: createTime,
               sender: actualSender,
+              senderWechatId: senderIdentity.wechatId,
+              senderWechatAlias: senderIdentity.wechatAlias,
               senderName: senderInfo.displayName,
               type: localType,
               content: this.parseMessageContent(content, localType, sessionId, createTime, options.mediaPathMap, mediaMapKey),
@@ -2768,6 +2987,8 @@ class ExportService {
             if (!memberSet.has(actualSender)) {
               memberSet.set(actualSender, {
                 id: actualSender,
+                wechatId: senderIdentity.wechatId,
+                wechatAlias: senderIdentity.wechatAlias,
                 name: senderInfo.displayName,
                 avatar: options.exportAvatars ? senderInfo.avatarUrl : undefined
               })
@@ -2777,8 +2998,11 @@ class ExportService {
             if (chatRecordList) {
               for (const record of chatRecordList) {
                 if (record.sourcename && !memberSet.has(record.sourcename)) {
+                  const recordIdentity = this.normalizeWechatIdentity(record.sourcename)
                   memberSet.set(record.sourcename, {
                     id: record.sourcename,
+                    wechatId: recordIdentity.wechatId,
+                    wechatAlias: recordIdentity.wechatAlias,
                     name: record.sourcename,
                     avatar: options.exportAvatars ? record.sourceheadurl : undefined
                   })
@@ -2810,8 +3034,12 @@ class ExportService {
       const exportData = {
         meta: {
           sessionId,
+          sessionWechatId: sessionInfo.wechatId || sessionId,
+          sessionWechatAlias: sessionInfo.wechatAlias || null,
           sessionName: sessionInfo.displayName,
           isGroup,
+          ownerWechatId: myInfo.wechatId || cleanedMyWxid || null,
+          ownerWechatAlias: myInfo.wechatAlias || null,
           exportTime: Date.now(),
           messageCount: allMessages.length,
           dateRange: options.dateRange ? {
