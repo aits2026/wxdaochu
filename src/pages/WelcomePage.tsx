@@ -58,6 +58,8 @@ function WelcomePage({ standalone = false }: WelcomePageProps) {
   const [decryptStatus, setDecryptStatus] = useState('')
   const [countdown, setCountdown] = useState(0)
   const [hasCache, setHasCache] = useState(false)
+  const [welcomeConfigCacheKey, setWelcomeConfigCacheKey] = useState('welcomeConfig')
+  const [isWelcomeConfigReady, setIsWelcomeConfigReady] = useState(false)
   const [profiles, setProfiles] = useState<localProfileService.LocalProfileSummary[]>([])
   const [isLoadingProfiles, setIsLoadingProfiles] = useState(false)
   const [showProfilePicker, setShowProfilePicker] = useState(false)
@@ -86,10 +88,14 @@ function WelcomePage({ standalone = false }: WelcomePageProps) {
     }
 
     // 从缓存加载配置
-    const loadCachedConfig = (): string => {
+    const loadCachedConfig = (cacheKey: string, fallbackLegacy = false): string => {
       let cachedCachePath = ''
       try {
-        const cached = localStorage.getItem('welcomeConfig')
+        const currentRaw = localStorage.getItem(cacheKey)
+        const legacyRaw = fallbackLegacy && cacheKey !== 'welcomeConfig'
+          ? localStorage.getItem('welcomeConfig')
+          : null
+        const cached = currentRaw || legacyRaw
         if (cached) {
           const config = JSON.parse(cached)
           if (config.dbPath) {
@@ -112,16 +118,21 @@ function WelcomePage({ standalone = false }: WelcomePageProps) {
           if (config.imageAesKey) {
             setImageAesKey(config.imageAesKey)
           }
+
+          // 迁移旧缓存到当前 profile 对应 key，避免跨账号串数据
+          if (!currentRaw && legacyRaw && cacheKey !== 'welcomeConfig') {
+            localStorage.setItem(cacheKey, legacyRaw)
+            localStorage.removeItem('welcomeConfig')
+          }
         }
       } catch (e) {
         console.error('加载缓存配置失败:', e)
       }
       return cachedCachePath
     }
-    const cachedCachePath = loadCachedConfig()
 
     // 优先使用本机共享缓存目录；若未配置，再自动检测最佳默认路径
-    const initCachePath = async () => {
+    const initCachePath = async (cachedCachePath: string) => {
       let sharedCachePathFetchFailed = false
       try {
         const sharedCachePath = await configService.getCachePath()
@@ -145,9 +156,32 @@ function WelcomePage({ standalone = false }: WelcomePageProps) {
         console.error('获取缓存路径失败:', e)
       }
     }
-    initCachePath()
+
+    let disposed = false
+    const initWelcomeCache = async () => {
+      let cacheKey = 'welcomeConfig'
+      try {
+        const currentProfile = await window.electronAPI.profile.getCurrent()
+        if (currentProfile?.id) {
+          cacheKey = `welcomeConfig:${currentProfile.id}`
+        }
+      } catch (e) {
+        console.error('获取当前账号失败，使用默认引导缓存 key:', e)
+      }
+
+      if (disposed) return
+
+      setWelcomeConfigCacheKey(cacheKey)
+      const cachedCachePath = loadCachedConfig(cacheKey, true)
+      await initCachePath(cachedCachePath)
+      if (!disposed) {
+        setIsWelcomeConfigReady(true)
+      }
+    }
+    void initWelcomeCache()
 
     return () => {
+      disposed = true
       removeStatus?.()
       removeImageProgress?.()
     }
@@ -177,6 +211,7 @@ function WelcomePage({ standalone = false }: WelcomePageProps) {
 
   // 保存配置到缓存
   useEffect(() => {
+    if (!isWelcomeConfigReady) return
     const config = {
       dbPath,
       cachePath,
@@ -186,11 +221,11 @@ function WelcomePage({ standalone = false }: WelcomePageProps) {
       imageAesKey
     }
     try {
-      localStorage.setItem('welcomeConfig', JSON.stringify(config))
+      localStorage.setItem(welcomeConfigCacheKey, JSON.stringify(config))
     } catch (e) {
       console.error('保存配置到缓存失败:', e)
     }
-  }, [dbPath, cachePath, wxid, decryptKey, imageXorKey, imageAesKey])
+  }, [dbPath, cachePath, wxid, decryptKey, imageXorKey, imageAesKey, welcomeConfigCacheKey, isWelcomeConfigReady])
 
   const currentStep = steps[stepIndex]
   const rootClassName = `welcome-page${isClosing ? ' is-closing' : ''}${standalone ? ' is-standalone' : ''}`
@@ -318,7 +353,7 @@ function WelcomePage({ standalone = false }: WelcomePageProps) {
     }
   }
 
-  const handleScanWxid = async (silent = false) => {
+  const handleScanWxid = async (silent = false, preferredWxid?: string) => {
     if (!dbPath) {
       if (!silent) setError('请先选择数据库目录')
       return []
@@ -330,9 +365,10 @@ function WelcomePage({ standalone = false }: WelcomePageProps) {
       const wxids = await window.electronAPI.dbPath.scanWxids(dbPath)
       setWxidOptions(wxids)
       if (wxids.length > 0) {
+        const preferred = preferredWxid && wxids.includes(preferredWxid) ? preferredWxid : ''
         // 优先选择以 wxid_ 开头的账号
         const wxidAccount = wxids.find(id => id.startsWith('wxid_'))
-        const selectedWxid = wxidAccount || wxids[0]
+        const selectedWxid = preferred || wxidAccount || wxids[0]
         setWxid(selectedWxid)
         if (!silent) setError('')
       } else {
@@ -347,6 +383,22 @@ function WelcomePage({ standalone = false }: WelcomePageProps) {
     }
   }
 
+  const detectCurrentWxid = async (): Promise<string | null> => {
+    if (!dbPath) return null
+    try {
+      let accountInfo = await window.electronAPI.wxKey.detectCurrentAccount(dbPath, 10)
+      if (!accountInfo) {
+        accountInfo = await window.electronAPI.wxKey.detectCurrentAccount(dbPath, 60)
+      }
+      if (accountInfo?.wxid) {
+        return accountInfo.wxid
+      }
+    } catch (e) {
+      console.error('检测当前账号失败:', e)
+    }
+    return null
+  }
+
   const handleAutoGetDbKey = async (wechatPath?: string) => {
     if (isFetchingDbKey) return
     setIsFetchingDbKey(true)
@@ -359,8 +411,12 @@ function WelcomePage({ standalone = false }: WelcomePageProps) {
         setDbKeyStatus('密钥获取成功，正在识别账号...')
         setError('')
         setShowWechatPathPrompt(false)
-        const wxids = await handleScanWxid(true)
-        if (wxids.length > 1) {
+        const detectedWxid = await detectCurrentWxid()
+        const wxids = await handleScanWxid(true, detectedWxid || undefined)
+        if (detectedWxid) {
+          setWxid(detectedWxid)
+          setDbKeyStatus('密钥获取成功，已自动识别当前登录账号')
+        } else if (wxids.length > 1) {
           setDbKeyStatus(`密钥获取成功，识别到 ${wxids.length} 个账号，请选择`)
         } else if (wxids.length === 1) {
           setDbKeyStatus('密钥获取成功，已自动识别账号')
@@ -426,7 +482,15 @@ function WelcomePage({ standalone = false }: WelcomePageProps) {
     setError('')
     setImageKeyStatus('正在准备获取图片密钥...')
     try {
-      const accountPath = wxid ? `${dbPath}/${wxid}` : dbPath
+      let resolvedWxid = wxid.trim()
+      if (!resolvedWxid) {
+        const detectedWxid = await detectCurrentWxid()
+        if (detectedWxid) {
+          resolvedWxid = detectedWxid
+          setWxid(detectedWxid)
+        }
+      }
+      const accountPath = resolvedWxid ? `${dbPath}/${resolvedWxid}` : dbPath
       const result = await window.electronAPI.imageKey.getImageKeys(accountPath)
       if (result.success) {
         if (typeof result.xorKey === 'number') {
@@ -487,18 +551,20 @@ function WelcomePage({ standalone = false }: WelcomePageProps) {
 
   const handleStartDecrypt = async () => {
     if (!dbPath) { setError('请先选择数据库目录'); return }
-    if (!wxid) { setError('请填写微信ID'); return }
+    const normalizedWxid = wxid.trim()
+    if (!normalizedWxid) { setError('请填写微信ID'); return }
     if (!decryptKey || decryptKey.length !== 64) { setError('请填写 64 位解密密钥'); return }
 
     setIsDecrypting(true)
     setError('')
     setDecryptStatus('正在保存配置...')
+    let resolvedWxid = normalizedWxid
 
     try {
       // 先保存配置，因为 dataManagementService 需要从配置中读取这些信息
       await configService.setDbPath(dbPath)
       await configService.setDecryptKey(decryptKey)
-      await configService.setMyWxid(wxid)
+      await configService.setMyWxid(resolvedWxid)
       await configService.setCachePath(cachePath)
       // 新账号首次完成引导时，若未设置导出目录，则默认与引导页目录保持一致
       if (cachePath) {
@@ -516,7 +582,17 @@ function WelcomePage({ standalone = false }: WelcomePageProps) {
 
       setDecryptStatus('正在测试数据库连接...')
 
-      const result = await window.electronAPI.wcdb.testConnection(dbPath, decryptKey, wxid)
+      let result = await window.electronAPI.wcdb.testConnection(dbPath, decryptKey, resolvedWxid)
+      if (!result.success && (result.error || '').includes('错误码: -3')) {
+        const detectedWxid = await detectCurrentWxid()
+        if (detectedWxid && detectedWxid !== resolvedWxid) {
+          setDecryptStatus(`检测到当前账号为 ${detectedWxid}，正在重试连接...`)
+          resolvedWxid = detectedWxid
+          setWxid(detectedWxid)
+          await configService.setMyWxid(detectedWxid)
+          result = await window.electronAPI.wcdb.testConnection(dbPath, decryptKey, resolvedWxid)
+        }
+      }
       if (!result.success) {
         setError(result.error || 'WCDB 连接失败')
         setDecryptStatus('')
@@ -542,7 +618,7 @@ function WelcomePage({ standalone = false }: WelcomePageProps) {
       })
 
       // 执行解密
-      const decryptResult = await window.electronAPI.wcdb.decryptDatabase(dbPath, decryptKey, wxid)
+      const decryptResult = await window.electronAPI.wcdb.decryptDatabase(dbPath, decryptKey, resolvedWxid)
 
       // 移除进度监听
       removeProgressListener()
@@ -569,7 +645,10 @@ function WelcomePage({ standalone = false }: WelcomePageProps) {
         // 在倒计时第一秒时清除缓存
         if (i === 3) {
           try {
-            localStorage.removeItem('welcomeConfig')
+            localStorage.removeItem(welcomeConfigCacheKey)
+            if (welcomeConfigCacheKey !== 'welcomeConfig') {
+              localStorage.removeItem('welcomeConfig')
+            }
           } catch (e) {
             console.error('清除缓存配置失败:', e)
           }

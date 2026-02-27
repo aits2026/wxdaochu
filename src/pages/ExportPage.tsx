@@ -6532,6 +6532,15 @@ function ExportPage() {
     setProfileSwitchHint('正在清除当前账号数据并准备重启应用...')
 
     try {
+      const currentProfile = localProfiles.find(profile => profile.isCurrent) || null
+      try {
+        if (currentProfile?.id) {
+          localStorage.removeItem(`welcomeConfig:${currentProfile.id}`)
+        }
+        localStorage.removeItem('welcomeConfig')
+      } catch (e) {
+        console.error('清理欢迎页缓存失败:', e)
+      }
       const result = await localProfileService.resetCurrentProfileAndRelaunch()
       if (!result.success) {
         setProfileSwitchHint(null)
@@ -6544,7 +6553,7 @@ function ExportPage() {
       setProfileActionPending(null)
       setProfileConfirmError('清除本账号数据失败，请重试')
     }
-  }, [profileConfirmDialog, profileActionPending, profileConfirmInput])
+  }, [profileConfirmDialog, profileActionPending, profileConfirmInput, localProfiles])
 
   useEffect(() => {
     if (!showProfileSwitcher) return
