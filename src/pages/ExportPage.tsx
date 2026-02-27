@@ -103,6 +103,7 @@ const IMAGE_EXPORT_SUBDIR_NAME = 'images'
 const VIDEO_EXPORT_SUBDIR_NAME = 'videos'
 const EMOJI_EXPORT_SUBDIR_NAME = 'emojis'
 const VOICE_EXPORT_SUBDIR_NAME = 'voices'
+const PROFILE_CLEAR_CONFIRM_TEXT = '清除'
 const OPEN_EXPORT_OVERVIEW_EVENT = 'vxdaochu:open-export-overview'
 
 interface SessionImageDecryptOverview {
@@ -185,6 +186,10 @@ type SessionListSortKey =
 
 type SessionDetailDiagStepKey = 'init' | 'reconnect' | 'exportRecords' | 'sessionDetail' | 'groupInfo' | 'finish'
 type SessionDetailDiagStepStatus = 'pending' | 'loading' | 'success' | 'error' | 'skipped'
+type ProfileConfirmDialogAction =
+  | { type: 'switch'; profile: LocalProfileSummary }
+  | { type: 'create' }
+  | { type: 'wipe'; displayName: string }
 
 interface SessionDetailDiagStep {
   status: SessionDetailDiagStepStatus
@@ -906,6 +911,9 @@ function ExportPage() {
   const [localProfiles, setLocalProfiles] = useState<LocalProfileSummary[]>([])
   const [isLoadingProfiles, setIsLoadingProfiles] = useState(false)
   const [profileActionPending, setProfileActionPending] = useState<{ type: 'switch' | 'create' | 'wipe'; profileId?: string } | null>(null)
+  const [profileConfirmDialog, setProfileConfirmDialog] = useState<ProfileConfirmDialogAction | null>(null)
+  const [profileConfirmInput, setProfileConfirmInput] = useState('')
+  const [profileConfirmError, setProfileConfirmError] = useState<string | null>(null)
   const [profileSwitchHint, setProfileSwitchHint] = useState<string | null>(null)
   const [snsUserPostCounts, setSnsUserPostCounts] = useState<Record<string, number>>({})
   const [snsUserPostCountsStatus, setSnsUserPostCountsStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
@@ -6384,105 +6392,120 @@ function ExportPage() {
     })
   }, [loadLocalProfiles])
 
-  const handleSwitchProfile = useCallback(async (profile: LocalProfileSummary) => {
+  const closeProfileConfirmDialog = useCallback(() => {
+    if (profileActionPending) return
+    setProfileConfirmDialog(null)
+    setProfileConfirmInput('')
+    setProfileConfirmError(null)
+  }, [profileActionPending])
+
+  const handleSwitchProfile = useCallback((profile: LocalProfileSummary) => {
     if (profile.isCurrent || profileActionPending) return
-
-    const targetName = profile.nickName || profile.wxid || '该账号'
-    const confirmed = window.confirm(
-      `将切换到「${targetName}」。\n\n为确保账号数据完全隔离，应用会先保存当前状态并短暂重载。是否继续？`
-    )
-    if (!confirmed) return
-
-    setProfileActionPending({ type: 'switch', profileId: profile.id })
-    setProfileSwitchHint('正在保存当前状态并切换账号，应用将自动重载以确保数据隔离...')
-
-    try {
-      const result = await localProfileService.switchProfile(profile.id)
-      if (!result.success) {
-        setProfileSwitchHint(null)
-        setProfileActionPending(null)
-        window.alert(result.error || '切换账号失败')
-      }
-    } catch (e) {
-      console.error('切换账号失败:', e)
-      setProfileSwitchHint(null)
-      setProfileActionPending(null)
-      window.alert('切换账号失败，请重试')
-    }
+    setShowMoreMenu(false)
+    setShowProfileSwitcher(false)
+    setShowUsageTipsPopover(false)
+    setProfileSwitchHint(null)
+    setProfileConfirmError(null)
+    setProfileConfirmInput('')
+    setProfileConfirmDialog({ type: 'switch', profile })
   }, [profileActionPending])
 
-  const handleCreateAndSwitchProfile = useCallback(async () => {
+  const handleCreateAndSwitchProfile = useCallback(() => {
     if (profileActionPending) return
-
-    const confirmed = window.confirm(
-      '将创建一个新的本机账号空间，并在重载后进入新账号。\n\n之后请在该账号下重新配置/登录微信数据源。是否继续？'
-    )
-    if (!confirmed) return
-
-    setProfileActionPending({ type: 'create' })
-    setProfileSwitchHint('正在创建新账号空间并重载应用，稍后将进入新的独立账号环境...')
-
-    try {
-      const result = await localProfileService.createAndSwitchProfile()
-      if (!result.success) {
-        setProfileSwitchHint(null)
-        setProfileActionPending(null)
-        window.alert(result.error || '创建账号失败')
-      }
-    } catch (e) {
-      console.error('创建账号失败:', e)
-      setProfileSwitchHint(null)
-      setProfileActionPending(null)
-      window.alert('创建账号失败，请重试')
-    }
+    setShowMoreMenu(false)
+    setShowProfileSwitcher(false)
+    setShowUsageTipsPopover(false)
+    setProfileSwitchHint(null)
+    setProfileConfirmError(null)
+    setProfileConfirmInput('')
+    setProfileConfirmDialog({ type: 'create' })
   }, [profileActionPending])
 
-  const handleClearCurrentProfileLocalData = useCallback(async () => {
+  const handleClearCurrentProfileLocalData = useCallback(() => {
     if (profileActionPending) return
-
     const currentProfile = localProfiles.find(profile => profile.isCurrent) || null
     const displayName = currentProfile?.nickName || currentProfile?.wxid || exportAccountInfo.nickName || exportAccountInfo.wxid || '当前账号'
-
-    const input = window.prompt(
-      [
-        `将清除「${displayName}」在本机保存的数据。`,
-        '',
-        '将尝试清除：',
-        '- 本账号登录状态 / 本机密码 / 本地配置',
-        '- 本账号导出记录',
-        '- 本账号导出的文件（按导出记录定位）',
-        '- 本账号相关缓存（按账号 wxid 定向清理）',
-        '',
-        '应用将自动重启，清除后会回到欢迎页。',
-        '',
-        '请输入“清除”以确认：'
-      ].join('\n'),
-      ''
-    )
-
-    if (input === null) return
-    if (input.trim() !== '清除') {
-      window.alert('未输入“清除”，已取消操作。')
-      return
-    }
 
     setShowMoreMenu(false)
     setShowProfileSwitcher(false)
     setShowUsageTipsPopover(false)
+    setProfileSwitchHint(null)
+    setProfileConfirmError(null)
+    setProfileConfirmInput('')
+    setProfileConfirmDialog({ type: 'wipe', displayName })
+  }, [profileActionPending, localProfiles, exportAccountInfo.nickName, exportAccountInfo.wxid])
+
+  const handleConfirmProfileAction = useCallback(async () => {
+    if (!profileConfirmDialog || profileActionPending) return
+
+    setProfileConfirmError(null)
+    setShowMoreMenu(false)
+    setShowProfileSwitcher(false)
+    setShowUsageTipsPopover(false)
+
+    if (profileConfirmDialog.type === 'switch') {
+      const targetProfile = profileConfirmDialog.profile
+      setProfileActionPending({ type: 'switch', profileId: targetProfile.id })
+      setProfileSwitchHint('正在保存当前状态并切换账号，应用将自动重载以确保数据隔离...')
+
+      try {
+        const result = await localProfileService.switchProfile(targetProfile.id)
+        if (!result.success) {
+          setProfileSwitchHint(null)
+          setProfileActionPending(null)
+          setProfileConfirmError(result.error || '切换账号失败')
+        }
+      } catch (e) {
+        console.error('切换账号失败:', e)
+        setProfileSwitchHint(null)
+        setProfileActionPending(null)
+        setProfileConfirmError('切换账号失败，请重试')
+      }
+      return
+    }
+
+    if (profileConfirmDialog.type === 'create') {
+      setProfileActionPending({ type: 'create' })
+      setProfileSwitchHint('正在创建新账号空间并重载应用，稍后将进入新的独立账号环境...')
+
+      try {
+        const result = await localProfileService.createAndSwitchProfile()
+        if (!result.success) {
+          setProfileSwitchHint(null)
+          setProfileActionPending(null)
+          setProfileConfirmError(result.error || '创建账号失败')
+        }
+      } catch (e) {
+        console.error('创建账号失败:', e)
+        setProfileSwitchHint(null)
+        setProfileActionPending(null)
+        setProfileConfirmError('创建账号失败，请重试')
+      }
+      return
+    }
+
+    if (profileConfirmInput.trim() !== PROFILE_CLEAR_CONFIRM_TEXT) {
+      setProfileConfirmError(`请输入“${PROFILE_CLEAR_CONFIRM_TEXT}”以确认清除`)
+      return
+    }
+
     setProfileActionPending({ type: 'wipe' })
+    setProfileSwitchHint('正在清除当前账号数据并准备重启应用...')
 
     try {
       const result = await localProfileService.resetCurrentProfileAndRelaunch()
       if (!result.success) {
+        setProfileSwitchHint(null)
         setProfileActionPending(null)
-        window.alert(result.error || '清除本账号数据失败')
+        setProfileConfirmError(result.error || '清除本账号数据失败')
       }
     } catch (e) {
       console.error('清除本账号数据失败:', e)
+      setProfileSwitchHint(null)
       setProfileActionPending(null)
-      window.alert('清除本账号数据失败，请重试')
+      setProfileConfirmError('清除本账号数据失败，请重试')
     }
-  }, [profileActionPending, localProfiles, exportAccountInfo.nickName, exportAccountInfo.wxid])
+  }, [profileConfirmDialog, profileActionPending, profileConfirmInput])
 
   useEffect(() => {
     if (!showProfileSwitcher) return
@@ -6522,6 +6545,27 @@ function ExportPage() {
       default: return '其他'
     }
   }
+
+  const profileConfirmType = profileConfirmDialog?.type || null
+  const isProfileConfirmBusy = !!profileActionPending
+  const profileConfirmTitle = profileConfirmType === 'switch'
+    ? '切换到其他账号'
+    : profileConfirmType === 'create'
+      ? '添加本机账号'
+      : '清除本账号数据'
+  const profileConfirmPrimaryLabel = profileConfirmType === 'switch'
+    ? '确认切换并重载'
+    : profileConfirmType === 'create'
+      ? '确认创建并重载'
+      : '清除并重启'
+  const profileConfirmPrimaryBusyLabel = profileConfirmType === 'switch'
+    ? '正在切换账号...'
+    : profileConfirmType === 'create'
+      ? '正在创建账号...'
+      : '正在清除数据...'
+  const profileConfirmCanSubmit = profileConfirmType === 'wipe'
+    ? !isProfileConfirmBusy && profileConfirmInput.trim() === PROFILE_CLEAR_CONFIRM_TEXT
+    : !isProfileConfirmBusy
 
   return (
     <div className="export-page">
@@ -10393,6 +10437,106 @@ function ExportPage() {
                 disabled={voiceStatusModalAction.disabled}
               >
                 {voiceStatusModalAction.label}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {profileConfirmDialog && (
+        <div
+          className="export-overlay"
+          onClick={() => {
+            closeProfileConfirmDialog()
+          }}
+        >
+          <div
+            className={`profile-confirm-modal ${profileConfirmType === 'wipe' ? 'danger' : ''}`}
+            role="dialog"
+            aria-modal="true"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="profile-confirm-modal-header">
+              <h3>{profileConfirmTitle}</h3>
+              {profileConfirmType === 'switch' && (
+                <p>
+                  将切换到「{profileConfirmDialog.type === 'switch'
+                    ? (profileConfirmDialog.profile.nickName || profileConfirmDialog.profile.wxid || '该账号')
+                    : '该账号'}
+                  」，应用会短暂重载以确保账号数据完全隔离。
+                </p>
+              )}
+              {profileConfirmType === 'create' && (
+                <p>将创建新的本机账号空间，重载后进入新账号；之后请重新配置/登录微信数据源。</p>
+              )}
+              {profileConfirmType === 'wipe' && (
+                <p>
+                  将清除「{profileConfirmDialog.type === 'wipe' ? profileConfirmDialog.displayName : '当前账号'}」
+                  在本机保存的数据，应用将自动重启并回到欢迎页。
+                </p>
+              )}
+            </div>
+
+            <div className="profile-confirm-modal-body">
+              {profileConfirmType === 'wipe' ? (
+                <>
+                  <ul className="profile-confirm-modal-list">
+                    <li>本账号登录状态 / 本机密码 / 本地配置</li>
+                    <li>本账号导出记录</li>
+                    <li>本账号导出的文件（按导出记录定位）</li>
+                    <li>本账号相关缓存（按账号 wxid 定向清理）</li>
+                  </ul>
+                  <label className="profile-confirm-modal-input-wrap">
+                    <span>请输入“{PROFILE_CLEAR_CONFIRM_TEXT}”以确认：</span>
+                    <input
+                      type="text"
+                      value={profileConfirmInput}
+                      onChange={(e) => {
+                        setProfileConfirmInput(e.target.value)
+                        if (profileConfirmError) {
+                          setProfileConfirmError(null)
+                        }
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key !== 'Enter') return
+                        e.preventDefault()
+                        if (!profileConfirmCanSubmit) return
+                        void handleConfirmProfileAction()
+                      }}
+                      disabled={isProfileConfirmBusy}
+                      placeholder={PROFILE_CLEAR_CONFIRM_TEXT}
+                      autoFocus
+                    />
+                  </label>
+                </>
+              ) : (
+                <div className="profile-confirm-modal-tip">
+                  重载过程会持续数秒。若目标账号设置了本机密码，重载后需先解锁才能进入。
+                </div>
+              )}
+
+              {profileConfirmError && (
+                <div className="profile-confirm-modal-error">{profileConfirmError}</div>
+              )}
+            </div>
+
+            <div className="profile-confirm-modal-actions">
+              <button
+                type="button"
+                className="profile-confirm-modal-btn"
+                onClick={closeProfileConfirmDialog}
+                disabled={isProfileConfirmBusy}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                className={`profile-confirm-modal-btn primary ${profileConfirmType === 'wipe' ? 'danger' : ''}`}
+                onClick={() => { void handleConfirmProfileAction() }}
+                disabled={!profileConfirmCanSubmit}
+              >
+                {isProfileConfirmBusy ? <Loader2 size={13} className="spin" /> : null}
+                <span>{isProfileConfirmBusy ? profileConfirmPrimaryBusyLabel : profileConfirmPrimaryLabel}</span>
               </button>
             </div>
           </div>
