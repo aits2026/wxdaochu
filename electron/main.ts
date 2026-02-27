@@ -135,6 +135,65 @@ function getAppIconPath(): string {
   }
 }
 
+function loadRendererPageWithRetry(
+  win: BrowserWindow,
+  options: {
+    devUrl: string
+    prodFile?: string
+    prodLoadFileOptions?: Electron.LoadFileOptions
+    maxRetries?: number
+    retryDelayMs?: number
+    tag?: string
+  }
+) {
+  const maxRetries = Math.max(1, options.maxRetries ?? 2)
+  const retryDelayMs = Math.max(120, options.retryDelayMs ?? 400)
+  let retries = 0
+
+  const loadOnce = () => {
+    if (win.isDestroyed()) return
+    if (process.env.VITE_DEV_SERVER_URL) {
+      win.loadURL(options.devUrl).catch((e) => {
+        console.error(`[Window:${options.tag || 'main'}] loadURL 失败:`, e)
+      })
+      return
+    }
+    if (!options.prodFile) return
+    win.loadFile(options.prodFile, options.prodLoadFileOptions).catch((e) => {
+      console.error(`[Window:${options.tag || 'main'}] loadFile 失败:`, e)
+    })
+  }
+
+  win.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    if (!isMainFrame) return
+    // -3: ERR_ABORTED，通常是正常跳转中断，不作为失败重试
+    if (errorCode === -3) return
+    if (retries >= maxRetries) {
+      console.error(`[Window:${options.tag || 'main'}] 页面加载失败（已达重试上限）`, { errorCode, errorDescription, validatedURL })
+      return
+    }
+    retries += 1
+    const delay = retryDelayMs * retries
+    console.warn(`[Window:${options.tag || 'main'}] 页面加载失败，${delay}ms 后重试第 ${retries} 次`, {
+      errorCode,
+      errorDescription,
+      validatedURL
+    })
+    setTimeout(() => {
+      loadOnce()
+    }, delay)
+  })
+
+  loadOnce()
+}
+
+function relaunchAppGracefully() {
+  setTimeout(() => {
+    app.relaunch()
+    app.quit()
+  }, 80)
+}
+
 function createWindow() {
   const iconPath = getAppIconPath()
 
@@ -181,10 +240,16 @@ function createWindow() {
   })
 
   // 开发环境加载 vite 服务器
-  if (process.env.VITE_DEV_SERVER_URL) {
-    win.loadURL(process.env.VITE_DEV_SERVER_URL)
+  loadRendererPageWithRetry(win, {
+    devUrl: process.env.VITE_DEV_SERVER_URL || '',
+    prodFile: join(__dirname, '../dist/index.html'),
+    maxRetries: 3,
+    retryDelayMs: 420,
+    tag: 'main'
+  })
 
-    // 开发环境下按 F12 或 Ctrl+Shift+I 打开开发者工具
+  // 开发环境下按 F12 或 Ctrl+Shift+I 打开开发者工具
+  if (process.env.VITE_DEV_SERVER_URL) {
     win.webContents.on('before-input-event', (event, input) => {
       if (input.key === 'F12' || (input.control && input.shift && input.key === 'I')) {
         if (win.webContents.isDevToolsOpened()) {
@@ -195,8 +260,6 @@ function createWindow() {
         event.preventDefault()
       }
     })
-  } else {
-    win.loadFile(join(__dirname, '../dist/index.html'))
   }
 
   return win
@@ -702,11 +765,14 @@ function createWelcomeWindow() {
     welcomeWindow?.show()
   })
 
-  if (process.env.VITE_DEV_SERVER_URL) {
-    welcomeWindow.loadURL(`${process.env.VITE_DEV_SERVER_URL}#/welcome-window`)
-  } else {
-    welcomeWindow.loadFile(join(__dirname, '../dist/index.html'), { hash: '/welcome-window' })
-  }
+  loadRendererPageWithRetry(welcomeWindow, {
+    devUrl: `${process.env.VITE_DEV_SERVER_URL || ''}#/welcome-window`,
+    prodFile: join(__dirname, '../dist/index.html'),
+    prodLoadFileOptions: { hash: '/welcome-window' },
+    maxRetries: 3,
+    retryDelayMs: 420,
+    tag: 'welcome'
+  })
 
   welcomeWindow.on('closed', () => {
     welcomeWindow = null
@@ -1105,10 +1171,7 @@ function registerIpcHandlers() {
       return { success: false, error: switched.error || '创建后切换失败' }
     }
 
-    setTimeout(() => {
-      app.relaunch()
-      app.exit(0)
-    }, 60)
+    relaunchAppGracefully()
 
     return { success: true, profile }
   })
@@ -1117,10 +1180,7 @@ function registerIpcHandlers() {
     const result = profileService.switchProfile(profileId)
     if (!result.success) return result
 
-    setTimeout(() => {
-      app.relaunch()
-      app.exit(0)
-    }, 60)
+    relaunchAppGracefully()
 
     return { success: true }
   })
@@ -1129,10 +1189,7 @@ function registerIpcHandlers() {
     const result = profileService.queueResetCurrentProfile()
     if (!result.success) return result
 
-    setTimeout(() => {
-      app.relaunch()
-      app.exit(0)
-    }, 60)
+    relaunchAppGracefully()
 
     return { success: true, profileId: result.profileId }
   })
@@ -1141,10 +1198,7 @@ function registerIpcHandlers() {
     const result = profileService.discardCurrentProfileAndSwitch(targetProfileId)
     if (!result.success) return result
 
-    setTimeout(() => {
-      app.relaunch()
-      app.exit(0)
-    }, 60)
+    relaunchAppGracefully()
 
     return {
       success: true,
