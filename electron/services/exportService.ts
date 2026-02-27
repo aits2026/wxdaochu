@@ -178,6 +178,8 @@ interface ArkmeMediaRef {
   exported: boolean
   relativePath?: string | null
   fileName?: string | null
+  sourceMd5?: string | null
+  fileMd5?: string | null
   source?: Record<string, unknown>
 }
 
@@ -1201,7 +1203,7 @@ class ExportService {
 
     const cdnUrl = (cdnUrlMatch?.[1] || thumbUrlMatch?.[1] || '').replace(/&amp;/g, '&')
     const encryptUrl = (encryptUrlMatch?.[1] || '').replace(/&amp;/g, '&')
-    const emojiMd5 = md5Match?.[1] || ''
+    const emojiMd5 = this.normalizeMd5(md5Match?.[1]) || ''
     const aesKey = aesKeyMatch?.[1] || ''
 
     return {
@@ -1212,11 +1214,44 @@ class ExportService {
     }
   }
 
+  private normalizeMd5(value: unknown): string | null {
+    if (typeof value !== 'string') return null
+    const normalized = value.trim().toLowerCase()
+    if (!normalized) return null
+    if (!/^[a-f0-9]{16,64}$/.test(normalized)) return null
+    return normalized
+  }
+
+  private extractArkmeSourceMd5(source?: Record<string, unknown>): string | null {
+    if (!source) return null
+    return this.normalizeMd5(source.imageMd5) ||
+      this.normalizeMd5(source.videoMd5) ||
+      this.normalizeMd5(source.emojiMd5) ||
+      null
+  }
+
+  private async computeFileMd5(filePath: string): Promise<string | null> {
+    if (!filePath || !fs.existsSync(filePath)) return null
+    const crypto = require('crypto')
+    const hash = crypto.createHash('md5')
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const stream = fs.createReadStream(filePath)
+        stream.on('data', (chunk: Buffer) => hash.update(chunk))
+        stream.on('error', reject)
+        stream.on('end', () => resolve())
+      })
+      return hash.digest('hex')
+    } catch {
+      return null
+    }
+  }
+
   private buildArkmeMediaSource(localType: number, content: string, row: Record<string, any>, createTime: number): Record<string, unknown> | undefined {
     if (localType === 3) {
-      const imageMd5 = this.extractXmlValue(content, 'md5') ||
+      const imageMd5 = this.normalizeMd5(this.extractXmlValue(content, 'md5') ||
         (/\<img[^>]*\smd5\s*=\s*['"]([^'"]+)['"]/i.exec(content))?.[1] ||
-        undefined
+        undefined) || undefined
       const imageDatName = this.parseImageDatName(row)
       if (!imageMd5 && !imageDatName) return undefined
       return {
@@ -1226,7 +1261,7 @@ class ExportService {
     }
 
     if (localType === 43) {
-      const videoMd5 = videoService.parseVideoMd5(content)
+      const videoMd5 = this.normalizeMd5(videoService.parseVideoMd5(content)) || undefined
       if (!videoMd5) return undefined
       return { videoMd5 }
     }
@@ -1272,6 +1307,12 @@ class ExportService {
 
     const indexed = params.arkmeMediaIndexMap?.get(mediaKey)
     const relativePath = indexed?.relativePath || null
+    const mergedSource = {
+      ...((indexed?.source as Record<string, unknown> | undefined) || {}),
+      ...((params.source as Record<string, unknown> | undefined) || {})
+    }
+    const source = Object.keys(mergedSource).length > 0 ? mergedSource : undefined
+    const sourceMd5 = indexed?.sourceMd5 || this.extractArkmeSourceMd5(source) || null
 
     return {
       kind,
@@ -1279,7 +1320,9 @@ class ExportService {
       exported: Boolean(indexed?.exported && relativePath),
       relativePath,
       fileName: relativePath ? path.basename(relativePath) : null,
-      ...(params.source ? { source: params.source } : {})
+      sourceMd5,
+      fileMd5: indexed?.fileMd5 || null,
+      ...(source ? { source } : {})
     }
   }
 
@@ -1299,6 +1342,66 @@ class ExportService {
       items: Array.from(arkmeMediaIndexMap.values())
     }
     fs.writeFileSync(indexPath, JSON.stringify(payload, null, 2), 'utf-8')
+  }
+
+  private writeArkmeMediaMapFile(
+    sessionOutputDir: string,
+    sessionId: string,
+    arkmeMediaIndexMap: Map<string, ArkmeMediaIndexEntry>
+  ): void {
+    if (!sessionOutputDir || arkmeMediaIndexMap.size === 0) return
+    const mapPath = path.join(sessionOutputDir, 'arkme-media-map.json')
+    const sortedItems = Array.from(arkmeMediaIndexMap.values())
+      .sort((a, b) => a.createTime - b.createTime || a.mediaKey.localeCompare(b.mediaKey))
+      .map(item => ({
+        mediaKey: item.mediaKey,
+        kind: item.kind,
+        exported: item.exported,
+        relativePath: item.relativePath || null,
+        fileName: item.fileName || null,
+        sourceMd5: item.sourceMd5 || null,
+        fileMd5: item.fileMd5 || null,
+        createTime: item.createTime,
+        sessionId: item.sessionId,
+        platformMessageId: item.platformMessageId || null,
+        localMessageId: item.localMessageId || null,
+        ...(item.source ? { source: item.source } : {})
+      }))
+
+    const bySourceMd5: Record<string, any[]> = {}
+    const byFileMd5: Record<string, any[]> = {}
+    for (const item of sortedItems) {
+      const brief = {
+        mediaKey: item.mediaKey,
+        kind: item.kind,
+        exported: item.exported,
+        relativePath: item.relativePath,
+        fileName: item.fileName,
+        createTime: item.createTime
+      }
+      if (item.sourceMd5) {
+        if (!bySourceMd5[item.sourceMd5]) bySourceMd5[item.sourceMd5] = []
+        bySourceMd5[item.sourceMd5].push(brief)
+      }
+      if (item.fileMd5) {
+        if (!byFileMd5[item.fileMd5]) byFileMd5[item.fileMd5] = []
+        byFileMd5[item.fileMd5].push(brief)
+      }
+    }
+
+    const payload = {
+      version: '1.0.0',
+      schema: 'arkme.chat.media.map.v1',
+      sessionId,
+      generatedAt: Math.floor(Date.now() / 1000),
+      count: sortedItems.length,
+      sourceMd5Count: Object.keys(bySourceMd5).length,
+      fileMd5Count: Object.keys(byFileMd5).length,
+      items: sortedItems,
+      bySourceMd5,
+      byFileMd5
+    }
+    fs.writeFileSync(mapPath, JSON.stringify(payload, null, 2), 'utf-8')
   }
 
   /**
@@ -2818,6 +2921,7 @@ class ExportService {
           ownerWechatAlias: myInfo.wechatAlias || null,
           ownerDisplayName: myInfo.displayName,
           mediaIndexFile: 'arkme-media-index.json',
+          mediaMapFile: 'arkme-media-map.json',
           ...(isGroup && { groupId: sessionId }),
           ...(options.exportAvatars && sessionInfo.avatarUrl && { avatar: sessionInfo.avatarUrl }),
           firstTimestamp: firstMessageTime,
@@ -3785,6 +3889,7 @@ class ExportService {
             arkmeMediaIndexMap = mediaExportResult.arkmeMediaIndexMap
             if (arkmeMediaIndexMap.size > 0) {
               this.writeArkmeMediaIndexFile(sessionOutputDir, sessionId, arkmeMediaIndexMap)
+              this.writeArkmeMediaMapFile(sessionOutputDir, sessionId, arkmeMediaIndexMap)
             }
           } catch (e) {
             console.error(`导出 ${sessionId} 媒体文件失败:`, e)
@@ -3993,11 +4098,18 @@ class ExportService {
     const shouldDedupeVideoFiles = options.dedupeVideoFiles !== false
     const exportedVideoPathByMd5 = new Map<string, string>()
     const exportedVoicePathByCreateTime = new Map<number, string>()
+    const exportedFileMd5ByRelativePath = new Map<string, string | null>()
     const emojiSourceResolutionCache = new Map<string, { sourceFile: string | null; failReason?: keyof typeof emojiFailReasons }>()
     const upsertArkmeMediaIndexEntry = (entry: ArkmeMediaIndexEntry) => {
       const prev = arkmeMediaIndexMap.get(entry.mediaKey)
+      const normalizedSourceMd5 = entry.sourceMd5 || this.extractArkmeSourceMd5(entry.source) || null
+      const normalizedFileMd5 = this.normalizeMd5(entry.fileMd5) || null
       if (!prev) {
-        arkmeMediaIndexMap.set(entry.mediaKey, entry)
+        arkmeMediaIndexMap.set(entry.mediaKey, {
+          ...entry,
+          sourceMd5: normalizedSourceMd5,
+          fileMd5: normalizedFileMd5
+        })
         return
       }
 
@@ -4005,14 +4117,31 @@ class ExportService {
         ...((prev.source as Record<string, unknown> | undefined) || {}),
         ...((entry.source as Record<string, unknown> | undefined) || {})
       }
+      const mergedSourceMd5 = prev.sourceMd5 ||
+        normalizedSourceMd5 ||
+        this.extractArkmeSourceMd5(mergedSource) ||
+        null
+      const mergedFileMd5 = prev.fileMd5 || normalizedFileMd5 || null
       arkmeMediaIndexMap.set(entry.mediaKey, {
         ...prev,
         ...entry,
         exported: Boolean(prev.exported || entry.exported),
         relativePath: prev.relativePath || entry.relativePath || null,
         fileName: prev.fileName || entry.fileName || null,
+        sourceMd5: mergedSourceMd5,
+        fileMd5: mergedFileMd5,
         source: Object.keys(mergedSource).length > 0 ? mergedSource : undefined
       })
+    }
+    const resolveExportedFileMd5 = async (absolutePath: string, relativePath: string): Promise<string | null> => {
+      if (!absolutePath || !relativePath) return null
+      if (exportedFileMd5ByRelativePath.has(relativePath)) {
+        return exportedFileMd5ByRelativePath.get(relativePath) || null
+      }
+      const md5 = await this.computeFileMd5(absolutePath)
+      const normalizedMd5 = this.normalizeMd5(md5) || null
+      exportedFileMd5ByRelativePath.set(relativePath, normalizedMd5)
+      return normalizedMd5
     }
     const shouldReportStep = (processed: number, total: number) => (
       processed <= 3 || processed === total || processed % 10 === 0
@@ -4129,11 +4258,12 @@ class ExportService {
       try {
         let imageHandled = false
         const { createTime, platformMessageId, localMessageId, imageMd5, imageDatName, mediaMapKey, mediaKey } = job
+        const normalizedImageMd5 = this.normalizeMd5(imageMd5) || undefined
 
-        if (imageMd5 || imageDatName) {
+        if (normalizedImageMd5 || imageDatName) {
           const cacheResult = await imageDecryptService.decryptImage({
             sessionId,
-            imageMd5,
+            imageMd5: normalizedImageMd5,
             imageDatName
           })
 
@@ -4156,6 +4286,7 @@ class ExportService {
                   imageCount++
                 }
                 const relativePath = options.imageOnlyMode ? fileName : `images/${fileName}`
+                const fileMd5 = await resolveExportedFileMd5(destPath, relativePath)
                 this.setMediaPathMapEntry(mediaPathMap, relativePath, mediaMapKey, createTime)
                 upsertArkmeMediaIndexEntry({
                   mediaKey,
@@ -4163,12 +4294,14 @@ class ExportService {
                   exported: true,
                   relativePath,
                   fileName,
+                  sourceMd5: normalizedImageMd5 || null,
+                  fileMd5,
                   createTime,
                   sessionId,
                   ...(platformMessageId ? { platformMessageId } : {}),
                   ...(localMessageId ? { localMessageId } : {}),
                   source: {
-                    ...(imageMd5 ? { imageMd5 } : {}),
+                    ...(normalizedImageMd5 ? { imageMd5: normalizedImageMd5 } : {}),
                     ...(imageDatName ? { imageDatName } : {})
                   }
                 })
@@ -4183,7 +4316,7 @@ class ExportService {
             bumpReason(imageFailReasons, 'decrypt_failed')
           }
         }
-        if (!imageMd5 && !imageDatName) {
+        if (!normalizedImageMd5 && !imageDatName) {
           bumpReason(imageFailReasons, 'no_identifier')
         }
         if (!imageHandled) {
@@ -4193,12 +4326,14 @@ class ExportService {
             exported: false,
             relativePath: null,
             fileName: null,
+            sourceMd5: normalizedImageMd5 || null,
+            fileMd5: null,
             createTime,
             sessionId,
             ...(platformMessageId ? { platformMessageId } : {}),
             ...(localMessageId ? { localMessageId } : {}),
             source: {
-              ...(imageMd5 ? { imageMd5 } : {}),
+              ...(normalizedImageMd5 ? { imageMd5: normalizedImageMd5 } : {}),
               ...(imageDatName ? { imageDatName } : {})
             }
           })
@@ -4306,9 +4441,9 @@ class ExportService {
 
             // 导出图片
             if (options.exportImages && localType === 3) {
-              const imageMd5 = this.extractXmlValue(content, 'md5') ||
+              const imageMd5 = this.normalizeMd5(this.extractXmlValue(content, 'md5') ||
                 (/\<img[^>]*\smd5\s*=\s*['"]([^'"]+)['"]/i.exec(content))?.[1] ||
-                undefined
+                undefined) || undefined
               const imageDatName = this.parseImageDatName(row)
               upsertArkmeMediaIndexEntry({
                 mediaKey,
@@ -4316,6 +4451,8 @@ class ExportService {
                 exported: false,
                 relativePath: null,
                 fileName: null,
+                sourceMd5: imageMd5 || null,
+                fileMd5: null,
                 createTime,
                 sessionId,
                 ...(platformMessageId ? { platformMessageId } : {}),
@@ -4345,13 +4482,15 @@ class ExportService {
               }
               try {
                 let videoHandled = false
-                const videoMd5 = videoService.parseVideoMd5(content)
+                const videoMd5 = this.normalizeMd5(videoService.parseVideoMd5(content)) || undefined
                 upsertArkmeMediaIndexEntry({
                   mediaKey,
                   kind: 'video',
                   exported: false,
                   relativePath: null,
                   fileName: null,
+                  sourceMd5: videoMd5 || null,
+                  fileMd5: null,
                   createTime,
                   sessionId,
                   ...(platformMessageId ? { platformMessageId } : {}),
@@ -4362,6 +4501,7 @@ class ExportService {
                   if (shouldDedupeVideoFiles) {
                     const cachedExportPath = exportedVideoPathByMd5.get(videoMd5)
                     if (cachedExportPath) {
+                      const fileMd5 = await resolveExportedFileMd5(path.join(outputDir, cachedExportPath), cachedExportPath)
                       this.setMediaPathMapEntry(mediaPathMap, cachedExportPath, mediaMapKey, createTime)
                       upsertArkmeMediaIndexEntry({
                         mediaKey,
@@ -4369,6 +4509,8 @@ class ExportService {
                         exported: true,
                         relativePath: cachedExportPath,
                         fileName: path.basename(cachedExportPath),
+                        sourceMd5: videoMd5,
+                        fileMd5,
                         createTime,
                         sessionId,
                         ...(platformMessageId ? { platformMessageId } : {}),
@@ -4402,6 +4544,7 @@ class ExportService {
                       } else if (existedBeforeCopy) {
                         // 非去重模式下，文件名冲突时仍保持消息引用不丢失
                       }
+                      const fileMd5 = await resolveExportedFileMd5(destPath, relativePath)
                       this.setMediaPathMapEntry(mediaPathMap, relativePath, mediaMapKey, createTime)
                       upsertArkmeMediaIndexEntry({
                         mediaKey,
@@ -4409,6 +4552,8 @@ class ExportService {
                         exported: true,
                         relativePath,
                         fileName,
+                        sourceMd5: videoMd5,
+                        fileMd5,
                         createTime,
                         sessionId,
                         ...(platformMessageId ? { platformMessageId } : {}),
@@ -4449,7 +4594,7 @@ class ExportService {
                 let emojiHandled = false
                 const emojiSource = this.parseArkmeEmojiSource(content)
                 const cdnUrl = String(emojiSource.cdnUrl || '')
-                const emojiMd5 = String(emojiSource.emojiMd5 || '')
+                const emojiMd5 = this.normalizeMd5(emojiSource.emojiMd5) || ''
                 const encryptUrl = String(emojiSource.encryptUrl || '')
                 const aesKey = String(emojiSource.aesKey || '')
                 upsertArkmeMediaIndexEntry({
@@ -4458,11 +4603,15 @@ class ExportService {
                   exported: false,
                   relativePath: null,
                   fileName: null,
+                  sourceMd5: emojiMd5 || null,
+                  fileMd5: null,
                   createTime,
                   sessionId,
                   ...(platformMessageId ? { platformMessageId } : {}),
                   ...(localMessageId ? { localMessageId } : {}),
-                  source: Object.keys(emojiSource).length > 0 ? emojiSource : undefined
+                  source: Object.keys(emojiSource).length > 0
+                    ? { ...emojiSource, ...(emojiMd5 ? { emojiMd5 } : {}) }
+                    : undefined
                 })
 
                 if (emojiMd5 || cdnUrl) {
@@ -4482,6 +4631,7 @@ class ExportService {
                         fs.copyFileSync(sourceFile, destPath)
                         emojiCount++
                         const relativePath = options.emojiOnlyMode ? fileName : `emojis/${fileName}`
+                        const fileMd5 = await resolveExportedFileMd5(destPath, relativePath)
                         this.setMediaPathMapEntry(mediaPathMap, relativePath, mediaMapKey, createTime)
                         upsertArkmeMediaIndexEntry({
                           mediaKey,
@@ -4489,11 +4639,15 @@ class ExportService {
                           exported: true,
                           relativePath,
                           fileName,
+                          sourceMd5: emojiMd5 || null,
+                          fileMd5,
                           createTime,
                           sessionId,
                           ...(platformMessageId ? { platformMessageId } : {}),
                           ...(localMessageId ? { localMessageId } : {}),
-                          source: Object.keys(emojiSource).length > 0 ? emojiSource : undefined
+                          source: Object.keys(emojiSource).length > 0
+                            ? { ...emojiSource, ...(emojiMd5 ? { emojiMd5 } : {}) }
+                            : undefined
                         })
                         emojiHandled = true
                       } catch {
@@ -4506,6 +4660,7 @@ class ExportService {
                     }
                   } else {
                     const relativePath = options.emojiOnlyMode ? fileName : `emojis/${fileName}`
+                    const fileMd5 = await resolveExportedFileMd5(destPath, relativePath)
                     this.setMediaPathMapEntry(mediaPathMap, relativePath, mediaMapKey, createTime)
                     upsertArkmeMediaIndexEntry({
                       mediaKey,
@@ -4513,11 +4668,15 @@ class ExportService {
                       exported: true,
                       relativePath,
                       fileName,
+                      sourceMd5: emojiMd5 || null,
+                      fileMd5,
                       createTime,
                       sessionId,
                       ...(platformMessageId ? { platformMessageId } : {}),
                       ...(localMessageId ? { localMessageId } : {}),
-                      source: Object.keys(emojiSource).length > 0 ? emojiSource : undefined
+                      source: Object.keys(emojiSource).length > 0
+                        ? { ...emojiSource, ...(emojiMd5 ? { emojiMd5 } : {}) }
+                        : undefined
                     })
                     emojiHandled = true
                   }
@@ -4613,6 +4772,8 @@ class ExportService {
               exported: false,
               relativePath: null,
               fileName: null,
+              sourceMd5: null,
+              fileMd5: null,
               createTime,
               sessionId,
               ...(platformMessageId ? { platformMessageId } : {}),
@@ -4688,7 +4849,8 @@ class ExportService {
               const destPath = path.join(voiceOutDir, fileName)
               const relativePath = options.voiceOnlyMode ? fileName : `voices/${fileName}`
 
-              const bindVoiceExported = (bindPath: string) => {
+              const bindVoiceExported = async (bindPath: string) => {
+                const fileMd5 = await resolveExportedFileMd5(path.join(outputDir, bindPath), bindPath)
                 this.setMediaPathMapEntry(mediaPathMap, bindPath, voiceMessage.mediaMapKey, createTime)
                 upsertArkmeMediaIndexEntry({
                   mediaKey: voiceMessage.mediaKey,
@@ -4696,6 +4858,8 @@ class ExportService {
                   exported: true,
                   relativePath: bindPath,
                   fileName: path.basename(bindPath),
+                  sourceMd5: null,
+                  fileMd5,
                   createTime,
                   sessionId,
                   ...(voiceMessage.platformMessageId ? { platformMessageId: voiceMessage.platformMessageId } : {}),
@@ -4706,7 +4870,7 @@ class ExportService {
 
               const cachedVoicePath = exportedVoicePathByCreateTime.get(createTime)
               if (cachedVoicePath) {
-                bindVoiceExported(cachedVoicePath)
+                await bindVoiceExported(cachedVoicePath)
                 if (shouldReportVoiceStep(idx + 1)) {
                   emitMediaProgress(`语音处理: ${idx + 1}/${total}（已导出 ${voiceCount}）`, idx + 1, total, '条')
                 }
@@ -4716,7 +4880,7 @@ class ExportService {
               // 已存在则跳过
               if (fs.existsSync(destPath)) {
                 exportedVoicePathByCreateTime.set(createTime, relativePath)
-                bindVoiceExported(relativePath)
+                await bindVoiceExported(relativePath)
                 if (shouldReportVoiceStep(idx + 1)) {
                   emitMediaProgress(`语音处理: ${idx + 1}/${total}（已导出 ${voiceCount}）`, idx + 1, total, '条')
                 }
@@ -4793,7 +4957,7 @@ class ExportService {
                 }
                 voiceCount++
                 exportedVoicePathByCreateTime.set(createTime, relativePath)
-                bindVoiceExported(relativePath)
+                await bindVoiceExported(relativePath)
               } catch (e) {
                 voiceFailCount++
                 const errMsg = e instanceof Error ? e.message : String(e)
