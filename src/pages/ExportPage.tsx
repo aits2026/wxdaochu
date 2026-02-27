@@ -915,6 +915,10 @@ function ExportPage() {
   const [profileConfirmInput, setProfileConfirmInput] = useState('')
   const [profileConfirmError, setProfileConfirmError] = useState<string | null>(null)
   const [profileSwitchHint, setProfileSwitchHint] = useState<string | null>(null)
+  const [sharedDbPath, setSharedDbPath] = useState('')
+  const [sharedCachePath, setSharedCachePath] = useState('')
+  const [isLoadingSharedPaths, setIsLoadingSharedPaths] = useState(false)
+  const [profilePathActionError, setProfilePathActionError] = useState<string | null>(null)
   const [snsUserPostCounts, setSnsUserPostCounts] = useState<Record<string, number>>({})
   const [snsUserPostCountsStatus, setSnsUserPostCountsStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
   const [copiedIdentityChip, setCopiedIdentityChip] = useState<'wxid' | 'alias' | null>(null)
@@ -6378,6 +6382,38 @@ function ExportPage() {
     }
   }, [])
 
+  const loadSharedPaths = useCallback(async () => {
+    setIsLoadingSharedPaths(true)
+    try {
+      const [dbPath, cachePath] = await Promise.all([
+        configService.getDbPath(),
+        configService.getCachePath()
+      ])
+      setSharedDbPath(typeof dbPath === 'string' ? dbPath.trim() : '')
+      setSharedCachePath(typeof cachePath === 'string' ? cachePath.trim() : '')
+    } catch (e) {
+      console.error('加载本机共享目录失败:', e)
+    } finally {
+      setIsLoadingSharedPaths(false)
+    }
+  }, [])
+
+  const handleOpenSharedPath = useCallback(async (targetPath: string, label: '数据根目录' | '数据缓存目录') => {
+    const normalizedPath = targetPath.trim()
+    if (!normalizedPath) return
+
+    setProfilePathActionError(null)
+    try {
+      const result = await window.electronAPI.shell.openPath(normalizedPath)
+      if (result) {
+        setProfilePathActionError(`打开${label}失败：${result}`)
+      }
+    } catch (e) {
+      console.error(`打开${label}失败:`, e)
+      setProfilePathActionError(`打开${label}失败，请检查目录是否存在`)
+    }
+  }, [])
+
   const openProfileSwitcher = useCallback(() => {
     setShowProfileSwitcher(v => {
       const next = !v
@@ -6385,12 +6421,15 @@ function ExportPage() {
         setShowMoreMenu(false)
         setShowUsageTipsPopover(false)
         void loadLocalProfiles()
+        void loadSharedPaths()
+        setProfilePathActionError(null)
       } else {
         setProfileSwitchHint(null)
+        setProfilePathActionError(null)
       }
       return next
     })
-  }, [loadLocalProfiles])
+  }, [loadLocalProfiles, loadSharedPaths])
 
   const closeProfileConfirmDialog = useCallback(() => {
     if (profileActionPending) return
@@ -6510,7 +6549,8 @@ function ExportPage() {
   useEffect(() => {
     if (!showProfileSwitcher) return
     void loadLocalProfiles()
-  }, [showProfileSwitcher, loadLocalProfiles, exportAccountInfo.wxid, exportAccountInfo.nickName, exportAccountInfo.avatarUrl])
+    void loadSharedPaths()
+  }, [showProfileSwitcher, loadLocalProfiles, loadSharedPaths, exportAccountInfo.wxid, exportAccountInfo.nickName, exportAccountInfo.avatarUrl])
 
   const chatFormatOptions = [
     { value: 'chatlab', label: 'ChatLab', icon: FileCode, desc: '标准格式，支持其他软件导入' },
@@ -6657,14 +6697,14 @@ function ExportPage() {
                     </button>
                     {showProfileSwitcher && (
                       <>
-                        <div className="more-menu-overlay" onClick={() => { setShowProfileSwitcher(false); setProfileSwitchHint(null) }} />
+                        <div className="more-menu-overlay" onClick={() => { setShowProfileSwitcher(false); setProfileSwitchHint(null); setProfilePathActionError(null) }} />
                         <div className="profile-switcher-dropdown">
                           <div className="profile-switcher-header">
                             <div className="profile-switcher-title">本机账号切换</div>
                             <button
                               type="button"
                               className="profile-switcher-refresh-btn"
-                              onClick={() => { void loadLocalProfiles() }}
+                              onClick={() => { void loadLocalProfiles(); void loadSharedPaths() }}
                               title="刷新账号列表"
                               disabled={isLoadingProfiles || !!profileActionPending}
                             >
@@ -6751,6 +6791,55 @@ function ExportPage() {
                               {profileActionPending?.type === 'create' ? <Loader2 size={13} className="spin" /> : <CircleUserRound size={13} />}
                               <span>添加账号（新建独立空间）</span>
                             </button>
+                          </div>
+                          <div className="profile-switcher-shared-paths">
+                            <div className="profile-switcher-shared-path-item">
+                              <div className="profile-switcher-shared-path-label">数据根目录</div>
+                              <div className="profile-switcher-shared-path-main">
+                                <button
+                                  type="button"
+                                  className={`profile-switcher-shared-path-value ${!sharedDbPath ? 'is-empty' : ''}`}
+                                  onClick={() => { void handleOpenSharedPath(sharedDbPath, '数据根目录') }}
+                                  disabled={!sharedDbPath || isLoadingSharedPaths}
+                                  title={sharedDbPath || '未设置'}
+                                >
+                                  {isLoadingSharedPaths ? '加载中...' : (sharedDbPath || '未设置')}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="profile-switcher-shared-path-open-btn"
+                                  onClick={() => { void handleOpenSharedPath(sharedDbPath, '数据根目录') }}
+                                  disabled={!sharedDbPath || isLoadingSharedPaths}
+                                >
+                                  打开
+                                </button>
+                              </div>
+                            </div>
+                            <div className="profile-switcher-shared-path-item">
+                              <div className="profile-switcher-shared-path-label">数据缓存目录</div>
+                              <div className="profile-switcher-shared-path-main">
+                                <button
+                                  type="button"
+                                  className={`profile-switcher-shared-path-value ${!sharedCachePath ? 'is-empty' : ''}`}
+                                  onClick={() => { void handleOpenSharedPath(sharedCachePath, '数据缓存目录') }}
+                                  disabled={!sharedCachePath || isLoadingSharedPaths}
+                                  title={sharedCachePath || '未设置'}
+                                >
+                                  {isLoadingSharedPaths ? '加载中...' : (sharedCachePath || '未设置')}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="profile-switcher-shared-path-open-btn"
+                                  onClick={() => { void handleOpenSharedPath(sharedCachePath, '数据缓存目录') }}
+                                  disabled={!sharedCachePath || isLoadingSharedPaths}
+                                >
+                                  打开
+                                </button>
+                              </div>
+                            </div>
+                            {profilePathActionError && (
+                              <div className="profile-switcher-shared-path-error">{profilePathActionError}</div>
+                            )}
                           </div>
                           <div className="profile-switcher-note">
                             启动时会直接进入上一次账号；如该账号启用本机密码，将先显示解锁页。
