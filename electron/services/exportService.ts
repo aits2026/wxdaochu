@@ -587,6 +587,55 @@ class ExportService {
     return { wxid: '', alias: raw || null }
   }
 
+  private resolveContactNameFields(rawContact: any): { remark: string; nickname: string; alias: string } {
+    return {
+      remark: String(rawContact?.remark || ''),
+      nickname: String(rawContact?.nick_name || ''),
+      alias: String(rawContact?.alias || '')
+    }
+  }
+
+  private getDisplayNameByNameFields(params: {
+    fallback: string
+    remark: string
+    nickname: string
+    alias: string
+  }): string {
+    return String(params.remark || params.nickname || params.alias || params.fallback || '')
+  }
+
+  private async resolveSessionNameFields(sessionId: string): Promise<{ remark: string; nickname: string; alias: string }> {
+    const input = String(sessionId || '').trim()
+    if (!input || !this.contactDb) return { remark: '', nickname: '', alias: '' }
+
+    try {
+      const fetchByUsername = this.contactDb.prepare(`
+        SELECT username, remark, nick_name, alias
+        FROM contact
+        WHERE username = ?
+        LIMIT 1
+      `)
+      const fetchByAlias = this.contactDb.prepare(`
+        SELECT username, remark, nick_name, alias
+        FROM contact
+        WHERE alias = ?
+        LIMIT 1
+      `)
+
+      let row = fetchByUsername.get(input) as any
+      if (!row && input && !input.startsWith('wxid_') && !input.includes('@')) {
+        row = fetchByUsername.get(`wxid_${input}`) as any
+      }
+      if (!row) {
+        row = fetchByAlias.get(input) as any
+      }
+      if (!row) return { remark: '', nickname: '', alias: '' }
+      return this.resolveContactNameFields(row)
+    } catch {
+      return { remark: '', nickname: '', alias: '' }
+    }
+  }
+
   private normalizeWechatIdentity(
     rawValue: string,
     resolved?: Partial<Pick<ResolvedContactInfo, 'wechatId' | 'wechatAlias'>>
@@ -703,11 +752,17 @@ class ExportService {
         if (!username) continue
 
         const contactRaw = this.buildArkmeContactRaw(row, contactColNames)
+        const nameFields = this.resolveContactNameFields(contactRaw)
         const identity = this.normalizeWechatIdentity(username, {
           wechatId: String(contactRaw.username || username),
           wechatAlias: contactRaw.alias ? String(contactRaw.alias) : undefined
         })
-        const displayName = String(contactRaw.remark || contactRaw.nick_name || contactRaw.alias || username)
+        const displayName = this.getDisplayNameByNameFields({
+          fallback: username,
+          remark: nameFields.remark,
+          nickname: nameFields.nickname,
+          alias: nameFields.alias
+        })
         const localType = Number(contactRaw.local_type ?? NaN)
         const isFriend = hasLocalType
           ? Number.isFinite(localType) && localType === 1
@@ -726,9 +781,10 @@ class ExportService {
           isSelf,
           ...(isSelf ? { selfRemark: '用户自己' } : {}),
           ...(avatarUrl && { avatarUrl }),
-          ...(contactRaw.remark ? { remark: String(contactRaw.remark) } : {}),
-          ...(contactRaw.nick_name ? { nickName: String(contactRaw.nick_name) } : {}),
-          ...(contactRaw.alias ? { alias: String(contactRaw.alias) } : {}),
+          remark: nameFields.remark,
+          nickname: nameFields.nickname,
+          nickName: nameFields.nickname,
+          alias: nameFields.alias,
           ...(Number.isFinite(localType) ? { localType } : {}),
           contactRaw
         }
@@ -833,7 +889,13 @@ class ExportService {
       for (const row of rows) {
         const groupId = String(row.username || '').trim()
         if (!groupId) continue
-        const groupName = String(row.remark || row.nick_name || row.alias || groupId)
+        const nameFields = this.resolveContactNameFields(row)
+        const groupName = this.getDisplayNameByNameFields({
+          fallback: groupId,
+          remark: nameFields.remark,
+          nickname: nameFields.nickname,
+          alias: nameFields.alias
+        })
         let avatarUrl = String(row.big_head_url || row.small_head_url || '')
         if (!avatarUrl) {
           avatarUrl = (await this.getContactInfo(groupId)).avatarUrl || ''
@@ -842,11 +904,12 @@ class ExportService {
         groups.push({
           groupId,
           wechatId: groupId,
-          wechatAlias: row.alias ? String(row.alias) : null,
+          wechatAlias: nameFields.alias || null,
           groupName,
-          ...(row.remark ? { remark: String(row.remark) } : {}),
-          ...(row.nick_name ? { nickName: String(row.nick_name) } : {}),
-          ...(row.alias ? { alias: String(row.alias) } : {}),
+          remark: nameFields.remark,
+          nickname: nameFields.nickname,
+          nickName: nameFields.nickname,
+          alias: nameFields.alias,
           ...(avatarUrl ? { avatarUrl } : {})
         })
       }
@@ -2254,6 +2317,7 @@ class ExportService {
       const sessionIdentity = await this.resolveSessionWechatIdentity(sessionId)
       const sessionWxid = sessionIdentity.wxid || ''
       const sessionAlias = sessionIdentity.alias || sessionInfo.wechatAlias || null
+      const sessionNameFields = await this.resolveSessionNameFields(sessionId)
       const myIdentitySource = cleanedMyWxid || myWxid
       const myInfo = await this.getContactInfo(myIdentitySource)
       const contactInfoCache = new Map<string, ResolvedContactInfo>()
@@ -2459,8 +2523,9 @@ class ExportService {
           wechatId: sessionWxid || null,
           wechatAlias: sessionAlias,
           wxid: sessionWxid,
-          nickname: sessionInfo.nickName || '',
-          remark: sessionInfo.remark || '',
+          nickname: sessionNameFields.nickname,
+          nickName: sessionNameFields.nickname,
+          remark: sessionNameFields.remark,
           displayName: sessionInfo.displayName,
           type: isGroup ? '群聊' : '私聊',
           platform: 'wechat',
@@ -2517,6 +2582,7 @@ class ExportService {
       const sessionIdentity = await this.resolveSessionWechatIdentity(sessionId)
       const sessionWxid = sessionIdentity.wxid || ''
       const sessionAlias = sessionIdentity.alias || sessionInfo.wechatAlias || null
+      const sessionNameFields = await this.resolveSessionNameFields(sessionId)
       const myIdentitySource = cleanedMyWxid || myWxid
       const myInfo = await this.getContactInfo(myIdentitySource)
       const contactInfoCache = new Map<string, ResolvedContactInfo>()
@@ -2740,8 +2806,9 @@ class ExportService {
           wechatId: sessionWxid || null,
           wechatAlias: sessionAlias,
           wxid: sessionWxid,
-          nickname: sessionInfo.nickName || '',
-          remark: sessionInfo.remark || '',
+          nickname: sessionNameFields.nickname,
+          nickName: sessionNameFields.nickname,
+          remark: sessionNameFields.remark,
           displayName: sessionInfo.displayName,
           type: isGroup ? '群聊' : '私聊',
           platform: 'wechat',
