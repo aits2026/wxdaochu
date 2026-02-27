@@ -115,6 +115,8 @@ export interface ExportOptions {
   dedupeVideoFiles?: boolean
   // 媒体路径映射表：消息实例键 -> 相对路径（避免仅用 createTime 发生同秒覆盖）
   mediaPathMap?: Map<string, string>
+  // Arkme 媒体索引：mediaKey -> 媒体条目（用于文本导出与媒体导出解耦）
+  arkmeMediaIndexMap?: Map<string, ArkmeMediaIndexEntry>
   // 导出前跳过检查（renderer 传入 hint，主要用于聊天文本批量导出）
   skipIfUnchanged?: boolean
   currentMessageCountHint?: number
@@ -166,6 +168,24 @@ interface ExportMediaProgress {
   current?: number
   total?: number
   unit?: string
+}
+
+type ArkmeMediaKind = 'image' | 'video' | 'emoji' | 'voice'
+
+interface ArkmeMediaRef {
+  kind: ArkmeMediaKind
+  mediaKey: string
+  exported: boolean
+  relativePath?: string | null
+  fileName?: string | null
+  source?: Record<string, unknown>
+}
+
+interface ArkmeMediaIndexEntry extends ArkmeMediaRef {
+  createTime: number
+  sessionId: string
+  platformMessageId?: string
+  localMessageId?: string
 }
 
 interface ResolvedContactInfo {
@@ -1026,6 +1046,159 @@ class ExportService {
       const legacyMap = mediaPathMap as unknown as Map<number, string>
       legacyMap.set(createTime, relativePath)
     }
+  }
+
+  private getArkmeMediaKind(localType: number): ArkmeMediaKind | null {
+    if (localType === 3) return 'image'
+    if (localType === 43) return 'video'
+    if (localType === 47) return 'emoji'
+    if (localType === 34) return 'voice'
+    return null
+  }
+
+  private buildArkmeMediaKey(params: {
+    sessionId: string
+    platformMessageId?: string | null
+    localMessageId?: string | null
+    createTime: number
+    localType: number
+    isSend?: boolean | null
+    realSenderId?: string | number | null
+    contentHint?: string | null
+  }): string {
+    const crypto = require('crypto')
+    const parts = [
+      `sid:${String(params.sessionId || '')}`,
+      `srv:${String(params.platformMessageId || '')}`,
+      `loc:${String(params.localMessageId || '')}`,
+      `ts:${Number(params.createTime || 0)}`,
+      `lt:${Number(params.localType || 0)}`,
+      `sd:${params.isSend ? 1 : 0}`,
+      `rs:${params.realSenderId !== undefined && params.realSenderId !== null ? String(params.realSenderId) : ''}`
+    ]
+
+    if (!params.platformMessageId && !params.localMessageId && params.contentHint) {
+      const contentHash = crypto.createHash('sha1').update(String(params.contentHint)).digest('hex').slice(0, 16)
+      parts.push(`ch:${contentHash}`)
+    }
+
+    const digest = crypto.createHash('sha1').update(parts.join('|')).digest('hex').slice(0, 24)
+    return `m_${digest}`
+  }
+
+  private parseArkmeEmojiSource(content: string): {
+    emojiMd5?: string
+    cdnUrl?: string
+    encryptUrl?: string
+    aesKey?: string
+  } {
+    const cdnUrlMatch = /cdnurl\s*=\s*['"]([^'"]+)['"]/i.exec(content)
+    const thumbUrlMatch = /thumburl\s*=\s*['"]([^'"]+)['"]/i.exec(content)
+    const md5Match = /(?:emoticon)?md5\s*=\s*['"]([a-fA-F0-9]+)['"]/i.exec(content) ||
+      /<md5>([^<]+)<\/md5>/i.exec(content)
+    const encryptUrlMatch = /encrypturl\s*=\s*['"]([^'"]+)['"]/i.exec(content)
+    const aesKeyMatch = /aeskey\s*=\s*['"]([a-zA-Z0-9]+)['"]/i.exec(content)
+
+    const cdnUrl = (cdnUrlMatch?.[1] || thumbUrlMatch?.[1] || '').replace(/&amp;/g, '&')
+    const encryptUrl = (encryptUrlMatch?.[1] || '').replace(/&amp;/g, '&')
+    const emojiMd5 = md5Match?.[1] || ''
+    const aesKey = aesKeyMatch?.[1] || ''
+
+    return {
+      ...(emojiMd5 ? { emojiMd5 } : {}),
+      ...(cdnUrl ? { cdnUrl } : {}),
+      ...(encryptUrl ? { encryptUrl } : {}),
+      ...(aesKey ? { aesKey } : {})
+    }
+  }
+
+  private buildArkmeMediaSource(localType: number, content: string, row: Record<string, any>, createTime: number): Record<string, unknown> | undefined {
+    if (localType === 3) {
+      const imageMd5 = this.extractXmlValue(content, 'md5') ||
+        (/\<img[^>]*\smd5\s*=\s*['"]([^'"]+)['"]/i.exec(content))?.[1] ||
+        undefined
+      const imageDatName = this.parseImageDatName(row)
+      if (!imageMd5 && !imageDatName) return undefined
+      return {
+        ...(imageMd5 ? { imageMd5 } : {}),
+        ...(imageDatName ? { imageDatName } : {})
+      }
+    }
+
+    if (localType === 43) {
+      const videoMd5 = videoService.parseVideoMd5(content)
+      if (!videoMd5) return undefined
+      return { videoMd5 }
+    }
+
+    if (localType === 47) {
+      const emojiSource = this.parseArkmeEmojiSource(content)
+      if (Object.keys(emojiSource).length === 0) return undefined
+      return emojiSource
+    }
+
+    if (localType === 34) {
+      return { voiceCreateTime: createTime }
+    }
+
+    return undefined
+  }
+
+  private buildArkmeMediaRef(params: {
+    sessionId: string
+    localType: number
+    createTime: number
+    platformMessageId?: string
+    localMessageId?: string
+    isSend?: boolean
+    realSenderId?: string | number
+    contentHint?: string
+    source?: Record<string, unknown>
+    arkmeMediaIndexMap?: Map<string, ArkmeMediaIndexEntry>
+  }): ArkmeMediaRef | undefined {
+    const kind = this.getArkmeMediaKind(params.localType)
+    if (!kind) return undefined
+
+    const mediaKey = this.buildArkmeMediaKey({
+      sessionId: params.sessionId,
+      platformMessageId: params.platformMessageId,
+      localMessageId: params.localMessageId,
+      createTime: params.createTime,
+      localType: params.localType,
+      isSend: params.isSend,
+      realSenderId: params.realSenderId,
+      contentHint: params.contentHint
+    })
+
+    const indexed = params.arkmeMediaIndexMap?.get(mediaKey)
+    const relativePath = indexed?.relativePath || null
+
+    return {
+      kind,
+      mediaKey,
+      exported: Boolean(indexed?.exported && relativePath),
+      relativePath,
+      fileName: relativePath ? path.basename(relativePath) : null,
+      ...(params.source ? { source: params.source } : {})
+    }
+  }
+
+  private writeArkmeMediaIndexFile(
+    sessionOutputDir: string,
+    sessionId: string,
+    arkmeMediaIndexMap: Map<string, ArkmeMediaIndexEntry>
+  ): void {
+    if (!sessionOutputDir || arkmeMediaIndexMap.size === 0) return
+    const indexPath = path.join(sessionOutputDir, 'arkme-media-index.json')
+    const payload = {
+      version: '1.0.0',
+      schema: 'arkme.chat.media.index.v1',
+      sessionId,
+      generatedAt: Math.floor(Date.now() / 1000),
+      count: arkmeMediaIndexMap.size,
+      items: Array.from(arkmeMediaIndexMap.values())
+    }
+    fs.writeFileSync(indexPath, JSON.stringify(payload, null, 2), 'utf-8')
   }
 
   /**
@@ -2410,6 +2583,19 @@ class ExportService {
             if (xmlType === '19' || localType === 49) {
               chatRecordList = this.parseChatHistory(content)
             }
+            const mediaSource = this.buildArkmeMediaSource(localType, content, row, createTime)
+            const mediaRef = this.buildArkmeMediaRef({
+              sessionId,
+              localType,
+              createTime,
+              platformMessageId,
+              localMessageId,
+              isSend,
+              realSenderId: row.real_sender_id,
+              contentHint: content,
+              source: mediaSource,
+              arkmeMediaIndexMap: options.arkmeMediaIndexMap
+            })
 
             allMessages.push({
               localId: row.local_id || allMessages.length + 1,
@@ -2428,6 +2614,7 @@ class ExportService {
               senderDisplayName: senderInfo.displayName,
               ...(groupNickname && { groupNickname }),
               ...(replyToMessageId && { replyToMessageId }),
+              ...(mediaRef ? { mediaRef } : {}),
               ...(chatRecordList && { chatRecords: this.formatChatRecordsForJson(chatRecordList, options) }),
               source
             })
@@ -2486,6 +2673,7 @@ class ExportService {
         senderDisplayName: msg.senderDisplayName,
         ...(msg.groupNickname && { groupNickname: msg.groupNickname }),
         ...(msg.replyToMessageId && { replyToMessageId: msg.replyToMessageId }),
+        ...(msg.mediaRef ? { mediaRef: msg.mediaRef } : {}),
         ...(msg.chatRecords && { chatRecords: msg.chatRecords }),
         ...(msg.source ? { source: msg.source } : {})
       }))
@@ -2519,6 +2707,7 @@ class ExportService {
           ownerWechatId: myInfo.wechatId || cleanedMyWxid || null,
           ownerWechatAlias: myInfo.wechatAlias || null,
           ownerDisplayName: myInfo.displayName,
+          mediaIndexFile: 'arkme-media-index.json',
           ...(isGroup && { groupId: sessionId }),
           ...(options.exportAvatars && sessionInfo.avatarUrl && { avatar: sessionInfo.avatarUrl }),
           firstTimestamp: firstMessageTime,
@@ -3467,9 +3656,10 @@ class ExportService {
 
         // 先导出媒体文件，收集路径映射表
         let mediaPathMap: Map<string, string> | undefined
+        let arkmeMediaIndexMap: Map<string, ArkmeMediaIndexEntry> | undefined
         if (hasMedia) {
           try {
-            mediaPathMap = await this.exportMediaFiles(sessionId, safeName, sessionOutputDir, options, (mediaProgress) => {
+            const mediaExportResult = await this.exportMediaFiles(sessionId, sessionOutputDir, options, (mediaProgress) => {
               emitProgress({
                 current: mediaProgress.current ?? 0,
                 total: mediaProgress.total ?? 0,
@@ -3481,13 +3671,22 @@ class ExportService {
                 stepUnit: mediaProgress.unit
               })
             })
+            mediaPathMap = mediaExportResult.mediaPathMap
+            arkmeMediaIndexMap = mediaExportResult.arkmeMediaIndexMap
+            if (arkmeMediaIndexMap.size > 0) {
+              this.writeArkmeMediaIndexFile(sessionOutputDir, sessionId, arkmeMediaIndexMap)
+            }
           } catch (e) {
             console.error(`导出 ${sessionId} 媒体文件失败:`, e)
           }
         }
 
         // 将媒体路径映射表附加到 options 上
-        const exportOpts = mediaPathMap ? { ...options, mediaPathMap } : options
+        const exportOpts = {
+          ...options,
+          ...(mediaPathMap ? { mediaPathMap } : {}),
+          ...(arkmeMediaIndexMap ? { arkmeMediaIndexMap } : {})
+        }
 
         let result: { success: boolean; error?: string }
         if (imageOnlyMode || videoOnlyMode || emojiOnlyMode || voiceOnlyMode) {
@@ -3593,20 +3792,22 @@ class ExportService {
   }
 
   /**
-   * 导出会话的媒体文件（图片和视频）
+   * 导出会话媒体文件并生成 Arkme 媒体索引
    */
   private async exportMediaFiles(
     sessionId: string,
-    safeName: string,
     outputDir: string,
     options: ExportOptions,
     onDetail?: (progress: ExportMediaProgress) => void
-  ): Promise<Map<string, string>> {
+  ): Promise<{ mediaPathMap: Map<string, string>; arkmeMediaIndexMap: Map<string, ArkmeMediaIndexEntry> }> {
     // 返回 消息实例键 -> 相对路径 的映射表（兼容历史 createTime 键）
     const mediaPathMap = new Map<string, string>()
+    const arkmeMediaIndexMap = new Map<string, ArkmeMediaIndexEntry>()
 
     const dbTablePairs = this.findSessionTables(sessionId)
-    if (dbTablePairs.length === 0) return mediaPathMap
+    if (dbTablePairs.length === 0) {
+      return { mediaPathMap, arkmeMediaIndexMap }
+    }
 
     // 创建媒体输出目录（直接在会话文件夹下创建子目录）
     const imageOutDir = options.exportImages
@@ -3681,7 +3882,28 @@ class ExportService {
     }
     const shouldDedupeVideoFiles = options.dedupeVideoFiles !== false
     const exportedVideoPathByMd5 = new Map<string, string>()
+    const exportedVoicePathByCreateTime = new Map<number, string>()
     const emojiSourceResolutionCache = new Map<string, { sourceFile: string | null; failReason?: keyof typeof emojiFailReasons }>()
+    const upsertArkmeMediaIndexEntry = (entry: ArkmeMediaIndexEntry) => {
+      const prev = arkmeMediaIndexMap.get(entry.mediaKey)
+      if (!prev) {
+        arkmeMediaIndexMap.set(entry.mediaKey, entry)
+        return
+      }
+
+      const mergedSource = {
+        ...((prev.source as Record<string, unknown> | undefined) || {}),
+        ...((entry.source as Record<string, unknown> | undefined) || {})
+      }
+      arkmeMediaIndexMap.set(entry.mediaKey, {
+        ...prev,
+        ...entry,
+        exported: Boolean(prev.exported || entry.exported),
+        relativePath: prev.relativePath || entry.relativePath || null,
+        fileName: prev.fileName || entry.fileName || null,
+        source: Object.keys(mergedSource).length > 0 ? mergedSource : undefined
+      })
+    }
     const shouldReportStep = (processed: number, total: number) => (
       processed <= 3 || processed === total || processed % 10 === 0
     )
@@ -3778,19 +4000,25 @@ class ExportService {
     const imageExportConcurrency = 6
     const pendingImageExportJobs: Array<{
       createTime: number
+      platformMessageId?: string
+      localMessageId?: string
       imageMd5?: string
       imageDatName?: string
       mediaMapKey?: string
+      mediaKey: string
     }> = []
     const processPendingImageExportJob = async (job: {
       createTime: number
+      platformMessageId?: string
+      localMessageId?: string
       imageMd5?: string
       imageDatName?: string
       mediaMapKey?: string
+      mediaKey: string
     }) => {
       try {
         let imageHandled = false
-        const { createTime, imageMd5, imageDatName, mediaMapKey } = job
+        const { createTime, platformMessageId, localMessageId, imageMd5, imageDatName, mediaMapKey, mediaKey } = job
 
         if (imageMd5 || imageDatName) {
           const cacheResult = await imageDecryptService.decryptImage({
@@ -3807,7 +4035,7 @@ class ExportService {
 
             if (fs.existsSync(filePath)) {
               const ext = path.extname(filePath) || '.jpg'
-              const fileName = `${createTime}_${imageMd5 || imageDatName}${ext}`
+              const fileName = `${mediaKey}${ext}`
               const destPath = path.join(imageOutDir, fileName)
               try {
                 if (!fs.existsSync(destPath)) {
@@ -3817,7 +4045,23 @@ class ExportService {
                   fs.copyFileSync(filePath, destPath)
                   imageCount++
                 }
-                this.setMediaPathMapEntry(mediaPathMap, `images/${fileName}`, mediaMapKey, createTime)
+                const relativePath = options.imageOnlyMode ? fileName : `images/${fileName}`
+                this.setMediaPathMapEntry(mediaPathMap, relativePath, mediaMapKey, createTime)
+                upsertArkmeMediaIndexEntry({
+                  mediaKey,
+                  kind: 'image',
+                  exported: true,
+                  relativePath,
+                  fileName,
+                  createTime,
+                  sessionId,
+                  ...(platformMessageId ? { platformMessageId } : {}),
+                  ...(localMessageId ? { localMessageId } : {}),
+                  source: {
+                    ...(imageMd5 ? { imageMd5 } : {}),
+                    ...(imageDatName ? { imageDatName } : {})
+                  }
+                })
                 imageHandled = true
               } catch {
                 bumpReason(imageFailReasons, 'copy_failed')
@@ -3833,6 +4077,21 @@ class ExportService {
           bumpReason(imageFailReasons, 'no_identifier')
         }
         if (!imageHandled) {
+          upsertArkmeMediaIndexEntry({
+            mediaKey,
+            kind: 'image',
+            exported: false,
+            relativePath: null,
+            fileName: null,
+            createTime,
+            sessionId,
+            ...(platformMessageId ? { platformMessageId } : {}),
+            ...(localMessageId ? { localMessageId } : {}),
+            source: {
+              ...(imageMd5 ? { imageMd5 } : {}),
+              ...(imageDatName ? { imageDatName } : {})
+            }
+          })
           imageFailCount++
         }
       } catch {
@@ -3924,6 +4183,16 @@ class ExportService {
               senderUsername: row.sender_username || '',
               isSend: row.is_send === 1
             })
+            const mediaKey = this.buildArkmeMediaKey({
+              sessionId,
+              platformMessageId,
+              localMessageId,
+              createTime,
+              localType,
+              isSend: row.is_send === 1,
+              realSenderId: row.real_sender_id,
+              contentHint: content
+            })
 
             // 导出图片
             if (options.exportImages && localType === 3) {
@@ -3931,11 +4200,29 @@ class ExportService {
                 (/\<img[^>]*\smd5\s*=\s*['"]([^'"]+)['"]/i.exec(content))?.[1] ||
                 undefined
               const imageDatName = this.parseImageDatName(row)
+              upsertArkmeMediaIndexEntry({
+                mediaKey,
+                kind: 'image',
+                exported: false,
+                relativePath: null,
+                fileName: null,
+                createTime,
+                sessionId,
+                ...(platformMessageId ? { platformMessageId } : {}),
+                ...(localMessageId ? { localMessageId } : {}),
+                source: {
+                  ...(imageMd5 ? { imageMd5 } : {}),
+                  ...(imageDatName ? { imageDatName } : {})
+                }
+              })
               pendingImageExportJobs.push({
                 createTime,
+                platformMessageId,
+                localMessageId,
                 imageMd5,
                 imageDatName,
-                mediaMapKey
+                mediaMapKey,
+                mediaKey
               })
               continue
             }
@@ -3949,11 +4236,35 @@ class ExportService {
               try {
                 let videoHandled = false
                 const videoMd5 = videoService.parseVideoMd5(content)
+                upsertArkmeMediaIndexEntry({
+                  mediaKey,
+                  kind: 'video',
+                  exported: false,
+                  relativePath: null,
+                  fileName: null,
+                  createTime,
+                  sessionId,
+                  ...(platformMessageId ? { platformMessageId } : {}),
+                  ...(localMessageId ? { localMessageId } : {}),
+                  source: videoMd5 ? { videoMd5 } : undefined
+                })
                 if (videoMd5) {
                   if (shouldDedupeVideoFiles) {
                     const cachedExportPath = exportedVideoPathByMd5.get(videoMd5)
                     if (cachedExportPath) {
                       this.setMediaPathMapEntry(mediaPathMap, cachedExportPath, mediaMapKey, createTime)
+                      upsertArkmeMediaIndexEntry({
+                        mediaKey,
+                        kind: 'video',
+                        exported: true,
+                        relativePath: cachedExportPath,
+                        fileName: path.basename(cachedExportPath),
+                        createTime,
+                        sessionId,
+                        ...(platformMessageId ? { platformMessageId } : {}),
+                        ...(localMessageId ? { localMessageId } : {}),
+                        source: { videoMd5 }
+                      })
                       videoHandled = true
                       continue
                     }
@@ -3963,7 +4274,7 @@ class ExportService {
                   if (videoInfo.exists && videoInfo.videoUrl) {
                     const videoPath = videoInfo.videoUrl.replace(/^file:\/\/\//i, '').replace(/\//g, path.sep)
                     if (fs.existsSync(videoPath)) {
-                      const fileName = `${createTime}_${videoMd5}.mp4`
+                      const fileName = `${mediaKey}.mp4`
                       const destPath = path.join(videoOutDir, fileName)
                       const relativePath = options.videoOnlyMode ? fileName : `videos/${fileName}`
                       const existedBeforeCopy = fs.existsSync(destPath)
@@ -3982,6 +4293,18 @@ class ExportService {
                         // 非去重模式下，文件名冲突时仍保持消息引用不丢失
                       }
                       this.setMediaPathMapEntry(mediaPathMap, relativePath, mediaMapKey, createTime)
+                      upsertArkmeMediaIndexEntry({
+                        mediaKey,
+                        kind: 'video',
+                        exported: true,
+                        relativePath,
+                        fileName,
+                        createTime,
+                        sessionId,
+                        ...(platformMessageId ? { platformMessageId } : {}),
+                        ...(localMessageId ? { localMessageId } : {}),
+                        source: { videoMd5 }
+                      })
                       videoHandled = true
                     } else {
                       bumpReason(videoFailReasons, 'source_missing')
@@ -4014,21 +4337,23 @@ class ExportService {
               }
               try {
                 let emojiHandled = false
-                // 从 XML 提取 cdnUrl 和 md5
-                const cdnUrlMatch = /cdnurl\s*=\s*['"]([^'"]+)['"]/i.exec(content)
-                const thumbUrlMatch = /thumburl\s*=\s*['"]([^'"]+)['"]/i.exec(content)
-                const md5Match = /(?:emoticon)?md5\s*=\s*['"]([a-fA-F0-9]+)['"]/i.exec(content) ||
-                  /<md5>([^<]+)<\/md5>/i.exec(content)
-                const encryptUrlMatch = /encrypturl\s*=\s*['"]([^'"]+)['"]/i.exec(content)
-                const aesKeyMatch = /aeskey\s*=\s*['"]([a-zA-Z0-9]+)['"]/i.exec(content)
-
-                let cdnUrl = cdnUrlMatch?.[1] || thumbUrlMatch?.[1] || ''
-                const emojiMd5 = md5Match?.[1] || ''
-                let encryptUrl = encryptUrlMatch?.[1] || ''
-                const aesKey = aesKeyMatch?.[1] || ''
-
-                if (cdnUrl) cdnUrl = cdnUrl.replace(/&amp;/g, '&')
-                if (encryptUrl) encryptUrl = encryptUrl.replace(/&amp;/g, '&')
+                const emojiSource = this.parseArkmeEmojiSource(content)
+                const cdnUrl = String(emojiSource.cdnUrl || '')
+                const emojiMd5 = String(emojiSource.emojiMd5 || '')
+                const encryptUrl = String(emojiSource.encryptUrl || '')
+                const aesKey = String(emojiSource.aesKey || '')
+                upsertArkmeMediaIndexEntry({
+                  mediaKey,
+                  kind: 'emoji',
+                  exported: false,
+                  relativePath: null,
+                  fileName: null,
+                  createTime,
+                  sessionId,
+                  ...(platformMessageId ? { platformMessageId } : {}),
+                  ...(localMessageId ? { localMessageId } : {}),
+                  source: Object.keys(emojiSource).length > 0 ? emojiSource : undefined
+                })
 
                 if (emojiMd5 || cdnUrl) {
                   if (!fs.existsSync(emojiOutDir)) {
@@ -4037,7 +4362,7 @@ class ExportService {
                   const cacheKey = emojiMd5 || this.hashString(cdnUrl)
                   // 确定文件扩展名
                   const ext = cdnUrl.includes('.gif') || content.includes('type="2"') ? '.gif' : '.png'
-                  const fileName = `${createTime}_${cacheKey}${ext}`
+                  const fileName = `${mediaKey}${ext}`
                   const destPath = path.join(emojiOutDir, fileName)
 
                   if (!fs.existsSync(destPath)) {
@@ -4046,7 +4371,20 @@ class ExportService {
                       try {
                         fs.copyFileSync(sourceFile, destPath)
                         emojiCount++
-                        this.setMediaPathMapEntry(mediaPathMap, `emojis/${fileName}`, mediaMapKey, createTime)
+                        const relativePath = options.emojiOnlyMode ? fileName : `emojis/${fileName}`
+                        this.setMediaPathMapEntry(mediaPathMap, relativePath, mediaMapKey, createTime)
+                        upsertArkmeMediaIndexEntry({
+                          mediaKey,
+                          kind: 'emoji',
+                          exported: true,
+                          relativePath,
+                          fileName,
+                          createTime,
+                          sessionId,
+                          ...(platformMessageId ? { platformMessageId } : {}),
+                          ...(localMessageId ? { localMessageId } : {}),
+                          source: Object.keys(emojiSource).length > 0 ? emojiSource : undefined
+                        })
                         emojiHandled = true
                       } catch {
                         bumpReason(emojiFailReasons, 'copy_failed')
@@ -4057,7 +4395,20 @@ class ExportService {
                       bumpReason(emojiFailReasons, 'source_missing')
                     }
                   } else {
-                    this.setMediaPathMapEntry(mediaPathMap, `emojis/${fileName}`, mediaMapKey, createTime)
+                    const relativePath = options.emojiOnlyMode ? fileName : `emojis/${fileName}`
+                    this.setMediaPathMapEntry(mediaPathMap, relativePath, mediaMapKey, createTime)
+                    upsertArkmeMediaIndexEntry({
+                      mediaKey,
+                      kind: 'emoji',
+                      exported: true,
+                      relativePath,
+                      fileName,
+                      createTime,
+                      sessionId,
+                      ...(platformMessageId ? { platformMessageId } : {}),
+                      ...(localMessageId ? { localMessageId } : {}),
+                      source: Object.keys(emojiSource).length > 0 ? emojiSource : undefined
+                    })
                     emojiHandled = true
                   }
                 }
@@ -4098,23 +4449,71 @@ class ExportService {
     if (options.exportVoices) {
       emitMediaProgress('正在处理语音消息...', 0, 0, '条')
 
-      // 1. 收集所有语音消息的 createTime
-      const voiceCreateTimes: number[] = []
+      // 1. 收集语音消息并提前生成稳定 mediaKey
+      const voiceMessages: Array<{
+        createTime: number
+        platformMessageId?: string
+        localMessageId?: string
+        mediaMapKey?: string
+        mediaKey: string
+      }> = []
       for (const { db, tableName } of dbTablePairs) {
         try {
-          let sql = `SELECT create_time FROM ${tableName} WHERE local_type = 34`
+          let sql = `SELECT create_time, server_id, local_id, is_send, real_sender_id, message_content, compress_content FROM ${tableName} WHERE local_type = 34`
           if (options.dateRange) {
             sql += ` AND create_time >= ${options.dateRange.start} AND create_time <= ${options.dateRange.end}`
           }
           sql += ` ORDER BY create_time`
           const rows = db.prepare(sql).all() as any[]
           for (const row of rows) {
-            if (row.create_time) voiceCreateTimes.push(row.create_time)
+            const createTime = Number(row.create_time || 0)
+            if (!createTime) continue
+            const content = this.decodeMessageContent(row.message_content, row.compress_content)
+            const platformMessageId = row.server_id ? String(row.server_id) : (row.local_id ? String(row.local_id) : undefined)
+            const localMessageId = row.local_id ? String(row.local_id) : undefined
+            const mediaMapKey = this.buildMediaPathMapKey({
+              platformMessageId,
+              localMessageId,
+              createTime,
+              localType: 34,
+              senderUsername: row.sender_username || '',
+              isSend: row.is_send === 1
+            })
+            const mediaKey = this.buildArkmeMediaKey({
+              sessionId,
+              platformMessageId,
+              localMessageId,
+              createTime,
+              localType: 34,
+              isSend: row.is_send === 1,
+              realSenderId: row.real_sender_id,
+              contentHint: content
+            })
+
+            voiceMessages.push({
+              createTime,
+              platformMessageId,
+              localMessageId,
+              mediaMapKey,
+              mediaKey
+            })
+            upsertArkmeMediaIndexEntry({
+              mediaKey,
+              kind: 'voice',
+              exported: false,
+              relativePath: null,
+              fileName: null,
+              createTime,
+              sessionId,
+              ...(platformMessageId ? { platformMessageId } : {}),
+              ...(localMessageId ? { localMessageId } : {}),
+              source: { voiceCreateTime: createTime }
+            })
           }
         } catch { }
       }
 
-      if (voiceCreateTimes.length > 0) {
+      if (voiceMessages.length > 0) {
         // 2. 查找 MediaDb
         const mediaDbs = this.findMediaDbs()
 
@@ -4168,18 +4567,46 @@ class ExportService {
             const candidates = [sessionId]
             if (myWxid && myWxid !== sessionId) candidates.push(myWxid)
 
-            const total = voiceCreateTimes.length
+            const total = voiceMessages.length
             const shouldReportVoiceStep = (processed: number) => (
               processed % 5 === 0 || processed === total || processed <= 3
             )
             for (let idx = 0; idx < total; idx++) {
-              const createTime = voiceCreateTimes[idx]
-              const fileName = `${createTime}.wav`
+              const voiceMessage = voiceMessages[idx]
+              const createTime = voiceMessage.createTime
+              const fileName = `${voiceMessage.mediaKey}.wav`
               const destPath = path.join(voiceOutDir, fileName)
+              const relativePath = options.voiceOnlyMode ? fileName : `voices/${fileName}`
+
+              const bindVoiceExported = (bindPath: string) => {
+                this.setMediaPathMapEntry(mediaPathMap, bindPath, voiceMessage.mediaMapKey, createTime)
+                upsertArkmeMediaIndexEntry({
+                  mediaKey: voiceMessage.mediaKey,
+                  kind: 'voice',
+                  exported: true,
+                  relativePath: bindPath,
+                  fileName: path.basename(bindPath),
+                  createTime,
+                  sessionId,
+                  ...(voiceMessage.platformMessageId ? { platformMessageId: voiceMessage.platformMessageId } : {}),
+                  ...(voiceMessage.localMessageId ? { localMessageId: voiceMessage.localMessageId } : {}),
+                  source: { voiceCreateTime: createTime }
+                })
+              }
+
+              const cachedVoicePath = exportedVoicePathByCreateTime.get(createTime)
+              if (cachedVoicePath) {
+                bindVoiceExported(cachedVoicePath)
+                if (shouldReportVoiceStep(idx + 1)) {
+                  emitMediaProgress(`语音处理: ${idx + 1}/${total}（已导出 ${voiceCount}）`, idx + 1, total, '条')
+                }
+                continue
+              }
 
               // 已存在则跳过
               if (fs.existsSync(destPath)) {
-                this.setMediaPathMapEntry(mediaPathMap, `voices/${fileName}`, undefined, createTime)
+                exportedVoicePathByCreateTime.set(createTime, relativePath)
+                bindVoiceExported(relativePath)
                 if (shouldReportVoiceStep(idx + 1)) {
                   emitMediaProgress(`语音处理: ${idx + 1}/${total}（已导出 ${voiceCount}）`, idx + 1, total, '条')
                 }
@@ -4255,7 +4682,8 @@ class ExportService {
                   continue
                 }
                 voiceCount++
-                this.setMediaPathMapEntry(mediaPathMap, `voices/${fileName}`, undefined, createTime)
+                exportedVoicePathByCreateTime.set(createTime, relativePath)
+                bindVoiceExported(relativePath)
               } catch (e) {
                 voiceFailCount++
                 const errMsg = e instanceof Error ? e.message : String(e)
@@ -4279,14 +4707,14 @@ class ExportService {
               try { vdb.db.close() } catch { }
             }
           } else {
-            voiceFailCount += voiceCreateTimes.length
-            voiceFailReasons.decoder_missing += voiceCreateTimes.length
-            emitMediaProgress(`语音处理失败：无法加载语音解码器（待处理 ${voiceCreateTimes.length} 条）`, 0, voiceCreateTimes.length, '条')
+            voiceFailCount += voiceMessages.length
+            voiceFailReasons.decoder_missing += voiceMessages.length
+            emitMediaProgress(`语音处理失败：无法加载语音解码器（待处理 ${voiceMessages.length} 条）`, 0, voiceMessages.length, '条')
           }
         } else {
-          voiceFailCount += voiceCreateTimes.length
-          voiceFailReasons.media_db_missing += voiceCreateTimes.length
-          emitMediaProgress(`语音处理失败：未找到 MediaDb（待处理 ${voiceCreateTimes.length} 条）`, 0, voiceCreateTimes.length, '条')
+          voiceFailCount += voiceMessages.length
+          voiceFailReasons.media_db_missing += voiceMessages.length
+          emitMediaProgress(`语音处理失败：未找到 MediaDb（待处理 ${voiceMessages.length} 条）`, 0, voiceMessages.length, '条')
         }
       }
     }
@@ -4345,7 +4773,7 @@ class ExportService {
     }
     emitMediaProgress(summary)
     console.log(`[Export] ${sessionId} ${summary}`)
-    return mediaPathMap
+    return { mediaPathMap, arkmeMediaIndexMap }
     } finally {
       if (heartbeatTimer) clearInterval(heartbeatTimer)
     }
