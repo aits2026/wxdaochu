@@ -930,6 +930,150 @@ class ExportService {
     }
   }
 
+  private extractChatroomOwnerUsernameForArkme(chatroomId: string): string | undefined {
+    if (!this.contactDb || !chatroomId) return undefined
+
+    try {
+      const quoteIdent = (name: string) => `"${String(name).replace(/"/g, '""')}"`
+      const normalizeKey = (name: string) => String(name || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+      const getRowValueByAliases = (row: any, aliases: string[]) => {
+        if (!row || typeof row !== 'object') return undefined
+        const aliasSet = new Set(aliases.map(normalizeKey))
+        for (const key of Object.keys(row)) {
+          if (aliasSet.has(normalizeKey(key))) return row[key]
+        }
+        return undefined
+      }
+      const normalizeOwnerCandidate = (value: unknown): string | undefined => {
+        if (value == null) return undefined
+        let s = String(value).replace(/\0/g, '').trim()
+        if (!s) return undefined
+        s = s.replace(/^<!\[CDATA\[/i, '').replace(/\]\]>$/i, '').trim()
+        if (!s) return undefined
+        if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
+          s = s.slice(1, -1).trim()
+        }
+        if (!s) return undefined
+        if (/\s/.test(s)) return undefined
+        if (s.length < 2 || s.length > 128) return undefined
+        if (/^[0-9]+$/.test(s)) return undefined
+        if (/[<>{}\\]/.test(s)) return undefined
+        if (!/^[A-Za-z0-9_@.\-+]+$/.test(s)) return undefined
+        return s
+      }
+      const extractOwnerFromText = (text: string): string | undefined => {
+        if (!text) return undefined
+        const patterns = [
+          /<roomowner>\s*(?:<!\[CDATA\[)?([^<\]\s]+)(?:\]\]>)?\s*<\/roomowner>/i,
+          /<ownerusername>\s*(?:<!\[CDATA\[)?([^<\]\s]+)(?:\]\]>)?\s*<\/ownerusername>/i,
+          /<chatroomowner>\s*(?:<!\[CDATA\[)?([^<\]\s]+)(?:\]\]>)?\s*<\/chatroomowner>/i,
+          /<room_owner>\s*(?:<!\[CDATA\[)?([^<\]\s]+)(?:\]\]>)?\s*<\/room_owner>/i,
+          /"(?:roomowner|room_owner|ownerusername|owner_user_name|chatroomowner|m_nsRoomOwner)"\s*:\s*"([^"]+)"/i,
+          /'(?:roomowner|room_owner|ownerusername|owner_user_name|chatroomowner|m_nsRoomOwner)'\s*:\s*'([^']+)'/i,
+          /\b(?:roomowner|room_owner|ownerusername|owner_user_name|chatroomowner|m_nsRoomOwner)\b\s*[=:]\s*["']?([A-Za-z0-9_@.\-+]{2,128})["']?/i
+        ]
+        for (const pattern of patterns) {
+          const match = pattern.exec(text)
+          const normalized = normalizeOwnerCandidate(match?.[1])
+          if (normalized) return normalized
+        }
+        return undefined
+      }
+      const decodeFieldToText = (raw: unknown): string => {
+        if (raw == null) return ''
+        if (typeof raw === 'string') return raw
+        return this.decodeMaybeCompressed(raw)
+      }
+      const scanRowForOwnerUsername = (row: any): string | undefined => {
+        const explicitOwner = getRowValueByAliases(row, [
+          'roomowner',
+          'room_owner',
+          'ownerusername',
+          'owner_user_name',
+          'chatroomowner',
+          'owner',
+          'm_nsRoomOwner'
+        ])
+        const explicitOwnerUsername = normalizeOwnerCandidate(explicitOwner)
+        if (explicitOwnerUsername) return explicitOwnerUsername
+
+        const preferredPayloadFields = [
+          'room_data',
+          'roomdata',
+          'ext_buffer',
+          'extbuffer',
+          'member_list',
+          'memberlist',
+          'chatroom_data',
+          'chatroomdata',
+          'room_info',
+          'roominfo'
+        ]
+        for (const fieldAlias of preferredPayloadFields) {
+          const value = getRowValueByAliases(row, [fieldAlias])
+          const owner = extractOwnerFromText(decodeFieldToText(value))
+          if (owner) return owner
+        }
+
+        for (const [rawKey, rawValue] of Object.entries(row || {})) {
+          if (rawValue == null) continue
+          const key = normalizeKey(rawKey)
+          if (!/(room|member|owner|data|buffer|xml|json)/.test(key)) continue
+          const owner = extractOwnerFromText(decodeFieldToText(rawValue))
+          if (owner) return owner
+        }
+        return undefined
+      }
+
+      const getRowsForChatroomTable = (tableName: string): any[] => {
+        try {
+          const columnRows = this.contactDb!.prepare(`PRAGMA table_info(${quoteIdent(tableName)})`).all() as any[]
+          const columnNames = columnRows.map((c: any) => String(c.name))
+          const selectorCols = columnNames.filter((col) => {
+            const key = normalizeKey(col)
+            return [
+              'chatroomname',
+              'chatroom_name',
+              'username',
+              'user_name',
+              'strusrname',
+              'usrname',
+              'talker'
+            ].includes(key)
+          })
+          if (selectorCols.length === 0) return []
+          const where = selectorCols.map(col => `${quoteIdent(col)} = ?`).join(' OR ')
+          const params = selectorCols.map(() => chatroomId)
+          return this.contactDb!.prepare(`SELECT * FROM ${quoteIdent(tableName)} WHERE ${where}`).all(...params) as any[]
+        } catch {
+          return []
+        }
+      }
+
+      const tables = this.contactDb.prepare(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '%chatroom%'"
+      ).all() as any[]
+
+      for (const t of tables) {
+        const rows = getRowsForChatroomTable(String(t.name))
+        for (const row of rows) {
+          const owner = scanRowForOwnerUsername(row)
+          if (owner) return owner
+        }
+      }
+
+      try {
+        const contactRow = this.contactDb.prepare(
+          `SELECT * FROM ${quoteIdent('contact')} WHERE username = ? LIMIT 1`
+        ).get(chatroomId) as any
+        const owner = scanRowForOwnerUsername(contactRow)
+        if (owner) return owner
+      } catch { }
+    } catch { }
+
+    return undefined
+  }
+
   /**
    * 从 head_image.db 获取头像（转换为 base64 data URL）
    */
@@ -2921,18 +3065,27 @@ class ExportService {
 
       let compactMessages: any[] = []
       let membersForExport: Array<Record<string, unknown>> | undefined
-      let privatePeerSenderId: string | null = null
-      let privateOwnerSenderId: string | null = null
+      let privateSendSenderId: string | null = null
+      let privateRecordOwnerSenderId: string | null = null
+      let privateSendInfo: Record<string, unknown> | null = null
+      let recordOwnerInfo: Record<string, unknown> | null = null
+      let groupOwnerInfo: Record<string, unknown> | null = null
 
       if (isGroup) {
         const rawGroupMembers = await this.getGroupMembersForArkme(sessionId, myWxid, cleanedMyWxid)
         const memberBySenderId = new Map<string, Record<string, unknown>>()
+        let recordOwnerSenderId: string | null = null
         membersForExport = (rawGroupMembers || []).map(member => ({ ...(member as Record<string, unknown>) }))
 
         for (const member of membersForExport) {
           const senderId = allocateSenderId()
           member.senderId = senderId
+          if (!member.status) member.status = 'active'
+          if (!member.source) member.source = 'chatroom_member'
           memberBySenderId.set(senderId, member)
+          if (Boolean(member.isSelf) && !recordOwnerSenderId) {
+            recordOwnerSenderId = senderId
+          }
           registerIdentityKeys(senderId, buildIdentityKeys({
             senderUsername: member.username,
             senderWechatId: member.wechatId,
@@ -2958,6 +3111,8 @@ class ExportService {
               displayName: String(msg.senderDisplayName || msg.senderUsername || ''),
               isFriend: false,
               isSelf: Boolean(msg.isSend),
+              status: 'left_or_unknown',
+              source: 'message_history_fallback',
               remark: '',
               nickname: '',
               nickName: '',
@@ -2980,16 +3135,156 @@ class ExportService {
           registerIdentityKeys(senderId, identityKeys)
           return toCompactMessage(msg, senderId)
         })
-      } else {
-        privatePeerSenderId = allocateSenderId()
-        privateOwnerSenderId = allocateSenderId()
 
-        registerIdentityKeys(privatePeerSenderId, buildIdentityKeys({
+        if (!recordOwnerSenderId) {
+          const recordOwnerFallbackId = allocateSenderId()
+          const recordOwnerIdentity = this.normalizeWechatIdentity(cleanedMyWxid || myWxid || '', myInfo)
+          const recordOwnerMember: Record<string, unknown> = {
+            senderId: recordOwnerFallbackId,
+            username: String(recordOwnerIdentity.wechatId || cleanedMyWxid || myWxid || ''),
+            wechatId: recordOwnerIdentity.wechatId,
+            wechatAlias: recordOwnerIdentity.wechatAlias,
+            displayName: String(myInfo.displayName || '我'),
+            isFriend: true,
+            isSelf: true,
+            status: 'left_or_unknown',
+            source: 'record_owner_fallback',
+            remark: String(myInfo.remark || ''),
+            nickname: String(myInfo.nickName || ''),
+            nickName: String(myInfo.nickName || ''),
+            alias: String(recordOwnerIdentity.wechatAlias || '')
+          }
+          if (options.exportAvatars && myInfo.avatarUrl) {
+            recordOwnerMember.avatarUrl = String(myInfo.avatarUrl)
+          }
+          membersForExport.push(recordOwnerMember)
+          memberBySenderId.set(recordOwnerFallbackId, recordOwnerMember)
+          registerIdentityKeys(recordOwnerFallbackId, buildIdentityKeys({
+            senderUsername: recordOwnerMember.username,
+            senderWechatId: recordOwnerMember.wechatId,
+            senderWechatAlias: recordOwnerMember.wechatAlias
+          }))
+          recordOwnerSenderId = recordOwnerFallbackId
+        }
+
+        const recordOwnerMember = recordOwnerSenderId ? memberBySenderId.get(recordOwnerSenderId) : undefined
+        const recordOwnerIdentity = this.normalizeWechatIdentity(
+          String(recordOwnerMember?.username || cleanedMyWxid || myWxid || ''),
+          {
+            wechatId: String(recordOwnerMember?.wechatId || myInfo.wechatId || ''),
+            wechatAlias: String(recordOwnerMember?.wechatAlias || myInfo.wechatAlias || '')
+          }
+        )
+        recordOwnerInfo = {
+          senderId: recordOwnerSenderId,
+          senderUsername: String(recordOwnerMember?.username || recordOwnerIdentity.wechatId || cleanedMyWxid || myWxid || ''),
+          wechatId: recordOwnerIdentity.wechatId,
+          wechatAlias: recordOwnerIdentity.wechatAlias,
+          displayName: String(recordOwnerMember?.displayName || myInfo.displayName || '我'),
+          remark: String(recordOwnerMember?.remark || myInfo.remark || ''),
+          nickname: String(recordOwnerMember?.nickname || myInfo.nickName || ''),
+          nickName: String(recordOwnerMember?.nickName || myInfo.nickName || ''),
+          ...(options.exportAvatars && (recordOwnerMember?.avatarUrl || myInfo.avatarUrl)
+            ? { avatar: String(recordOwnerMember?.avatarUrl || myInfo.avatarUrl) }
+            : {})
+        }
+
+        const groupOwnerUsername = this.extractChatroomOwnerUsernameForArkme(sessionId)
+        if (!groupOwnerUsername) {
+          groupOwnerInfo = {
+            senderId: null,
+            senderUsername: null,
+            wechatId: null,
+            wechatAlias: null,
+            displayName: '未识别',
+            status: 'unresolved',
+            reason: 'owner_not_found'
+          }
+        } else {
+          const groupOwnerContactInfo = await getCachedContactInfo(groupOwnerUsername)
+          const groupOwnerIdentity = this.normalizeWechatIdentity(groupOwnerUsername, groupOwnerContactInfo)
+          const ownerKeys = buildIdentityKeys({
+            senderUsername: groupOwnerUsername,
+            senderWechatId: groupOwnerIdentity.wechatId,
+            senderWechatAlias: groupOwnerIdentity.wechatAlias
+          })
+          let groupOwnerSenderId = findSenderIdByKeys(ownerKeys)
+          if (!groupOwnerSenderId) {
+            groupOwnerSenderId = allocateSenderId()
+            const ownerFallbackMember: Record<string, unknown> = {
+              senderId: groupOwnerSenderId,
+              username: groupOwnerIdentity.wechatId || groupOwnerUsername,
+              wechatId: groupOwnerIdentity.wechatId,
+              wechatAlias: groupOwnerIdentity.wechatAlias,
+              displayName: String(groupOwnerContactInfo.displayName || groupOwnerUsername),
+              isFriend: false,
+              isSelf: false,
+              isGroupOwner: true,
+              status: 'left_or_unknown',
+              source: 'group_owner_fallback',
+              remark: String(groupOwnerContactInfo.remark || ''),
+              nickname: String(groupOwnerContactInfo.nickName || ''),
+              nickName: String(groupOwnerContactInfo.nickName || ''),
+              alias: String(groupOwnerIdentity.wechatAlias || '')
+            }
+            if (options.exportAvatars && groupOwnerContactInfo.avatarUrl) {
+              ownerFallbackMember.avatarUrl = String(groupOwnerContactInfo.avatarUrl)
+            }
+            membersForExport.push(ownerFallbackMember)
+            memberBySenderId.set(groupOwnerSenderId, ownerFallbackMember)
+          } else {
+            const existingMember = memberBySenderId.get(groupOwnerSenderId)
+            if (existingMember) {
+              existingMember.isGroupOwner = true
+            }
+          }
+          registerIdentityKeys(groupOwnerSenderId, ownerKeys)
+          groupOwnerInfo = {
+            senderId: groupOwnerSenderId,
+            senderUsername: groupOwnerIdentity.wechatId || groupOwnerUsername,
+            wechatId: groupOwnerIdentity.wechatId,
+            wechatAlias: groupOwnerIdentity.wechatAlias,
+            displayName: String(groupOwnerContactInfo.displayName || groupOwnerUsername),
+            status: 'resolved',
+            ...(options.exportAvatars && groupOwnerContactInfo.avatarUrl
+              ? { avatar: String(groupOwnerContactInfo.avatarUrl) }
+              : {})
+          }
+        }
+      } else {
+        privateSendSenderId = allocateSenderId()
+        privateRecordOwnerSenderId = allocateSenderId()
+
+        privateSendInfo = {
+          senderId: privateSendSenderId,
+          senderUsername: sessionWxid || sessionId,
+          wechatId: sessionWxid || sessionInfo.wechatId || null,
+          wechatAlias: sessionAlias || sessionInfo.wechatAlias || null,
+          nickname: sessionNameFields.nickname,
+          nickName: sessionNameFields.nickname,
+          remark: sessionNameFields.remark,
+          displayName: sessionInfo.displayName,
+          ...(options.exportAvatars && sessionInfo.avatarUrl ? { avatar: sessionInfo.avatarUrl } : {})
+        }
+        const privateRecordOwnerIdentity = this.normalizeWechatIdentity(cleanedMyWxid || myWxid || '', myInfo)
+        recordOwnerInfo = {
+          senderId: privateRecordOwnerSenderId,
+          senderUsername: privateRecordOwnerIdentity.wechatId || cleanedMyWxid || myWxid || '',
+          wechatId: privateRecordOwnerIdentity.wechatId,
+          wechatAlias: privateRecordOwnerIdentity.wechatAlias,
+          remark: String(myInfo.remark || ''),
+          nickname: String(myInfo.nickName || ''),
+          nickName: String(myInfo.nickName || ''),
+          displayName: myInfo.displayName,
+          ...(options.exportAvatars && myInfo.avatarUrl ? { avatar: myInfo.avatarUrl } : {})
+        }
+
+        registerIdentityKeys(privateSendSenderId, buildIdentityKeys({
           senderUsername: sessionId,
           senderWechatId: sessionWxid || sessionInfo.wechatId || null,
           senderWechatAlias: sessionAlias || sessionInfo.wechatAlias || null
         }))
-        registerIdentityKeys(privateOwnerSenderId, buildIdentityKeys({
+        registerIdentityKeys(privateRecordOwnerSenderId, buildIdentityKeys({
           senderUsername: cleanedMyWxid || myWxid || myInfo.wechatId || null,
           senderWechatId: myInfo.wechatId || cleanedMyWxid || myWxid || null,
           senderWechatAlias: myInfo.wechatAlias || null
@@ -3003,7 +3298,7 @@ class ExportService {
           })
           let senderId = findSenderIdByKeys(identityKeys)
           if (!senderId) {
-            senderId = msg.isSend ? privateOwnerSenderId! : privatePeerSenderId!
+            senderId = msg.isSend ? privateRecordOwnerSenderId! : privateSendSenderId!
           }
           registerIdentityKeys(senderId, identityKeys)
           return toCompactMessage(msg, senderId)
@@ -3020,17 +3315,12 @@ class ExportService {
           exportedAt: Math.floor(Date.now() / 1000),
           generator: 'VXdaochu',
           format: 'arkme-json',
-          schema: 'arkme.chat.export.v3'
+          schema: 'arkme.chat.export.v4'
         },
         session: {
           wechatId: sessionWxid || null,
           wechatAlias: sessionAlias,
           wxid: sessionWxid,
-          ...(!isGroup ? {
-            senderId: privatePeerSenderId,
-            senderUsername: sessionId,
-            ownerSenderId: privateOwnerSenderId
-          } : {}),
           nickname: sessionNameFields.nickname,
           nickName: sessionNameFields.nickname,
           remark: sessionNameFields.remark,
@@ -3038,11 +3328,15 @@ class ExportService {
           type: isGroup ? '群聊' : '私聊',
           platform: 'wechat',
           isGroup,
-          ownerId: cleanedMyWxid,
-          ownerWechatId: myInfo.wechatId || cleanedMyWxid || null,
-          ownerWechatAlias: myInfo.wechatAlias || null,
-          ownerDisplayName: myInfo.displayName,
-          ...(options.exportAvatars && myInfo.avatarUrl && { ownerAvatar: myInfo.avatarUrl }),
+          ...(isGroup
+            ? {
+              recordOwner: recordOwnerInfo,
+              groupOwner: groupOwnerInfo
+            }
+            : {
+              send: privateSendInfo,
+              recordOwner: recordOwnerInfo
+            }),
           mediaIndexFile: 'arkme-media-index.json',
           mediaMapFile: 'arkme-media-map.json',
           ...(isGroup && { groupId: sessionId }),
