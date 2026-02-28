@@ -3434,7 +3434,10 @@ function ExportPage() {
         return {
           session,
           status,
-          latestExportTime: hasExported ? latestExportTime : null
+          latestExportTime: hasExported ? latestExportTime : null,
+          liveProgress: (runningImageExportSessionId === session.username && imageBatchCurrentSessionProgress?.sessionId === session.username)
+            ? imageBatchCurrentSessionProgress
+            : null
         }
       })
       .sort((a, b) => {
