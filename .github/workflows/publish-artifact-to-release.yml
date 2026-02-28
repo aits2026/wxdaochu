@@ -1,0 +1,92 @@
+name: Publish Existing Artifact To Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "Source workflow run ID (from Actions URL: /actions/runs/<run_id>)"
+        required: true
+        type: string
+      tag:
+        description: "Release tag (e.g. v2.2.5)"
+        required: true
+        type: string
+      release_name:
+        description: "Release name (optional, default: same as tag)"
+        required: false
+        type: string
+      prerelease:
+        description: "Mark as prerelease"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate input
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "${{ inputs.tag }}" =~ ^v[0-9A-Za-z._-]+$ ]]; then
+            echo "Invalid tag: ${{ inputs.tag }}"
+            echo "Tag must start with 'v', e.g. v2.2.5"
+            exit 1
+          fi
+          if [[ ! "${{ inputs.run_id }}" =~ ^[0-9]+$ ]]; then
+            echo "Invalid run_id: ${{ inputs.run_id }}"
+            echo "run_id must be numeric"
+            exit 1
+          fi
+
+      - name: Download artifacts from source run
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ github.token }}
+          path: downloaded-artifacts
+          pattern: "*"
+          merge-multiple: true
+
+      - name: Check downloaded files
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Downloaded files:"
+          find downloaded-artifacts -type f | sort || true
+
+          count=$(find downloaded-artifacts -type f \( -name "*.exe" -o -name "latest.yml" -o -name "*.blockmap" \) | wc -l | tr -d ' ')
+          if [[ "$count" == "0" ]]; then
+            echo "No release files found from run_id=${{ inputs.run_id }}"
+            exit 1
+          fi
+          echo "Found $count release files."
+
+      - name: Resolve release name
+        id: release_meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_name="${{ inputs.release_name }}"
+          if [[ -z "$release_name" ]]; then
+            release_name="${{ inputs.tag }}"
+          fi
+          echo "release_name=$release_name" >> "$GITHUB_OUTPUT"
+
+      - name: Create or update GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag }}
+          name: ${{ steps.release_meta.outputs.release_name }}
+          prerelease: ${{ inputs.prerelease }}
+          generate_release_notes: true
+          overwrite_files: true
+          files: |
+            downloaded-artifacts/**/*.exe
+            downloaded-artifacts/**/latest.yml
+            downloaded-artifacts/**/*.blockmap
