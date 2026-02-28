@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useDeferredValue, useMemo, useRef, startTransition } from 'react'
+import type { ReactElement } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Search, Download, FolderOpen, RefreshCw, Check, FileJson, FileText, Table, Loader2, X, FileSpreadsheet, Database, FileCode, CheckCircle, XCircle, ExternalLink, MessageSquare, Users, User, Filter, Image, Video, CircleUserRound, Smile, Mic, Newspaper, ChevronDown, MoreHorizontal, ArrowLeft, Eye, Aperture, CircleHelp, Copy, Trash2 } from 'lucide-react'
 import { List, RowComponentProps } from 'react-window'
@@ -453,7 +454,14 @@ const parseImageMediaTotalHint = (detail?: string | null) => {
   return Number(match[1])
 }
 
-const SESSION_TABLE_HEADER_MEDIA_ICONS: Record<string, JSX.Element> = {
+type SessionMediaCardItem = {
+  icon: ReactElement
+  label: string
+  count: number
+  action: 'decrypt' | 'check-video' | null
+}
+
+const SESSION_TABLE_HEADER_MEDIA_ICONS: Record<string, ReactElement> = {
   图片: <Image size={11} />,
   视频: <Video size={11} />,
   表情包: <Smile size={11} />,
@@ -461,7 +469,7 @@ const SESSION_TABLE_HEADER_MEDIA_ICONS: Record<string, JSX.Element> = {
   文件: <FileText size={11} />
 }
 
-const SESSION_TABLE_ROW_MEDIA_ICONS: Record<string, JSX.Element> = {
+const SESSION_TABLE_ROW_MEDIA_ICONS: Record<string, ReactElement> = {
   图片: <Image size={12} />,
   视频: <Video size={12} />,
   表情包: <Smile size={12} />,
@@ -3344,7 +3352,10 @@ function ExportPage() {
         return {
           session,
           status,
-          latestExportTime: hasExported ? latestExportTime : null
+          latestExportTime: hasExported ? latestExportTime : null,
+          liveProgress: (runningImageExportSessionId === session.username && imageBatchCurrentSessionProgress?.sessionId === session.username)
+            ? imageBatchCurrentSessionProgress
+            : null
         }
       })
       .sort((a, b) => {
@@ -8055,11 +8066,11 @@ function ExportPage() {
                             {(sessionDetail.imageCount > 0 || sessionDetail.emojiCount > 0 || sessionDetail.videoCount > 0 || sessionDetail.voiceCount > 0) && (
                               <div style={{ display: 'flex', gap: 8, padding: '8px 0', flexWrap: 'wrap' }}>
                                 {([
-                                  { icon: <Image size={13} />, label: '图片', count: sessionDetail.imageCount, action: 'decrypt' as const },
-                                  { icon: <Smile size={13} />, label: '表情', count: sessionDetail.emojiCount },
-                                  { icon: <Video size={13} />, label: '视频', count: sessionDetail.videoCount, action: 'check-video' as const },
-                                  { icon: <Mic size={13} />, label: '语音', count: sessionDetail.voiceCount },
-                                ] as const).filter(item => item.count > 0).map(item => {
+                                  { icon: <Image size={13} />, label: '图片', count: sessionDetail.imageCount, action: 'decrypt' },
+                                  { icon: <Smile size={13} />, label: '表情', count: sessionDetail.emojiCount, action: null },
+                                  { icon: <Video size={13} />, label: '视频', count: sessionDetail.videoCount, action: 'check-video' },
+                                  { icon: <Mic size={13} />, label: '语音', count: sessionDetail.voiceCount, action: null },
+                                ] as SessionMediaCardItem[]).filter(item => item.count > 0).map(item => {
                                   const isVideoStatCard = item.action === 'check-video'
                                   const showCheckedVideoCount = isVideoStatCard && currentSessionVideoHasCheckedOverview
                                   const primaryCount = showCheckedVideoCount ? currentSessionVideoReadyCount : item.count
@@ -8108,7 +8119,9 @@ function ExportPage() {
                                                 <button
                                                   type="button"
                                                   className="session-media-action-btn"
-                                                  onClick={openSessionImageAssetsModal}
+                                                  onClick={() => {
+                                                    void openSessionImageAssetsModal()
+                                                  }}
                                                   disabled={!selectedSession}
                                                   title="查看已解密图片"
                                                 >
