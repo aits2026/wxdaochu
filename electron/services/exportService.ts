@@ -2872,7 +2872,36 @@ class ExportService {
         }
       }
 
-      const compactMessages = allMessages.map(msg => ({
+      const normalizeIdentity = (value: unknown): string => String(value || '').trim().toLowerCase()
+      const buildIdentityKeys = (payload: {
+        senderUsername?: unknown
+        senderWechatId?: unknown
+        senderWechatAlias?: unknown
+      }): string[] => {
+        const keys: string[] = []
+        const username = normalizeIdentity(payload.senderUsername)
+        const wxid = normalizeIdentity(payload.senderWechatId)
+        const alias = normalizeIdentity(payload.senderWechatAlias)
+        if (username) keys.push(`username:${username}`)
+        if (wxid) keys.push(`wxid:${wxid}`)
+        if (alias) keys.push(`alias:${alias}`)
+        return keys
+      }
+      const identityToSenderId = new Map<string, string>()
+      const findSenderIdByKeys = (keys: string[]): string | undefined => {
+        for (const key of keys) {
+          const hit = identityToSenderId.get(key)
+          if (hit) return hit
+        }
+        return undefined
+      }
+      const registerIdentityKeys = (senderId: string, keys: string[]): void => {
+        for (const key of keys) identityToSenderId.set(key, senderId)
+      }
+      let nextSenderOrdinal = 1
+      const allocateSenderId = (): string => `m${nextSenderOrdinal++}`
+
+      const toCompactMessage = (msg: any, senderId: string) => ({
         localId: msg.localId,
         platformMessageId: msg.platformMessageId,
         createTime: msg.createTime,
@@ -2882,21 +2911,105 @@ class ExportService {
         chatLabType: msg.chatLabType,
         content: msg.content,
         isSend: msg.isSend,
-        senderUsername: msg.senderUsername,
-        senderWechatId: msg.senderWechatId || null,
-        senderWechatAlias: msg.senderWechatAlias || null,
-        senderDisplayName: msg.senderDisplayName,
-        ...(msg.senderAvatar ? { senderAvatar: msg.senderAvatar } : {}),
+        senderId,
         ...(msg.groupNickname && { groupNickname: msg.groupNickname }),
         ...(msg.replyToMessageId && { replyToMessageId: msg.replyToMessageId }),
         ...(msg.mediaRef ? { mediaRef: msg.mediaRef } : {}),
         ...(msg.chatRecords && { chatRecords: msg.chatRecords }),
         ...(msg.source ? { source: msg.source } : {})
-      }))
+      })
 
-      const groupMembers = isGroup
-        ? await this.getGroupMembersForArkme(sessionId, myWxid, cleanedMyWxid)
-        : undefined
+      let compactMessages: any[] = []
+      let membersForExport: Array<Record<string, unknown>> | undefined
+      let privatePeerSenderId: string | null = null
+      let privateOwnerSenderId: string | null = null
+
+      if (isGroup) {
+        const rawGroupMembers = await this.getGroupMembersForArkme(sessionId, myWxid, cleanedMyWxid)
+        const memberBySenderId = new Map<string, Record<string, unknown>>()
+        membersForExport = (rawGroupMembers || []).map(member => ({ ...(member as Record<string, unknown>) }))
+
+        for (const member of membersForExport) {
+          const senderId = allocateSenderId()
+          member.senderId = senderId
+          memberBySenderId.set(senderId, member)
+          registerIdentityKeys(senderId, buildIdentityKeys({
+            senderUsername: member.username,
+            senderWechatId: member.wechatId,
+            senderWechatAlias: member.wechatAlias
+          }))
+        }
+
+        compactMessages = allMessages.map(msg => {
+          const identityKeys = buildIdentityKeys({
+            senderUsername: msg.senderUsername,
+            senderWechatId: msg.senderWechatId,
+            senderWechatAlias: msg.senderWechatAlias
+          })
+          let senderId = findSenderIdByKeys(identityKeys)
+
+          if (!senderId) {
+            senderId = allocateSenderId()
+            const fallbackMember: Record<string, unknown> = {
+              senderId,
+              username: String(msg.senderUsername || ''),
+              wechatId: msg.senderWechatId || null,
+              wechatAlias: msg.senderWechatAlias || null,
+              displayName: String(msg.senderDisplayName || msg.senderUsername || ''),
+              isFriend: false,
+              isSelf: Boolean(msg.isSend),
+              remark: '',
+              nickname: '',
+              nickName: '',
+              alias: String(msg.senderWechatAlias || '')
+            }
+            if (msg.senderAvatar) fallbackMember.avatarUrl = String(msg.senderAvatar)
+            membersForExport!.push(fallbackMember)
+            memberBySenderId.set(senderId, fallbackMember)
+          } else {
+            const member = memberBySenderId.get(senderId)
+            if (member) {
+              if (!member.username && msg.senderUsername) member.username = String(msg.senderUsername)
+              if (!member.wechatId && msg.senderWechatId) member.wechatId = String(msg.senderWechatId)
+              if (!member.wechatAlias && msg.senderWechatAlias) member.wechatAlias = String(msg.senderWechatAlias)
+              if (!member.displayName && msg.senderDisplayName) member.displayName = String(msg.senderDisplayName)
+              if (!member.avatarUrl && msg.senderAvatar) member.avatarUrl = String(msg.senderAvatar)
+            }
+          }
+
+          registerIdentityKeys(senderId, identityKeys)
+          return toCompactMessage(msg, senderId)
+        })
+      } else {
+        privatePeerSenderId = allocateSenderId()
+        privateOwnerSenderId = allocateSenderId()
+
+        registerIdentityKeys(privatePeerSenderId, buildIdentityKeys({
+          senderUsername: sessionId,
+          senderWechatId: sessionWxid || sessionInfo.wechatId || null,
+          senderWechatAlias: sessionAlias || sessionInfo.wechatAlias || null
+        }))
+        registerIdentityKeys(privateOwnerSenderId, buildIdentityKeys({
+          senderUsername: cleanedMyWxid || myWxid || myInfo.wechatId || null,
+          senderWechatId: myInfo.wechatId || cleanedMyWxid || myWxid || null,
+          senderWechatAlias: myInfo.wechatAlias || null
+        }))
+
+        compactMessages = allMessages.map(msg => {
+          const identityKeys = buildIdentityKeys({
+            senderUsername: msg.senderUsername,
+            senderWechatId: msg.senderWechatId,
+            senderWechatAlias: msg.senderWechatAlias
+          })
+          let senderId = findSenderIdByKeys(identityKeys)
+          if (!senderId) {
+            senderId = msg.isSend ? privateOwnerSenderId! : privatePeerSenderId!
+          }
+          registerIdentityKeys(senderId, identityKeys)
+          return toCompactMessage(msg, senderId)
+        })
+      }
+
       const commonGroups = !isGroup
         ? await this.getCommonGroupsForArkme(sessionId, myWxid, cleanedMyWxid)
         : undefined
@@ -2907,12 +3020,17 @@ class ExportService {
           exportedAt: Math.floor(Date.now() / 1000),
           generator: 'VXdaochu',
           format: 'arkme-json',
-          schema: 'arkme.chat.export.v1'
+          schema: 'arkme.chat.export.v3'
         },
         session: {
           wechatId: sessionWxid || null,
           wechatAlias: sessionAlias,
           wxid: sessionWxid,
+          ...(!isGroup ? {
+            senderId: privatePeerSenderId,
+            senderUsername: sessionId,
+            ownerSenderId: privateOwnerSenderId
+          } : {}),
           nickname: sessionNameFields.nickname,
           nickName: sessionNameFields.nickname,
           remark: sessionNameFields.remark,
@@ -2933,7 +3051,7 @@ class ExportService {
           lastTimestamp: lastMessageTime,
           messageCount: compactMessages.length
         },
-        ...(isGroup ? { members: groupMembers || [] } : {}),
+        ...(isGroup ? { members: membersForExport || [] } : {}),
         ...(!isGroup ? { commonGroups: commonGroups || [] } : {}),
         messages: compactMessages
       }
