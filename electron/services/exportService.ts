@@ -968,6 +968,93 @@ class ExportService {
     }
   }
 
+  private normalizeIdentityCandidate(value: unknown): string {
+    return String(value || '').trim().toLowerCase()
+  }
+
+  private buildIdentityCandidateSet(values: Array<unknown>): Set<string> {
+    const result = new Set<string>()
+    for (const value of values) {
+      const normalized = this.normalizeIdentityCandidate(value)
+      if (normalized) result.add(normalized)
+    }
+    return result
+  }
+
+  private async enrichCommonGroupsMessageCounts(
+    commonGroups: Array<Record<string, unknown>>,
+    recordOwnerCandidates: Array<unknown>,
+    contactCandidates: Array<unknown>
+  ): Promise<Array<Record<string, unknown>>> {
+    if (!Array.isArray(commonGroups) || commonGroups.length === 0) return commonGroups
+    const recordOwnerCandidateSet = this.buildIdentityCandidateSet(recordOwnerCandidates)
+    const contactCandidateSet = this.buildIdentityCandidateSet(contactCandidates)
+
+    if (recordOwnerCandidateSet.size === 0 && contactCandidateSet.size === 0) {
+      return commonGroups.map(group => ({
+        ...group,
+        recordOwnerMessageCount: 0,
+        contactMessageCount: 0
+      }))
+    }
+
+    const enrichedGroups: Array<Record<string, unknown>> = []
+    for (const group of commonGroups) {
+      const groupId = String(group.groupId || group.wechatId || '').trim()
+      let recordOwnerMessageCount = 0
+      let contactMessageCount = 0
+
+      if (groupId) {
+        const dbTablePairs = this.findSessionTables(groupId)
+        for (const { db, tableName } of dbTablePairs) {
+          try {
+            const hasName2Id = db.prepare(
+              "SELECT name FROM sqlite_master WHERE type='table' AND name='Name2Id'"
+            ).get()
+
+            const baseWhere = 'COALESCE(m.local_type, 0) NOT IN (10000, 266287972401)'
+            const sql = hasName2Id
+              ? `SELECT m.is_send as is_send, n.user_name as sender_username, COUNT(*) as c
+                 FROM ${tableName} m
+                 LEFT JOIN Name2Id n ON m.real_sender_id = n.rowid
+                 WHERE ${baseWhere}
+                 GROUP BY m.is_send, n.user_name`
+              : `SELECT is_send as is_send, '' as sender_username, COUNT(*) as c
+                 FROM ${tableName}
+                 WHERE COALESCE(local_type, 0) NOT IN (10000, 266287972401)
+                 GROUP BY is_send`
+
+            const rows = db.prepare(sql).all() as Array<{ is_send?: number; sender_username?: string; c?: number }>
+            for (const row of rows) {
+              const count = Number(row?.c || 0)
+              if (!Number.isFinite(count) || count <= 0) continue
+              const isSend = Number(row?.is_send || 0) === 1
+              const sender = this.normalizeIdentityCandidate(row?.sender_username)
+
+              if (isSend || (sender && recordOwnerCandidateSet.has(sender))) {
+                recordOwnerMessageCount += count
+                continue
+              }
+              if (sender && contactCandidateSet.has(sender)) {
+                contactMessageCount += count
+              }
+            }
+          } catch {
+            // 单表统计失败时继续下一个表，避免中断整个导出
+          }
+        }
+      }
+
+      enrichedGroups.push({
+        ...group,
+        recordOwnerMessageCount,
+        contactMessageCount
+      })
+    }
+
+    return enrichedGroups
+  }
+
   private extractChatroomOwnerUsernameForArkme(chatroomId: string): string | undefined {
     if (!this.contactDb || !chatroomId) return undefined
 
@@ -3363,9 +3450,27 @@ class ExportService {
         })
       }
 
-      const commonGroups = !isGroup
+      let commonGroups = !isGroup
         ? await this.getCommonGroupsForArkme(sessionId, myWxid, cleanedMyWxid)
         : undefined
+      if (!isGroup && Array.isArray(commonGroups) && commonGroups.length > 0) {
+        commonGroups = await this.enrichCommonGroupsMessageCounts(
+          commonGroups,
+          [
+            cleanedMyWxid,
+            myWxid,
+            myInfo.wechatId,
+            myInfo.wechatAlias
+          ],
+          [
+            sessionId,
+            sessionWxid,
+            sessionAlias,
+            sessionInfo.wechatId,
+            sessionInfo.wechatAlias
+          ]
+        )
+      }
 
       const arkmeExport = {
         exportInfo: {
