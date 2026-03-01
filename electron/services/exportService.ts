@@ -129,6 +129,10 @@ export interface ExportOptions {
   currentImageCountHint?: number
   currentVideoCountHint?: number
   currentVoiceCountHint?: number
+  // 同一批媒体导出任务的唯一标识（用于控制索引快照只在批次末尾生成）
+  mediaExportBatchId?: string
+  // 当且仅当本次调用是该批次最后一次导出时置为 true
+  mediaExportBatchIsFinal?: boolean
 }
 
 export interface ContactExportOptions {
@@ -4551,11 +4555,16 @@ class ExportService {
         if (shouldWriteMainMap) {
           this.writeArkmeMediaMapFile(exportRootDir, globalArkmeMediaIndexMap)
         }
-        this.writeArkmeMediaMapFile(
-          exportRootDir,
-          globalArkmeMediaIndexMap,
-          this.buildMediaMapSnapshotFileName()
-        )
+        const shouldWriteSnapshot = options.mediaExportBatchId
+          ? Boolean(options.mediaExportBatchIsFinal)
+          : true
+        if (shouldWriteSnapshot) {
+          this.writeArkmeMediaMapFile(
+            exportRootDir,
+            globalArkmeMediaIndexMap,
+            this.buildMediaMapSnapshotFileName()
+          )
+        }
       }
 
       onProgress?.({

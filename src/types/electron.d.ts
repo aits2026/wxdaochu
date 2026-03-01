@@ -920,6 +920,8 @@ export interface ExportOptions {
   currentImageCountHint?: number
   currentVideoCountHint?: number
   currentVoiceCountHint?: number
+  mediaExportBatchId?: string
+  mediaExportBatchIsFinal?: boolean
 }
 
 export interface ContactExportOptions {

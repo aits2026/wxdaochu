@@ -52,6 +52,8 @@ interface ExportOptions {
   currentImageCountHint?: number
   currentVideoCountHint?: number
   currentVoiceCountHint?: number
+  mediaExportBatchId?: string
+  mediaExportBatchIsFinal?: boolean
 }
 
 interface ContactExportOptions {
@@ -4404,7 +4406,10 @@ function ExportPage() {
         delete chatExportBatchTaskProgressRef.current[job.batchTaskId]
       }
     }
-    const exportOptions = {
+    const hasAnyMediaExport = Boolean(job.options.exportImages || job.options.exportVideos || job.options.exportEmojis || job.options.exportVoices)
+    const batchProgress = job.batchTaskId ? chatExportBatchTaskProgressRef.current[job.batchTaskId] : undefined
+    const isBatchFinalJob = Boolean(batchProgress && batchProgress.completed + 1 >= batchProgress.total)
+    const exportOptions: ExportOptions = {
       format: job.options.format,
       dateRange: (job.options.startDate && job.options.endDate) ? {
         start: Math.floor(new Date(job.options.startDate + 'T00:00:00').getTime() / 1000),
@@ -4417,7 +4422,13 @@ function ExportPage() {
       exportVoices: job.options.exportVoices,
       skipIfUnchanged: !job.options.exportImages && !job.options.exportVideos && !job.options.exportEmojis && !job.options.exportVoices,
       currentMessageCountHint: job.messageCount,
-      latestMessageTimestampHint: job.latestMessageTimestamp
+      latestMessageTimestampHint: job.latestMessageTimestamp,
+      ...(job.batchTaskId && hasAnyMediaExport
+        ? {
+          mediaExportBatchId: job.batchTaskId,
+          mediaExportBatchIsFinal: isBatchFinalJob
+        }
+        : {})
     }
 
     try {
@@ -4797,6 +4808,8 @@ function ExportPage() {
       }
     }
 
+    const batchProgress = imageExportBatchTaskProgressRef.current[job.batchTaskId]
+    const isBatchFinalJob = Boolean(batchProgress && batchProgress.completed + 1 >= batchProgress.total)
     const exportOptions: ExportOptions = {
       format: 'json',
       startDate: '',
@@ -4808,7 +4821,9 @@ function ExportPage() {
       exportVoices: false,
       imageOnlyMode: true,
       skipIfUnchanged: true,
-      latestMessageTimestampHint: job.latestMessageTimestamp
+      latestMessageTimestampHint: job.latestMessageTimestamp,
+      mediaExportBatchId: job.batchTaskId,
+      mediaExportBatchIsFinal: isBatchFinalJob
     }
     if (typeof job.imageCount === 'number' && Number.isFinite(job.imageCount) && job.imageCount >= 0) {
       exportOptions.currentImageCountHint = job.imageCount
@@ -5236,6 +5251,8 @@ function ExportPage() {
       }
     }
 
+    const batchProgress = emojiExportBatchTaskProgressRef.current[job.batchTaskId]
+    const isBatchFinalJob = Boolean(batchProgress && batchProgress.completed + 1 >= batchProgress.total)
     const exportOptions: ExportOptions = {
       format: 'json',
       startDate: '',
@@ -5247,7 +5264,9 @@ function ExportPage() {
       exportVoices: false,
       emojiOnlyMode: true,
       skipIfUnchanged: true,
-      latestMessageTimestampHint: job.latestMessageTimestamp
+      latestMessageTimestampHint: job.latestMessageTimestamp,
+      mediaExportBatchId: job.batchTaskId,
+      mediaExportBatchIsFinal: isBatchFinalJob
     }
     if (typeof job.emojiCount === 'number' && Number.isFinite(job.emojiCount) && job.emojiCount >= 0) {
       exportOptions.currentEmojiCountHint = job.emojiCount
@@ -5555,6 +5574,8 @@ function ExportPage() {
       }
     }
 
+    const batchProgress = videoExportBatchTaskProgressRef.current[job.batchTaskId]
+    const isBatchFinalJob = Boolean(batchProgress && batchProgress.completed + 1 >= batchProgress.total)
     const exportOptions: ExportOptions = {
       format: 'json',
       startDate: '',
@@ -5566,7 +5587,9 @@ function ExportPage() {
       exportVoices: false,
       videoOnlyMode: true,
       skipIfUnchanged: true,
-      latestMessageTimestampHint: job.latestMessageTimestamp
+      latestMessageTimestampHint: job.latestMessageTimestamp,
+      mediaExportBatchId: job.batchTaskId,
+      mediaExportBatchIsFinal: isBatchFinalJob
     }
     if (typeof job.videoCount === 'number' && Number.isFinite(job.videoCount) && job.videoCount >= 0) {
       exportOptions.currentVideoCountHint = job.videoCount
@@ -5851,6 +5874,8 @@ function ExportPage() {
       }
     }
 
+    const batchProgress = voiceExportBatchTaskProgressRef.current[job.batchTaskId]
+    const isBatchFinalJob = Boolean(batchProgress && batchProgress.completed + 1 >= batchProgress.total)
     const exportOptions: ExportOptions = {
       format: 'json',
       startDate: '',
@@ -5861,7 +5886,9 @@ function ExportPage() {
       exportEmojis: false,
       exportVoices: true,
       voiceOnlyMode: true,
-      latestMessageTimestampHint: job.latestMessageTimestamp
+      latestMessageTimestampHint: job.latestMessageTimestamp,
+      mediaExportBatchId: job.batchTaskId,
+      mediaExportBatchIsFinal: isBatchFinalJob
     }
     if (typeof job.voiceCount === 'number' && Number.isFinite(job.voiceCount) && job.voiceCount >= 0) {
       exportOptions.currentVoiceCountHint = job.voiceCount
