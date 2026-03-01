@@ -903,6 +903,7 @@ export interface ExportOptions {
   format: 'chatlab' | 'chatlab-jsonl' | 'json' | 'arkme-json' | 'html' | 'txt' | 'excel' | 'sql'
   dateRange?: { start: number; end: number } | null
   exportMedia?: boolean
+  exportChatText?: boolean
   exportAvatars?: boolean
   exportImages?: boolean
   exportVideos?: boolean

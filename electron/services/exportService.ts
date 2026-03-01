@@ -99,6 +99,8 @@ export interface ExportOptions {
   format: 'chatlab' | 'chatlab-jsonl' | 'json' | 'arkme-json' | 'html' | 'txt' | 'excel' | 'sql'
   dateRange?: { start: number; end: number } | null
   exportMedia?: boolean
+  // 是否导出聊天文本；false 时只导出选中的媒体资源
+  exportChatText?: boolean
   exportAvatars?: boolean
   exportImages?: boolean
   exportVideos?: boolean
@@ -4145,27 +4147,32 @@ class ExportService {
           !options.exportVoices
         )
         const mediaOnlyMode = imageOnlyMode || videoOnlyMode || emojiOnlyMode || voiceOnlyMode
+        const shouldExportChatText = options.exportChatText !== false
         const hasMedia = Boolean(options.exportImages || options.exportVideos || options.exportEmojis || options.exportVoices)
-        const mediaOnlyOutputDir = imageOnlyMode
-          ? path.join(exportRootDir, 'images')
-          : (videoOnlyMode
-              ? path.join(exportRootDir, 'videos')
-              : (emojiOnlyMode
-                  ? path.join(exportRootDir, 'emojis')
-                  : (voiceOnlyMode ? path.join(exportRootDir, 'voices') : outputDir)))
-        const sessionOutputDir = hasMedia ? path.join(outputDir, safeName) : outputDir
-        if (hasMedia && !mediaOnlyMode && !fs.existsSync(sessionOutputDir)) {
+        const chatTextDisabledMediaOnlyMode = !shouldExportChatText && hasMedia
+        const effectiveMediaOnlyMode = mediaOnlyMode || chatTextDisabledMediaOnlyMode
+        const selectedMediaSubdirs: string[] = []
+        if (options.exportImages) selectedMediaSubdirs.push('images')
+        if (options.exportVideos) selectedMediaSubdirs.push('videos')
+        if (options.exportEmojis) selectedMediaSubdirs.push('emojis')
+        if (options.exportVoices) selectedMediaSubdirs.push('voices')
+        const mediaOnlyOutputDir = selectedMediaSubdirs.length === 1
+          ? path.join(exportRootDir, selectedMediaSubdirs[0])
+          : exportRootDir
+        const sessionOutputDir = hasMedia && !effectiveMediaOnlyMode ? path.join(outputDir, safeName) : outputDir
+        if (hasMedia && !effectiveMediaOnlyMode && !fs.existsSync(sessionOutputDir)) {
           fs.mkdirSync(sessionOutputDir, { recursive: true })
         }
-        if (mediaOnlyMode && !fs.existsSync(mediaOnlyOutputDir)) {
+        if (effectiveMediaOnlyMode && !fs.existsSync(mediaOnlyOutputDir)) {
           fs.mkdirSync(mediaOnlyOutputDir, { recursive: true })
         }
 
         const outputPath = path.join(sessionOutputDir, `${safeFileName}${ext}`)
 
         const canTrySkipTextUnchanged = Boolean(
+          shouldExportChatText &&
           options.skipIfUnchanged &&
-          !mediaOnlyMode &&
+          !effectiveMediaOnlyMode &&
           !hasMedia &&
           Number.isFinite(options.currentMessageCountHint) &&
           Number.isFinite(options.latestMessageTimestampHint) &&
@@ -4420,7 +4427,7 @@ class ExportService {
             const mediaExportResult = await this.exportMediaFiles(
               sessionId,
               exportRootDir,
-              mediaOnlyMode ? exportRootDir : sessionOutputDir,
+              effectiveMediaOnlyMode ? exportRootDir : sessionOutputDir,
               options,
               (mediaProgress) => {
               emitProgress({
@@ -4457,7 +4464,7 @@ class ExportService {
           ...options,
           ...(mediaPathMap ? { mediaPathMap } : {}),
           ...(arkmeMediaIndexMap ? { arkmeMediaIndexMap } : {}),
-          ...(hasMedia
+          ...(hasMedia && shouldExportChatText
             ? {
               arkmeMediaMapFilePath: path
                 .relative(path.dirname(outputPath), globalMapPath)
@@ -4467,7 +4474,26 @@ class ExportService {
         }
 
         let result: { success: boolean; error?: string }
-        if (imageOnlyMode || videoOnlyMode || emojiOnlyMode || voiceOnlyMode) {
+        const mediaOnlyEmptyDetail = imageOnlyMode
+          ? '无图片，已跳过'
+          : (videoOnlyMode
+              ? '无视频，已跳过'
+              : (emojiOnlyMode
+                  ? '无表情包，已跳过'
+                  : (voiceOnlyMode ? '无语音，已跳过' : '无可导出的媒体，已跳过')))
+        const mediaOnlyDoneDetail = imageOnlyMode
+          ? '图片导出完成'
+          : (videoOnlyMode
+              ? '视频导出完成'
+              : (emojiOnlyMode
+                  ? '表情包导出完成'
+                  : (voiceOnlyMode ? '语音导出完成' : '媒体导出完成')))
+        const mediaOnlySkipReason = imageOnlyMode
+          ? 'image-empty-session'
+          : (videoOnlyMode
+              ? 'video-empty-session'
+              : (emojiOnlyMode ? 'emoji-empty-session' : (voiceOnlyMode ? 'voice-empty-session' : 'media-empty-session')))
+        if (effectiveMediaOnlyMode) {
           if (!sessionHasExportedMedia) {
             try {
               if (fs.existsSync(sessionOutputDir)) {
@@ -4484,11 +4510,7 @@ class ExportService {
               total: 100,
               currentSession: sessionInfo.displayName,
               phase: 'complete',
-              detail: imageOnlyMode
-                ? '无图片，已跳过'
-                : (videoOnlyMode
-                    ? '无视频，已跳过'
-                    : (emojiOnlyMode ? '无表情包，已跳过' : '无语音，已跳过'))
+              detail: mediaOnlyEmptyDetail
             })
             successCount++
             sessionOutputs.push({
@@ -4497,11 +4519,7 @@ class ExportService {
               openTargetPath: mediaOnlyOutputDir,
               openTargetType: 'directory',
               skipped: true,
-              skipReason: imageOnlyMode
-                ? 'image-empty-session'
-                : (videoOnlyMode
-                    ? 'video-empty-session'
-                    : (emojiOnlyMode ? 'emoji-empty-session' : 'voice-empty-session'))
+              skipReason: mediaOnlySkipReason
             })
             await new Promise(resolve => setImmediate(resolve))
             continue
@@ -4511,13 +4529,11 @@ class ExportService {
             total: 100,
             currentSession: sessionInfo.displayName,
             phase: 'complete',
-            detail: imageOnlyMode
-              ? '图片导出完成'
-              : (videoOnlyMode
-                  ? '视频导出完成'
-                  : (emojiOnlyMode ? '表情包导出完成' : '语音导出完成'))
+            detail: mediaOnlyDoneDetail
           })
           result = { success: true }
+        } else if (!shouldExportChatText) {
+          result = { success: false, error: '未选择聊天文本导出且未选择媒体导出' }
         } else if (options.format === 'json') {
           // 根据格式选择导出方法
           result = await this.exportSessionToDetailedJson(sessionId, outputPath, exportOpts, emitProgress)
@@ -4537,8 +4553,8 @@ class ExportService {
           successCount++
           sessionOutputs.push({
             sessionId,
-            outputPath: mediaOnlyMode ? mediaOnlyOutputDir : outputPath,
-            openTargetPath: hasMedia ? (mediaOnlyMode ? mediaOnlyOutputDir : sessionOutputDir) : outputPath,
+            outputPath: effectiveMediaOnlyMode ? mediaOnlyOutputDir : outputPath,
+            openTargetPath: hasMedia ? (effectiveMediaOnlyMode ? mediaOnlyOutputDir : sessionOutputDir) : outputPath,
             openTargetType: hasMedia ? 'directory' : 'file'
           })
         } else {

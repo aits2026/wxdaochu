@@ -36,6 +36,7 @@ interface ExportOptions {
   format: 'chatlab' | 'chatlab-jsonl' | 'json' | 'arkme-json' | 'html' | 'txt' | 'excel' | 'sql'
   startDate: string
   endDate: string
+  exportChatText?: boolean
   exportAvatars: boolean
   exportImages: boolean
   exportVideos: boolean
@@ -940,6 +941,7 @@ function ExportPage() {
     format: DEFAULT_CHAT_EXPORT_FORMAT,
     startDate: '',
     endDate: '',
+    exportChatText: true,
     exportAvatars: true,
     exportImages: false,
     exportVideos: false,
@@ -962,6 +964,7 @@ function ExportPage() {
     format: DEFAULT_CHAT_EXPORT_FORMAT,
     startDate: '',
     endDate: '',
+    exportChatText: true,
     exportAvatars: true,
     exportImages: false,
     exportVideos: false,
@@ -4407,6 +4410,7 @@ function ExportPage() {
       }
     }
     const hasAnyMediaExport = Boolean(job.options.exportImages || job.options.exportVideos || job.options.exportEmojis || job.options.exportVoices)
+    const shouldExportChatText = job.options.exportChatText !== false
     const batchProgress = job.batchTaskId ? chatExportBatchTaskProgressRef.current[job.batchTaskId] : undefined
     const isBatchFinalJob = Boolean(batchProgress && batchProgress.completed + 1 >= batchProgress.total)
     const exportOptions: ExportOptions = {
@@ -4416,11 +4420,12 @@ function ExportPage() {
         end: Math.floor(new Date(job.options.endDate + 'T23:59:59').getTime() / 1000)
       } : null,
       exportAvatars: job.options.exportAvatars,
+      exportChatText: shouldExportChatText,
       exportImages: job.options.exportImages,
       exportVideos: job.options.exportVideos,
       exportEmojis: job.options.exportEmojis,
       exportVoices: job.options.exportVoices,
-      skipIfUnchanged: !job.options.exportImages && !job.options.exportVideos && !job.options.exportEmojis && !job.options.exportVoices,
+      skipIfUnchanged: shouldExportChatText && !job.options.exportImages && !job.options.exportVideos && !job.options.exportEmojis && !job.options.exportVoices,
       currentMessageCountHint: job.messageCount,
       latestMessageTimestampHint: job.latestMessageTimestamp,
       ...(job.batchTaskId && hasAnyMediaExport
@@ -6147,6 +6152,17 @@ function ExportPage() {
   // 导出聊天记录（支持排队）
   const startExport = useCallback(async () => {
     if (!selectedSession || !exportFolder) return
+    const hasSelectedExportTarget = Boolean(
+      options.exportChatText !== false ||
+      options.exportImages ||
+      options.exportVideos ||
+      options.exportEmojis ||
+      options.exportVoices
+    )
+    if (!hasSelectedExportTarget) {
+      alert('请至少选择一种导出内容')
+      return
+    }
     enqueueChatExportJobs({
       sessionIds: [selectedSession],
       exportOptions: options,
@@ -6375,6 +6391,7 @@ function ExportPage() {
       sessionIds: bulkExportEligibleSessions.map(session => session.username),
       exportOptions: {
         ...chatTextCardExportOptions,
+        exportChatText: true,
         exportImages: false,
         exportVideos: false,
         exportEmojis: false,
@@ -8492,8 +8509,8 @@ function ExportPage() {
                   <div className="setting-section">
                     <h3>导出选项</h3>
                     <div className="export-options export-options-with-counts">
-                      <label className="checkbox-item checkbox-item-with-count is-fixed">
-                        <input type="checkbox" checked disabled readOnly />
+                      <label className="checkbox-item checkbox-item-with-count">
+                        <input type="checkbox" checked={options.exportChatText !== false} onChange={e => setOptions(prev => ({ ...prev, exportChatText: e.target.checked }))} />
                         <div className="custom-checkbox"></div>
                         <FileText size={16} style={{ color: 'var(--text-tertiary)' }} />
                         <div className="checkbox-item-content">
@@ -8600,7 +8617,19 @@ function ExportPage() {
                   <button
                     className="export-btn"
                     onClick={startExport}
-                    disabled={!selectedSession || !exportFolder || selectedSessionChatExportState === 'running' || selectedSessionChatExportState === 'queued'}
+                    disabled={
+                      !selectedSession ||
+                      !exportFolder ||
+                      selectedSessionChatExportState === 'running' ||
+                      selectedSessionChatExportState === 'queued' ||
+                      (
+                        options.exportChatText === false &&
+                        !options.exportImages &&
+                        !options.exportVideos &&
+                        !options.exportEmojis &&
+                        !options.exportVoices
+                      )
+                    }
                   >
                     {selectedSessionChatExportState === 'running' ? (
                       <>
