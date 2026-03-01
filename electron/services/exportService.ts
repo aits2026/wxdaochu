@@ -968,17 +968,77 @@ class ExportService {
     }
   }
 
-  private normalizeIdentityCandidate(value: unknown): string {
-    return String(value || '').trim().toLowerCase()
-  }
-
   private buildIdentityCandidateSet(values: Array<unknown>): Set<string> {
     const result = new Set<string>()
     for (const value of values) {
-      const normalized = this.normalizeIdentityCandidate(value)
+      const normalized = String(value || '').trim()
       if (normalized) result.add(normalized)
     }
     return result
+  }
+
+  private countChatroomMessageCountsForCandidates(
+    chatroomId: string,
+    recordOwnerIds: Set<string>,
+    contactIds: Set<string>
+  ): { recordOwnerMessageCount: number; contactMessageCount: number } {
+    let recordOwnerMessageCount = 0
+    let contactMessageCount = 0
+
+    const dbTablePairs = this.findSessionTables(chatroomId)
+    for (const { db, tableName } of dbTablePairs) {
+      try {
+        const columns = db.prepare(`PRAGMA table_info('${tableName}')`).all() as any[]
+        const colNames = new Set(columns.map((c: any) => c.name))
+
+        let ownerCountedByRealSender = false
+        if (colNames.has('real_sender_id')) {
+          const name2IdTableRow = db.prepare(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('Name2Id','name2id') LIMIT 1"
+          ).get() as { name?: string } | undefined
+          const name2IdTable = name2IdTableRow?.name
+
+          if (name2IdTable) {
+            const resolveName2IdRowId = (candidates: Set<string>): number | null => {
+              for (const candidate of candidates) {
+                if (!candidate) continue
+                try {
+                  const row = db.prepare(`SELECT rowid FROM ${name2IdTable} WHERE user_name = ? LIMIT 1`).get(candidate) as { rowid?: number } | undefined
+                  if (row?.rowid != null) return Number(row.rowid)
+                } catch { }
+              }
+              return null
+            }
+
+            const recordOwnerRowId = resolveName2IdRowId(recordOwnerIds)
+            if (recordOwnerRowId != null) {
+              const countRow = db.prepare(
+                `SELECT COUNT(*) as count FROM "${tableName}" WHERE real_sender_id = ?`
+              ).get(recordOwnerRowId) as { count?: number } | undefined
+              recordOwnerMessageCount += Number(countRow?.count || 0)
+              ownerCountedByRealSender = true
+            }
+
+            const contactRowId = resolveName2IdRowId(contactIds)
+            if (contactRowId != null) {
+              const countRow = db.prepare(
+                `SELECT COUNT(*) as count FROM "${tableName}" WHERE real_sender_id = ?`
+              ).get(contactRowId) as { count?: number } | undefined
+              contactMessageCount += Number(countRow?.count || 0)
+            }
+          }
+        }
+
+        if (!ownerCountedByRealSender && colNames.has('is_send')) {
+          const countRow = db.prepare(
+            `SELECT COUNT(*) as count FROM "${tableName}" WHERE is_send = 1`
+          ).get() as { count?: number } | undefined
+          recordOwnerMessageCount += Number(countRow?.count || 0)
+        }
+      } catch { }
+    }
+
+    return { recordOwnerMessageCount, contactMessageCount }
   }
 
   private async enrichCommonGroupsMessageCounts(
@@ -1001,49 +1061,9 @@ class ExportService {
     const enrichedGroups: Array<Record<string, unknown>> = []
     for (const group of commonGroups) {
       const groupId = String(group.groupId || group.wechatId || '').trim()
-      let recordOwnerMessageCount = 0
-      let contactMessageCount = 0
-
-      if (groupId) {
-        const dbTablePairs = this.findSessionTables(groupId)
-        for (const { db, tableName } of dbTablePairs) {
-          try {
-            const hasName2Id = db.prepare(
-              "SELECT name FROM sqlite_master WHERE type='table' AND name='Name2Id'"
-            ).get()
-
-            const baseWhere = 'COALESCE(m.local_type, 0) NOT IN (10000, 266287972401)'
-            const sql = hasName2Id
-              ? `SELECT m.is_send as is_send, n.user_name as sender_username, COUNT(*) as c
-                 FROM ${tableName} m
-                 LEFT JOIN Name2Id n ON m.real_sender_id = n.rowid
-                 WHERE ${baseWhere}
-                 GROUP BY m.is_send, n.user_name`
-              : `SELECT is_send as is_send, '' as sender_username, COUNT(*) as c
-                 FROM ${tableName}
-                 WHERE COALESCE(local_type, 0) NOT IN (10000, 266287972401)
-                 GROUP BY is_send`
-
-            const rows = db.prepare(sql).all() as Array<{ is_send?: number; sender_username?: string; c?: number }>
-            for (const row of rows) {
-              const count = Number(row?.c || 0)
-              if (!Number.isFinite(count) || count <= 0) continue
-              const isSend = Number(row?.is_send || 0) === 1
-              const sender = this.normalizeIdentityCandidate(row?.sender_username)
-
-              if (isSend || (sender && recordOwnerCandidateSet.has(sender))) {
-                recordOwnerMessageCount += count
-                continue
-              }
-              if (sender && contactCandidateSet.has(sender)) {
-                contactMessageCount += count
-              }
-            }
-          } catch {
-            // 单表统计失败时继续下一个表，避免中断整个导出
-          }
-        }
-      }
+      const { recordOwnerMessageCount, contactMessageCount } = groupId
+        ? this.countChatroomMessageCountsForCandidates(groupId, recordOwnerCandidateSet, contactCandidateSet)
+        : { recordOwnerMessageCount: 0, contactMessageCount: 0 }
 
       enrichedGroups.push({
         ...group,
