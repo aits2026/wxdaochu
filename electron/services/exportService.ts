@@ -2,6 +2,7 @@
 import * as path from 'path'
 import * as https from 'https'
 import * as http from 'http'
+import { createHash } from 'crypto'
 import Database from 'better-sqlite3'
 import { app } from 'electron'
 import { ConfigService } from './config'
@@ -117,6 +118,8 @@ export interface ExportOptions {
   mediaPathMap?: Map<string, string>
   // Arkme 媒体索引：mediaKey -> 媒体条目（用于文本导出与媒体导出解耦）
   arkmeMediaIndexMap?: Map<string, ArkmeMediaIndexEntry>
+  // 全局媒体索引文件（相对 outputPath 所在目录）
+  arkmeMediaMapFilePath?: string
   // 导出前跳过检查（renderer 传入 hint，主要用于聊天文本批量导出）
   skipIfUnchanged?: boolean
   currentMessageCountHint?: number
@@ -189,6 +192,15 @@ interface ArkmeMediaIndexEntry extends ArkmeMediaRef {
   platformMessageId?: string
   localMessageId?: string
 }
+
+type MediaDedupState = Record<ArkmeMediaKind, Map<string, string>>
+
+const createMediaDedupState = (): MediaDedupState => ({
+  image: new Map<string, string>(),
+  video: new Map<string, string>(),
+  emoji: new Map<string, string>(),
+  voice: new Map<string, string>()
+})
 
 interface ResolvedContactInfo {
   displayName: string
@@ -1470,31 +1482,49 @@ class ExportService {
     }
   }
 
-  private writeArkmeMediaIndexFile(
-    sessionOutputDir: string,
-    sessionId: string,
-    arkmeMediaIndexMap: Map<string, ArkmeMediaIndexEntry>
+  private upsertArkmeMediaIndexEntry(
+    arkmeMediaIndexMap: Map<string, ArkmeMediaIndexEntry>,
+    entry: ArkmeMediaIndexEntry
   ): void {
-    if (!sessionOutputDir || arkmeMediaIndexMap.size === 0) return
-    const indexPath = path.join(sessionOutputDir, 'arkme-media-index.json')
-    const payload = {
-      version: '1.0.0',
-      schema: 'arkme.chat.media.index.v1',
-      sessionId,
-      generatedAt: Math.floor(Date.now() / 1000),
-      count: arkmeMediaIndexMap.size,
-      items: Array.from(arkmeMediaIndexMap.values())
+    const prev = arkmeMediaIndexMap.get(entry.mediaKey)
+    const normalizedSourceMd5 = entry.sourceMd5 || this.extractArkmeSourceMd5(entry.source) || null
+    const normalizedFileMd5 = this.normalizeMd5(entry.fileMd5) || null
+    if (!prev) {
+      arkmeMediaIndexMap.set(entry.mediaKey, {
+        ...entry,
+        sourceMd5: normalizedSourceMd5,
+        fileMd5: normalizedFileMd5
+      })
+      return
     }
-    fs.writeFileSync(indexPath, JSON.stringify(payload, null, 2), 'utf-8')
+
+    const mergedSource = {
+      ...((prev.source as Record<string, unknown> | undefined) || {}),
+      ...((entry.source as Record<string, unknown> | undefined) || {})
+    }
+    const mergedSourceMd5 = prev.sourceMd5 ||
+      normalizedSourceMd5 ||
+      this.extractArkmeSourceMd5(mergedSource) ||
+      null
+    const mergedFileMd5 = prev.fileMd5 || normalizedFileMd5 || null
+    arkmeMediaIndexMap.set(entry.mediaKey, {
+      ...prev,
+      ...entry,
+      exported: Boolean(prev.exported || entry.exported),
+      relativePath: prev.relativePath || entry.relativePath || null,
+      fileName: prev.fileName || entry.fileName || null,
+      sourceMd5: mergedSourceMd5,
+      fileMd5: mergedFileMd5,
+      source: Object.keys(mergedSource).length > 0 ? mergedSource : undefined
+    })
   }
 
   private writeArkmeMediaMapFile(
-    sessionOutputDir: string,
-    sessionId: string,
+    outputDir: string,
     arkmeMediaIndexMap: Map<string, ArkmeMediaIndexEntry>
   ): void {
-    if (!sessionOutputDir || arkmeMediaIndexMap.size === 0) return
-    const mapPath = path.join(sessionOutputDir, 'arkme-media-map.json')
+    if (!outputDir) return
+    const mapPath = path.join(outputDir, 'arkme-media-map.json')
     const sortedItems = Array.from(arkmeMediaIndexMap.values())
       .sort((a, b) => a.createTime - b.createTime || a.mediaKey.localeCompare(b.mediaKey))
       .map(item => ({
@@ -1536,7 +1566,6 @@ class ExportService {
     const payload = {
       version: '1.0.0',
       schema: 'arkme.chat.media.map.v1',
-      sessionId,
       generatedAt: Math.floor(Date.now() / 1000),
       count: sortedItems.length,
       sourceMd5Count: Object.keys(bySourceMd5).length,
@@ -2826,6 +2855,8 @@ class ExportService {
       const myWxid = this.configService.get('myWxid') || ''
       const cleanedMyWxid = this.cleanAccountDirName(myWxid)
       const isGroup = sessionId.includes('@chatroom')
+      const hasMedia = Boolean(options.exportImages || options.exportVideos || options.exportEmojis || options.exportVoices)
+      const mediaMapFile = options.arkmeMediaMapFilePath || 'arkme-media-map.json'
 
       const sessionInfo = await this.getContactInfo(sessionId)
       const sessionIdentity = await this.resolveSessionWechatIdentity(sessionId)
@@ -3337,8 +3368,7 @@ class ExportService {
               send: privateSendInfo,
               recordOwner: recordOwnerInfo
             }),
-          mediaIndexFile: 'arkme-media-index.json',
-          mediaMapFile: 'arkme-media-map.json',
+          ...(hasMedia ? { mediaIndexFile: mediaMapFile, mediaMapFile } : {}),
           ...(isGroup && { groupId: sessionId }),
           ...(options.exportAvatars && sessionInfo.avatarUrl && { avatar: sessionInfo.avatarUrl }),
           firstTimestamp: firstMessageTime,
@@ -3958,6 +3988,11 @@ class ExportService {
     let successCount = 0
     let failCount = 0
     const sessionOutputs: ExportSessionOutputTarget[] = []
+    const globalArkmeMediaIndexMap = new Map<string, ArkmeMediaIndexEntry>()
+    const hasAnyMediaExport = Boolean(options.exportImages || options.exportVideos || options.exportEmojis || options.exportVoices)
+    const mediaStashDir = path.join(outputDir, '.media-store')
+    const globalMediaDedupState = createMediaDedupState()
+    const sessionWithExistingMedia = new Set<string>()
 
     try {
       if (!this.dbDir) {
@@ -3970,6 +4005,20 @@ class ExportService {
       // 确保输出目录存在
       if (!fs.existsSync(outputDir)) {
         fs.mkdirSync(outputDir, { recursive: true })
+      }
+
+      const globalMapPath = path.join(outputDir, 'arkme-media-map.json')
+      if (fs.existsSync(globalMapPath)) {
+        try {
+          const parsed = JSON.parse(fs.readFileSync(globalMapPath, 'utf-8')) as { items?: Array<{ sessionId?: string; exported?: boolean }> }
+          for (const item of parsed.items || []) {
+            if (item?.exported && item.sessionId) {
+              sessionWithExistingMedia.add(String(item.sessionId))
+            }
+          }
+        } catch {
+          // 忽略历史索引解析失败，继续按目录判断
+        }
       }
 
       for (let i = 0; i < sessionIds.length; i++) {
@@ -4091,7 +4140,7 @@ class ExportService {
           const latestEmojiRecord = exportRecordService.getLatestRecord(sessionId, 'emoji-assets')
           const currentEmojiCount = Number(options.currentEmojiCountHint ?? -1)
           const currentLatestMessageTimestamp = Number(options.latestMessageTimestampHint || 0)
-          const sessionFolderHasFiles = this.dirHasAnyFile(sessionOutputDir)
+          const sessionFolderHasFiles = this.dirHasAnyFile(sessionOutputDir) || sessionWithExistingMedia.has(sessionId)
           const hasNoEmojiDataChange = Boolean(
             latestEmojiRecord &&
             latestEmojiRecord.emojiItemCount === currentEmojiCount &&
@@ -4109,8 +4158,8 @@ class ExportService {
             successCount++
             sessionOutputs.push({
               sessionId,
-              outputPath: sessionOutputDir,
-              openTargetPath: sessionOutputDir,
+              outputPath: mediaStashDir,
+              openTargetPath: mediaStashDir,
               openTargetType: 'directory',
               skipped: true,
               skipReason: 'emoji-unchanged-existing-folder'
@@ -4132,7 +4181,7 @@ class ExportService {
           const latestImageRecord = exportRecordService.getLatestRecord(sessionId, 'image-assets')
           const currentImageCount = Number(options.currentImageCountHint ?? -1)
           const currentLatestMessageTimestamp = Number(options.latestMessageTimestampHint || 0)
-          const sessionFolderHasFiles = this.dirHasAnyFile(sessionOutputDir)
+          const sessionFolderHasFiles = this.dirHasAnyFile(sessionOutputDir) || sessionWithExistingMedia.has(sessionId)
           const hasNoImageDataChange = Boolean(
             latestImageRecord &&
             latestImageRecord.messageCount === currentImageCount &&
@@ -4150,8 +4199,8 @@ class ExportService {
             successCount++
             sessionOutputs.push({
               sessionId,
-              outputPath: sessionOutputDir,
-              openTargetPath: sessionOutputDir,
+              outputPath: mediaStashDir,
+              openTargetPath: mediaStashDir,
               openTargetType: 'directory',
               skipped: true,
               skipReason: 'image-unchanged-existing-folder'
@@ -4173,7 +4222,7 @@ class ExportService {
           const latestVideoRecord = exportRecordService.getLatestRecord(sessionId, 'video-assets')
           const currentVideoCount = Number(options.currentVideoCountHint ?? -1)
           const currentLatestMessageTimestamp = Number(options.latestMessageTimestampHint || 0)
-          const sessionFolderHasFiles = this.dirHasAnyFile(sessionOutputDir)
+          const sessionFolderHasFiles = this.dirHasAnyFile(sessionOutputDir) || sessionWithExistingMedia.has(sessionId)
           const hasNoVideoDataChange = Boolean(
             latestVideoRecord &&
             latestVideoRecord.messageCount === currentVideoCount &&
@@ -4191,8 +4240,8 @@ class ExportService {
             successCount++
             sessionOutputs.push({
               sessionId,
-              outputPath: sessionOutputDir,
-              openTargetPath: sessionOutputDir,
+              outputPath: mediaStashDir,
+              openTargetPath: mediaStashDir,
               openTargetType: 'directory',
               skipped: true,
               skipReason: 'video-unchanged-existing-folder'
@@ -4288,9 +4337,14 @@ class ExportService {
         // 先导出媒体文件，收集路径映射表
         let mediaPathMap: Map<string, string> | undefined
         let arkmeMediaIndexMap: Map<string, ArkmeMediaIndexEntry> | undefined
+        let sessionHasExportedMedia = false
         if (hasMedia) {
           try {
-            const mediaExportResult = await this.exportMediaFiles(sessionId, sessionOutputDir, options, (mediaProgress) => {
+            const mediaExportResult = await this.exportMediaFiles(
+              sessionId,
+              sessionOutputDir,
+              options,
+              (mediaProgress) => {
               emitProgress({
                 current: mediaProgress.current ?? 0,
                 total: mediaProgress.total ?? 0,
@@ -4301,12 +4355,20 @@ class ExportService {
                 stepTotal: mediaProgress.total,
                 stepUnit: mediaProgress.unit
               })
-            })
+              },
+              globalMediaDedupState,
+              mediaStashDir
+            )
             mediaPathMap = mediaExportResult.mediaPathMap
             arkmeMediaIndexMap = mediaExportResult.arkmeMediaIndexMap
             if (arkmeMediaIndexMap.size > 0) {
-              this.writeArkmeMediaIndexFile(sessionOutputDir, sessionId, arkmeMediaIndexMap)
-              this.writeArkmeMediaMapFile(sessionOutputDir, sessionId, arkmeMediaIndexMap)
+              sessionHasExportedMedia = Array.from(arkmeMediaIndexMap.values()).some(item => Boolean(item.exported && item.relativePath))
+              for (const item of arkmeMediaIndexMap.values()) {
+                this.upsertArkmeMediaIndexEntry(globalArkmeMediaIndexMap, item)
+              }
+              if (sessionHasExportedMedia) {
+                sessionWithExistingMedia.add(sessionId)
+              }
             }
           } catch (e) {
             console.error(`导出 ${sessionId} 媒体文件失败:`, e)
@@ -4317,12 +4379,19 @@ class ExportService {
         const exportOpts = {
           ...options,
           ...(mediaPathMap ? { mediaPathMap } : {}),
-          ...(arkmeMediaIndexMap ? { arkmeMediaIndexMap } : {})
+          ...(arkmeMediaIndexMap ? { arkmeMediaIndexMap } : {}),
+          ...(hasMedia
+            ? {
+              arkmeMediaMapFilePath: path
+                .relative(path.dirname(outputPath), path.join(outputDir, 'arkme-media-map.json'))
+                .replace(/\\/g, '/')
+            }
+            : {})
         }
 
         let result: { success: boolean; error?: string }
         if (imageOnlyMode || videoOnlyMode || emojiOnlyMode || voiceOnlyMode) {
-          if (!this.dirHasAnyFile(sessionOutputDir)) {
+          if (!sessionHasExportedMedia) {
             try {
               if (fs.existsSync(sessionOutputDir)) {
                 const entries = fs.readdirSync(sessionOutputDir)
@@ -4391,8 +4460,8 @@ class ExportService {
           successCount++
           sessionOutputs.push({
             sessionId,
-            outputPath: mediaOnlyMode ? sessionOutputDir : outputPath,
-            openTargetPath: hasMedia ? sessionOutputDir : outputPath,
+            outputPath: mediaOnlyMode ? mediaStashDir : outputPath,
+            openTargetPath: hasMedia ? (mediaOnlyMode ? mediaStashDir : sessionOutputDir) : outputPath,
             openTargetType: hasMedia ? 'directory' : 'file'
           })
         } else {
@@ -4402,6 +4471,13 @@ class ExportService {
 
         // 让出事件循环，避免阻塞主进程
         await new Promise(resolve => setImmediate(resolve))
+      }
+
+      if (hasAnyMediaExport) {
+        const globalMediaMapPath = path.join(outputDir, 'arkme-media-map.json')
+        if (globalArkmeMediaIndexMap.size > 0 || !fs.existsSync(globalMediaMapPath)) {
+          this.writeArkmeMediaMapFile(outputDir, globalArkmeMediaIndexMap)
+        }
       }
 
       onProgress?.({
@@ -4430,7 +4506,9 @@ class ExportService {
     sessionId: string,
     outputDir: string,
     options: ExportOptions,
-    onDetail?: (progress: ExportMediaProgress) => void
+    onDetail?: (progress: ExportMediaProgress) => void,
+    globalMediaDedupState?: MediaDedupState,
+    mediaStashDir?: string
   ): Promise<{ mediaPathMap: Map<string, string>; arkmeMediaIndexMap: Map<string, ArkmeMediaIndexEntry> }> {
     // 返回 消息实例键 -> 相对路径 的映射表（兼容历史 createTime 键）
     const mediaPathMap = new Map<string, string>()
@@ -4441,30 +4519,26 @@ class ExportService {
       return { mediaPathMap, arkmeMediaIndexMap }
     }
 
-    // 创建媒体输出目录（直接在会话文件夹下创建子目录）
-    const imageOutDir = options.exportImages
-      ? (options.imageOnlyMode ? outputDir : path.join(outputDir, 'images'))
-      : ''
-    const videoOutDir = options.exportVideos
-      ? (options.videoOnlyMode ? outputDir : path.join(outputDir, 'videos'))
-      : ''
-    const emojiOutDir = options.exportEmojis
-      ? (options.emojiOnlyMode ? outputDir : path.join(outputDir, 'emojis'))
-      : ''
-    const voiceOutDir = options.exportVoices
-      ? (options.voiceOnlyMode ? outputDir : path.join(outputDir, 'voices'))
-      : ''
+    // 统一媒体存根目录：批量导出全局共享，单会话导出回退到会话目录
+    const stashRootDir = mediaStashDir || outputDir
+    const imageOutDir = options.exportImages ? path.join(stashRootDir, 'images') : ''
+    const videoOutDir = options.exportVideos ? path.join(stashRootDir, 'videos') : ''
+    const emojiOutDir = options.exportEmojis ? path.join(stashRootDir, 'emojis') : ''
+    const voiceOutDir = options.exportVoices ? path.join(stashRootDir, 'voices') : ''
 
-    if (options.exportImages && !options.imageOnlyMode && !fs.existsSync(imageOutDir)) {
+    if (!fs.existsSync(stashRootDir)) {
+      fs.mkdirSync(stashRootDir, { recursive: true })
+    }
+    if (options.exportImages && !fs.existsSync(imageOutDir)) {
       fs.mkdirSync(imageOutDir, { recursive: true })
     }
     if (options.exportVideos && !fs.existsSync(videoOutDir)) {
       fs.mkdirSync(videoOutDir, { recursive: true })
     }
-    if (options.exportEmojis && !options.emojiOnlyMode && !fs.existsSync(emojiOutDir)) {
+    if (options.exportEmojis && !fs.existsSync(emojiOutDir)) {
       fs.mkdirSync(emojiOutDir, { recursive: true })
     }
-    if (options.exportVoices && !options.voiceOnlyMode && !fs.existsSync(voiceOutDir)) {
+    if (options.exportVoices && !fs.existsSync(voiceOutDir)) {
       fs.mkdirSync(voiceOutDir, { recursive: true })
     }
 
@@ -4512,43 +4586,34 @@ class ExportService {
       write_failed: 0,
       unknown: 0
     }
-    const shouldDedupeVideoFiles = options.dedupeVideoFiles !== false
-    const exportedVideoPathByMd5 = new Map<string, string>()
-    const exportedVoicePathByCreateTime = new Map<number, string>()
+    const shouldDedupeVideoFiles = options.dedupeVideoFiles !== false || Boolean(mediaStashDir)
+    const sessionMediaDedupState = createMediaDedupState()
+    const effectiveGlobalMediaDedupState = globalMediaDedupState || createMediaDedupState()
     const exportedFileMd5ByRelativePath = new Map<string, string | null>()
     const emojiSourceResolutionCache = new Map<string, { sourceFile: string | null; failReason?: keyof typeof emojiFailReasons }>()
-    const upsertArkmeMediaIndexEntry = (entry: ArkmeMediaIndexEntry) => {
-      const prev = arkmeMediaIndexMap.get(entry.mediaKey)
-      const normalizedSourceMd5 = entry.sourceMd5 || this.extractArkmeSourceMd5(entry.source) || null
-      const normalizedFileMd5 = this.normalizeMd5(entry.fileMd5) || null
-      if (!prev) {
-        arkmeMediaIndexMap.set(entry.mediaKey, {
-          ...entry,
-          sourceMd5: normalizedSourceMd5,
-          fileMd5: normalizedFileMd5
-        })
-        return
+    const toSessionRelativePath = (absolutePath: string): string => path.relative(outputDir, absolutePath).replace(/\\/g, '/')
+    const dedupeKeyToFileStem = (key: string, fallback: string): string => {
+      const candidate = key.includes(':') ? key.split(':').slice(1).join(':') : key
+      const cleaned = candidate.replace(/[^a-zA-Z0-9._-]/g, '_')
+      return cleaned || fallback
+    }
+    const findDedupAbsPath = (kind: ArkmeMediaKind, dedupKeys: string[]): string | null => {
+      for (const key of dedupKeys) {
+        const hit = sessionMediaDedupState[kind].get(key)
+        if (hit && fs.existsSync(hit)) return hit
       }
-
-      const mergedSource = {
-        ...((prev.source as Record<string, unknown> | undefined) || {}),
-        ...((entry.source as Record<string, unknown> | undefined) || {})
+      for (const key of dedupKeys) {
+        const hit = effectiveGlobalMediaDedupState[kind].get(key)
+        if (hit && fs.existsSync(hit)) return hit
       }
-      const mergedSourceMd5 = prev.sourceMd5 ||
-        normalizedSourceMd5 ||
-        this.extractArkmeSourceMd5(mergedSource) ||
-        null
-      const mergedFileMd5 = prev.fileMd5 || normalizedFileMd5 || null
-      arkmeMediaIndexMap.set(entry.mediaKey, {
-        ...prev,
-        ...entry,
-        exported: Boolean(prev.exported || entry.exported),
-        relativePath: prev.relativePath || entry.relativePath || null,
-        fileName: prev.fileName || entry.fileName || null,
-        sourceMd5: mergedSourceMd5,
-        fileMd5: mergedFileMd5,
-        source: Object.keys(mergedSource).length > 0 ? mergedSource : undefined
-      })
+      return null
+    }
+    const registerDedupAbsPath = (kind: ArkmeMediaKind, dedupKeys: string[], absolutePath: string): void => {
+      for (const key of dedupKeys) {
+        if (!key) continue
+        sessionMediaDedupState[kind].set(key, absolutePath)
+        effectiveGlobalMediaDedupState[kind].set(key, absolutePath)
+      }
     }
     const resolveExportedFileMd5 = async (absolutePath: string, relativePath: string): Promise<string | null> => {
       if (!absolutePath || !relativePath) return null
@@ -4692,25 +4757,36 @@ class ExportService {
 
             if (fs.existsSync(filePath)) {
               const ext = path.extname(filePath) || '.jpg'
-              const fileName = `${mediaKey}${ext}`
-              const destPath = path.join(imageOutDir, fileName)
               try {
-                if (!fs.existsSync(destPath)) {
-                  if (!fs.existsSync(imageOutDir)) {
-                    fs.mkdirSync(imageOutDir, { recursive: true })
+                const sourceFileMd5 = this.normalizeMd5(await this.computeFileMd5(filePath)) || null
+                const dedupKeys: string[] = []
+                if (normalizedImageMd5) dedupKeys.push(`image-md5:${normalizedImageMd5}`)
+                if (sourceFileMd5) dedupKeys.push(`image-file-md5:${sourceFileMd5}`)
+
+                let exportedAbsPath = findDedupAbsPath('image', dedupKeys)
+                if (!exportedAbsPath) {
+                  const fileStem = dedupKeys.length > 0
+                    ? dedupeKeyToFileStem(dedupKeys[0], mediaKey)
+                    : mediaKey
+                  const fileName = `${fileStem}${ext}`
+                  const destPath = path.join(imageOutDir, fileName)
+                  if (!fs.existsSync(destPath)) {
+                    fs.copyFileSync(filePath, destPath)
+                    imageCount++
                   }
-                  fs.copyFileSync(filePath, destPath)
-                  imageCount++
+                  exportedAbsPath = destPath
                 }
-                const relativePath = options.imageOnlyMode ? fileName : `images/${fileName}`
-                const fileMd5 = await resolveExportedFileMd5(destPath, relativePath)
+
+                registerDedupAbsPath('image', dedupKeys, exportedAbsPath)
+                const relativePath = toSessionRelativePath(exportedAbsPath)
+                const fileMd5 = await resolveExportedFileMd5(exportedAbsPath, relativePath)
                 this.setMediaPathMapEntry(mediaPathMap, relativePath, mediaMapKey, createTime)
-                upsertArkmeMediaIndexEntry({
+                this.upsertArkmeMediaIndexEntry(arkmeMediaIndexMap, {
                   mediaKey,
                   kind: 'image',
                   exported: true,
                   relativePath,
-                  fileName,
+                  fileName: path.basename(exportedAbsPath),
                   sourceMd5: normalizedImageMd5 || null,
                   fileMd5,
                   createTime,
@@ -4737,7 +4813,7 @@ class ExportService {
           bumpReason(imageFailReasons, 'no_identifier')
         }
         if (!imageHandled) {
-          upsertArkmeMediaIndexEntry({
+          this.upsertArkmeMediaIndexEntry(arkmeMediaIndexMap, {
             mediaKey,
             kind: 'image',
             exported: false,
@@ -4862,7 +4938,7 @@ class ExportService {
                 (/\<img[^>]*\smd5\s*=\s*['"]([^'"]+)['"]/i.exec(content))?.[1] ||
                 undefined) || undefined
               const imageDatName = this.parseImageDatName(row)
-              upsertArkmeMediaIndexEntry({
+              this.upsertArkmeMediaIndexEntry(arkmeMediaIndexMap, {
                 mediaKey,
                 kind: 'image',
                 exported: false,
@@ -4900,7 +4976,7 @@ class ExportService {
               try {
                 let videoHandled = false
                 const videoMd5 = this.normalizeMd5(videoService.parseVideoMd5(content)) || undefined
-                upsertArkmeMediaIndexEntry({
+                this.upsertArkmeMediaIndexEntry(arkmeMediaIndexMap, {
                   mediaKey,
                   kind: 'video',
                   exported: false,
@@ -4916,16 +4992,17 @@ class ExportService {
                 })
                 if (videoMd5) {
                   if (shouldDedupeVideoFiles) {
-                    const cachedExportPath = exportedVideoPathByMd5.get(videoMd5)
-                    if (cachedExportPath) {
-                      const fileMd5 = await resolveExportedFileMd5(path.join(outputDir, cachedExportPath), cachedExportPath)
-                      this.setMediaPathMapEntry(mediaPathMap, cachedExportPath, mediaMapKey, createTime)
-                      upsertArkmeMediaIndexEntry({
+                    const cachedExportAbsPath = findDedupAbsPath('video', [`video-md5:${videoMd5}`])
+                    if (cachedExportAbsPath) {
+                      const relativePath = toSessionRelativePath(cachedExportAbsPath)
+                      const fileMd5 = await resolveExportedFileMd5(cachedExportAbsPath, relativePath)
+                      this.setMediaPathMapEntry(mediaPathMap, relativePath, mediaMapKey, createTime)
+                      this.upsertArkmeMediaIndexEntry(arkmeMediaIndexMap, {
                         mediaKey,
                         kind: 'video',
                         exported: true,
-                        relativePath: cachedExportPath,
-                        fileName: path.basename(cachedExportPath),
+                        relativePath,
+                        fileName: path.basename(cachedExportAbsPath),
                         sourceMd5: videoMd5,
                         fileMd5,
                         createTime,
@@ -4943,10 +5020,9 @@ class ExportService {
                   if (videoInfo.exists && videoInfo.videoUrl) {
                     const videoPath = videoInfo.videoUrl.replace(/^file:\/\/\//i, '').replace(/\//g, path.sep)
                     if (fs.existsSync(videoPath)) {
-                      const fileName = `${mediaKey}.mp4`
+                      const fileName = `${videoMd5}.mp4`
                       const destPath = path.join(videoOutDir, fileName)
-                      const relativePath = options.videoOnlyMode ? fileName : `videos/${fileName}`
-                      const existedBeforeCopy = fs.existsSync(destPath)
+                      const relativePath = toSessionRelativePath(destPath)
                       try {
                         if (!fs.existsSync(destPath)) {
                           fs.copyFileSync(videoPath, destPath)
@@ -4957,13 +5033,11 @@ class ExportService {
                         throw new Error('video_copy_failed')
                       }
                       if (shouldDedupeVideoFiles) {
-                        exportedVideoPathByMd5.set(videoMd5, relativePath)
-                      } else if (existedBeforeCopy) {
-                        // 非去重模式下，文件名冲突时仍保持消息引用不丢失
+                        registerDedupAbsPath('video', [`video-md5:${videoMd5}`], destPath)
                       }
                       const fileMd5 = await resolveExportedFileMd5(destPath, relativePath)
                       this.setMediaPathMapEntry(mediaPathMap, relativePath, mediaMapKey, createTime)
-                      upsertArkmeMediaIndexEntry({
+                      this.upsertArkmeMediaIndexEntry(arkmeMediaIndexMap, {
                         mediaKey,
                         kind: 'video',
                         exported: true,
@@ -5014,7 +5088,7 @@ class ExportService {
                 const emojiMd5 = this.normalizeMd5(emojiSource.emojiMd5) || ''
                 const encryptUrl = String(emojiSource.encryptUrl || '')
                 const aesKey = String(emojiSource.aesKey || '')
-                upsertArkmeMediaIndexEntry({
+                this.upsertArkmeMediaIndexEntry(arkmeMediaIndexMap, {
                   mediaKey,
                   kind: 'emoji',
                   exported: false,
@@ -5032,41 +5106,35 @@ class ExportService {
                 })
 
                 if (emojiMd5 || cdnUrl) {
-                  if (!fs.existsSync(emojiOutDir)) {
-                    fs.mkdirSync(emojiOutDir, { recursive: true })
-                  }
                   const cacheKey = emojiMd5 || this.hashString(cdnUrl)
+                  const dedupKeys: string[] = []
+                  if (emojiMd5) dedupKeys.push(`emoji-md5:${emojiMd5}`)
+                  if (cacheKey) dedupKeys.push(`emoji-cache:${cacheKey}`)
                   // 确定文件扩展名
                   const ext = cdnUrl.includes('.gif') || content.includes('type="2"') ? '.gif' : '.png'
-                  const fileName = `${mediaKey}${ext}`
-                  const destPath = path.join(emojiOutDir, fileName)
+                  let exportedAbsPath = findDedupAbsPath('emoji', dedupKeys)
 
-                  if (!fs.existsSync(destPath)) {
+                  if (!exportedAbsPath) {
                     const { sourceFile, failReason } = await resolveEmojiSource(cacheKey, cdnUrl, encryptUrl, aesKey)
                     if (sourceFile && fs.existsSync(sourceFile)) {
                       try {
-                        fs.copyFileSync(sourceFile, destPath)
-                        emojiCount++
-                        const relativePath = options.emojiOnlyMode ? fileName : `emojis/${fileName}`
-                        const fileMd5 = await resolveExportedFileMd5(destPath, relativePath)
-                        this.setMediaPathMapEntry(mediaPathMap, relativePath, mediaMapKey, createTime)
-                        upsertArkmeMediaIndexEntry({
-                          mediaKey,
-                          kind: 'emoji',
-                          exported: true,
-                          relativePath,
-                          fileName,
-                          sourceMd5: emojiMd5 || null,
-                          fileMd5,
-                          createTime,
-                          sessionId,
-                          ...(platformMessageId ? { platformMessageId } : {}),
-                          ...(localMessageId ? { localMessageId } : {}),
-                          source: Object.keys(emojiSource).length > 0
-                            ? { ...emojiSource, ...(emojiMd5 ? { emojiMd5 } : {}) }
-                            : undefined
-                        })
-                        emojiHandled = true
+                        const sourceFileMd5 = this.normalizeMd5(await this.computeFileMd5(sourceFile)) || null
+                        if (sourceFileMd5) {
+                          dedupKeys.push(`emoji-file-md5:${sourceFileMd5}`)
+                          exportedAbsPath = findDedupAbsPath('emoji', dedupKeys)
+                        }
+                        if (!exportedAbsPath) {
+                          const fileStem = dedupKeys.length > 0
+                            ? dedupeKeyToFileStem(dedupKeys[0], mediaKey)
+                            : mediaKey
+                          const fileName = `${fileStem}${ext}`
+                          const destPath = path.join(emojiOutDir, fileName)
+                          if (!fs.existsSync(destPath)) {
+                            fs.copyFileSync(sourceFile, destPath)
+                            emojiCount++
+                          }
+                          exportedAbsPath = destPath
+                        }
                       } catch {
                         bumpReason(emojiFailReasons, 'copy_failed')
                       }
@@ -5075,16 +5143,19 @@ class ExportService {
                     } else {
                       bumpReason(emojiFailReasons, 'source_missing')
                     }
-                  } else {
-                    const relativePath = options.emojiOnlyMode ? fileName : `emojis/${fileName}`
-                    const fileMd5 = await resolveExportedFileMd5(destPath, relativePath)
+                  }
+
+                  if (exportedAbsPath) {
+                    registerDedupAbsPath('emoji', dedupKeys, exportedAbsPath)
+                    const relativePath = toSessionRelativePath(exportedAbsPath)
+                    const fileMd5 = await resolveExportedFileMd5(exportedAbsPath, relativePath)
                     this.setMediaPathMapEntry(mediaPathMap, relativePath, mediaMapKey, createTime)
-                    upsertArkmeMediaIndexEntry({
+                    this.upsertArkmeMediaIndexEntry(arkmeMediaIndexMap, {
                       mediaKey,
                       kind: 'emoji',
                       exported: true,
                       relativePath,
-                      fileName,
+                      fileName: path.basename(exportedAbsPath),
                       sourceMd5: emojiMd5 || null,
                       fileMd5,
                       createTime,
@@ -5183,7 +5254,7 @@ class ExportService {
               mediaMapKey,
               mediaKey
             })
-            upsertArkmeMediaIndexEntry({
+            this.upsertArkmeMediaIndexEntry(arkmeMediaIndexMap, {
               mediaKey,
               kind: 'voice',
               exported: false,
@@ -5262,42 +5333,34 @@ class ExportService {
             for (let idx = 0; idx < total; idx++) {
               const voiceMessage = voiceMessages[idx]
               const createTime = voiceMessage.createTime
-              const fileName = `${voiceMessage.mediaKey}.wav`
-              const destPath = path.join(voiceOutDir, fileName)
-              const relativePath = options.voiceOnlyMode ? fileName : `voices/${fileName}`
+              const createTimeDedupeKey = `voice-time:${sessionId}:${createTime}`
 
-              const bindVoiceExported = async (bindPath: string) => {
-                const fileMd5 = await resolveExportedFileMd5(path.join(outputDir, bindPath), bindPath)
+              const bindVoiceExported = async (bindAbsPath: string, sourceMd5?: string | null) => {
+                const bindPath = toSessionRelativePath(bindAbsPath)
+                const fileMd5 = await resolveExportedFileMd5(bindAbsPath, bindPath)
                 this.setMediaPathMapEntry(mediaPathMap, bindPath, voiceMessage.mediaMapKey, createTime)
-                upsertArkmeMediaIndexEntry({
+                this.upsertArkmeMediaIndexEntry(arkmeMediaIndexMap, {
                   mediaKey: voiceMessage.mediaKey,
                   kind: 'voice',
                   exported: true,
                   relativePath: bindPath,
                   fileName: path.basename(bindPath),
-                  sourceMd5: null,
+                  sourceMd5: sourceMd5 || null,
                   fileMd5,
                   createTime,
                   sessionId,
                   ...(voiceMessage.platformMessageId ? { platformMessageId: voiceMessage.platformMessageId } : {}),
                   ...(voiceMessage.localMessageId ? { localMessageId: voiceMessage.localMessageId } : {}),
-                  source: { voiceCreateTime: createTime }
+                  source: {
+                    voiceCreateTime: createTime,
+                    ...(sourceMd5 ? { voiceMd5: sourceMd5 } : {})
+                  }
                 })
               }
 
-              const cachedVoicePath = exportedVoicePathByCreateTime.get(createTime)
-              if (cachedVoicePath) {
-                await bindVoiceExported(cachedVoicePath)
-                if (shouldReportVoiceStep(idx + 1)) {
-                  emitMediaProgress(`语音处理: ${idx + 1}/${total}（已导出 ${voiceCount}）`, idx + 1, total, '条')
-                }
-                continue
-              }
-
-              // 已存在则跳过
-              if (fs.existsSync(destPath)) {
-                exportedVoicePathByCreateTime.set(createTime, relativePath)
-                await bindVoiceExported(relativePath)
+              const cachedVoiceAbsPath = findDedupAbsPath('voice', [createTimeDedupeKey])
+              if (cachedVoiceAbsPath) {
+                await bindVoiceExported(cachedVoiceAbsPath)
                 if (shouldReportVoiceStep(idx + 1)) {
                   emitMediaProgress(`语音处理: ${idx + 1}/${total}（已导出 ${voiceCount}）`, idx + 1, total, '条')
                 }
@@ -5360,10 +5423,25 @@ class ExportService {
                 const pcmData = Buffer.from(result.data)
                 const wavData = this.createWavBuffer(pcmData, 24000)
                 try {
-                  if (!fs.existsSync(voiceOutDir)) {
-                    fs.mkdirSync(voiceOutDir, { recursive: true })
+                  const wavMd5 = this.normalizeMd5(createHash('md5').update(wavData).digest('hex')) || null
+                  const voiceDedupKeys = [createTimeDedupeKey]
+                  if (wavMd5) {
+                    voiceDedupKeys.unshift(`voice-md5:${wavMd5}`)
                   }
-                  fs.writeFileSync(destPath, wavData)
+
+                  let exportedAbsPath = findDedupAbsPath('voice', voiceDedupKeys)
+                  if (!exportedAbsPath) {
+                    const fileName = `${wavMd5 || voiceMessage.mediaKey}.wav`
+                    const destPath = path.join(voiceOutDir, fileName)
+                    if (!fs.existsSync(destPath)) {
+                      fs.writeFileSync(destPath, wavData)
+                      voiceCount++
+                    }
+                    exportedAbsPath = destPath
+                  }
+
+                  registerDedupAbsPath('voice', voiceDedupKeys, exportedAbsPath)
+                  await bindVoiceExported(exportedAbsPath, wavMd5)
                 } catch {
                   voiceFailCount++
                   bumpReason(voiceFailReasons, 'write_failed')
@@ -5372,9 +5450,6 @@ class ExportService {
                   }
                   continue
                 }
-                voiceCount++
-                exportedVoicePathByCreateTime.set(createTime, relativePath)
-                await bindVoiceExported(relativePath)
               } catch (e) {
                 voiceFailCount++
                 const errMsg = e instanceof Error ? e.message : String(e)
