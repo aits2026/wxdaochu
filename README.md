@@ -56,7 +56,7 @@
 
 ## 🖼️ 核心界面预览
 
-> 以下界面由项目内置 `README Showcase` 静态复刻页（基于现有前端布局与样式变量）生成。
+> 以下界面由项目内置 `README Showcase` 静态复刻页生成，生成脚本会读取 `Sidebar.tsx / Sidebar.scss / App.tsx / main.scss` 的真实代码结构与主题变量。
 
 高保真静态复刻页入口：[`docs/readme-showcase/index.html`](docs/readme-showcase/index.html)
 
@@ -83,6 +83,21 @@
   <tr>
     <td width="50%"><img src="docs/readme-shots/dark-moments.svg" alt="朋友圈浏览（深色）" /></td>
     <td width="50%"><img src="docs/readme-shots/dark-data.svg" alt="数据管理与解密（深色）" /></td>
+  </tr>
+</table>
+
+### 导出页状态（真实交互）
+
+> 导出主界面默认仅显示列表；选中会话后才会出现右侧详情/导出设置抽屉。
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/readme-shots/light-export.svg" alt="导出主界面默认态（浅色）" /></td>
+    <td width="50%"><img src="docs/readme-shots/light-export-selected.svg" alt="导出主界面选中会话后（浅色）" /></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/readme-shots/dark-export.svg" alt="导出主界面默认态（深色）" /></td>
+    <td width="50%"><img src="docs/readme-shots/dark-export-selected.svg" alt="导出主界面选中会话后（深色）" /></td>
   </tr>
 </table>
 

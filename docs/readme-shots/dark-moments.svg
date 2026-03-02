@@ -1,113 +1,24 @@
 
     <svg xmlns="http://www.w3.org/2000/svg" width="1660" height="980" viewBox="0 0 1660 980">
+      <defs>
+        <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#1a1816" />
+          <stop offset="100%" stop-color="#252220" />
+        </linearGradient>
+      </defs>
+      <rect x="0" y="0" width="1660" height="980" fill="url(#bg)" />
       
-    <defs>
-      <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-        <stop offset="0%" stop-color="#1a1816" />
-        <stop offset="100%" stop-color="#252220" />
-      </linearGradient>
-      <linearGradient id="titlebar" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0%" stop-color="#2f2a26" stop-opacity="0.7" />
-        <stop offset="100%" stop-color="#2f2a26" stop-opacity="0.45" />
-      </linearGradient>
-    </defs>
-
-    <rect x="0" y="0" width="1660" height="980" fill="url(#bg)" />
-
-    <rect x="16" y="16" width="1628" height="948" rx="24" fill="rgba(34,30,27,0.78)" stroke="rgba(255,255,255,0.1)" />
-
-    <rect x="24" y="24" width="140" height="932" rx="18" fill="rgba(40,36,32,0.9)" stroke="rgba(255,255,255,0.1)" />
-    <text x="52" y="70" fill="#C9A86C" font-size="24" font-weight="700">VX</text>
-    <text x="82" y="70" fill="#F0EEE9" font-size="16" font-weight="600">daochu</text>
-    <text x="32" y="98" fill="#807d78" font-size="11">core preview</text>
     
-      <rect x="32" y="134" width="124" height="44" rx="22" fill="transparent" />
-      <circle cx="52" cy="156" r="7" fill="#b3b0aa" />
-      <text x="68" y="162" fill="#b3b0aa" font-size="14" font-weight="500">导出数据</text>
-    
-      <rect x="32" y="192" width="124" height="44" rx="22" fill="transparent" />
-      <circle cx="52" cy="214" r="7" fill="#b3b0aa" />
-      <text x="68" y="220" fill="#b3b0aa" font-size="14" font-weight="500">聊天记录</text>
-    
-      <rect x="32" y="250" width="124" height="44" rx="22" fill="#C9A86C" />
-      <circle cx="52" cy="272" r="7" fill="#ffffff" />
-      <text x="68" y="278" fill="#ffffff" font-size="14" font-weight="500">朋友圈</text>
-    
-      <rect x="32" y="308" width="124" height="44" rx="22" fill="transparent" />
-      <circle cx="52" cy="330" r="7" fill="#b3b0aa" />
-      <text x="68" y="336" fill="#b3b0aa" font-size="14" font-weight="500">数据管理</text>
-    
-      <rect x="32" y="366" width="124" height="44" rx="22" fill="transparent" />
-      <circle cx="52" cy="388" r="7" fill="#b3b0aa" />
-      <text x="68" y="394" fill="#b3b0aa" font-size="14" font-weight="500">设置</text>
-    
-
-    <rect x="180" y="24" width="1456" height="932" rx="18" fill="rgba(40,36,32,0.9)" stroke="rgba(255,255,255,0.1)" />
-    <rect x="180" y="24" width="1456" height="84" rx="18" fill="url(#titlebar)" />
-    <circle cx="208" cy="53" r="6" fill="#fb7185" opacity="0.85" />
-    <circle cx="228" cy="53" r="6" fill="#fbbf24" opacity="0.85" />
-    <circle cx="248" cy="53" r="6" fill="#34d399" opacity="0.85" />
-
-    <text x="286" y="61" fill="#F0EEE9" font-size="21" font-weight="600">朋友圈浏览</text>
-    <text x="286" y="87" fill="#b3b0aa" font-size="13">按联系人和时间范围查看动态，支持媒体归档</text>
-
-    <rect x="1420" y="40" width="88" height="30" rx="15" fill="rgba(201,168,108,0.2)" stroke="rgba(255,255,255,0.1)" />
-    <text x="1438" y="60" fill="#C9A86C" font-size="12" font-weight="600">Cloud</text>
-    <rect x="1516" y="40" width="104" height="30" rx="15" fill="rgba(201,168,108,0.2)" stroke="rgba(255,255,255,0.1)" />
-    <text x="1534" y="60" fill="#C9A86C" font-size="12" font-weight="600">Dark Mode</text>
+    <rect x="16" y="16" width="1628" height="38" rx="12" fill="rgba(255, 255, 255, 0.05)" stroke="rgba(255, 255, 255, 0.1)" />
+    <circle cx="30" cy="35" r="4" fill="#fb7185" />
+    <circle cx="44" cy="35" r="4" fill="#fbbf24" />
+    <circle cx="58" cy="35" r="4" fill="#34d399" />
+    <text x="78" y="34" fill="#F0EEE9" font-size="14" font-weight="600">朋友圈窗口</text>
+    <text x="78" y="47" fill="#b3b0aa" font-size="10">standalone /moments-window</text>
   
-      
-    <rect x="198" y="124" width="304" height="820" rx="14" fill="#2f2a26" fill-opacity="0.74" stroke="rgba(255,255,255,0.1)" />
-    <text x="222" y="160" fill="#F0EEE9" font-size="15" font-weight="600">筛选条件</text>
-
-    <rect x="222" y="178" width="256" height="46" rx="10" fill="rgba(201,168,108,0.2)" stroke="rgba(255,255,255,0.1)" />
-    <text x="238" y="207" fill="#b3b0aa" font-size="12">时间范围：最近 90 天</text>
-
-    <rect x="222" y="236" width="256" height="46" rx="10" fill="#2f2a26" stroke="rgba(255,255,255,0.1)" />
-    <text x="238" y="265" fill="#b3b0aa" font-size="12">联系人：全部（32）</text>
-
-    <rect x="222" y="294" width="256" height="46" rx="10" fill="#2f2a26" stroke="rgba(255,255,255,0.1)" />
-    <text x="238" y="323" fill="#b3b0aa" font-size="12">媒体：图文 + 视频</text>
-
-    <rect x="222" y="360" width="256" height="42" rx="10" fill="#C9A86C" />
-    <text x="300" y="387" fill="#fff" font-size="14" font-weight="600">导出当前筛选</text>
-
-    <rect x="222" y="420" width="256" height="500" rx="10" fill="#2f2a26" stroke="rgba(255,255,255,0.1)" />
-    <text x="238" y="446" fill="#b3b0aa" font-size="12">常用联系人</text>
-    <rect x="238" y="456" width="224" height="44" rx="8" fill="rgba(201,168,108,0.2)" />
-    <text x="254" y="483" fill="#C9A86C" font-size="13">林予安  ·  45 条动态</text>
-    <rect x="238" y="508" width="224" height="44" rx="8" fill="#2f2a26" stroke="rgba(255,255,255,0.1)" />
-    <text x="254" y="535" fill="#b3b0aa" font-size="13">周同学  ·  28 条动态</text>
-    <rect x="238" y="560" width="224" height="44" rx="8" fill="#2f2a26" stroke="rgba(255,255,255,0.1)" />
-    <text x="254" y="587" fill="#b3b0aa" font-size="13">工作群助手 · 19 条动态</text>
-
-    <rect x="518" y="124" width="1118" height="820" rx="14" fill="#2f2a26" fill-opacity="0.74" stroke="rgba(255,255,255,0.1)" />
-
-    <rect x="542" y="148" width="1070" height="334" rx="12" fill="#2f2a26" stroke="rgba(255,255,255,0.1)" />
-    <circle cx="574" cy="184" r="18" fill="#C9A86C" />
-    <text x="603" y="190" fill="#F0EEE9" font-size="15" font-weight="600">林予安</text>
-    <text x="603" y="212" fill="#b3b0aa" font-size="12">3月2日 09:21 · iPhone 15 Pro</text>
-    <text x="574" y="248" fill="#F0EEE9" font-size="14">终于把 2025 年的出行照片整理完了，顺便导出做了个时间轴。</text>
-
-    <rect x="574" y="272" width="328" height="166" rx="10" fill="rgba(201,168,108,0.2)" stroke="rgba(255,255,255,0.1)" />
-    <rect x="914" y="272" width="328" height="166" rx="10" fill="rgba(201,168,108,0.2)" stroke="rgba(255,255,255,0.1)" />
-    <rect x="1254" y="272" width="328" height="166" rx="10" fill="rgba(201,168,108,0.2)" stroke="rgba(255,255,255,0.1)" />
-    <text x="708" y="360" fill="#b3b0aa" font-size="13">图片 A</text>
-    <text x="1048" y="360" fill="#b3b0aa" font-size="13">图片 B</text>
-    <text x="1388" y="360" fill="#b3b0aa" font-size="13">图片 C</text>
-    <text x="574" y="468" fill="#807d78" font-size="12">点赞 45 · 评论 18 · 收藏 3</text>
-
-    <rect x="542" y="498" width="1070" height="420" rx="12" fill="#2f2a26" stroke="rgba(255,255,255,0.1)" />
-    <circle cx="574" cy="534" r="18" fill="#C9A86C" />
-    <text x="603" y="540" fill="#F0EEE9" font-size="15" font-weight="600">周同学</text>
-    <text x="603" y="562" fill="#b3b0aa" font-size="12">3月1日 21:03 · Mac</text>
-    <text x="574" y="598" fill="#F0EEE9" font-size="14">昨天那场分享会的提纲，发在这里备忘。</text>
-
-    <rect x="574" y="622" width="500" height="228" rx="10" fill="rgba(201,168,108,0.2)" stroke="rgba(255,255,255,0.1)" />
-    <rect x="1086" y="622" width="500" height="228" rx="10" fill="rgba(201,168,108,0.2)" stroke="rgba(255,255,255,0.1)" />
-    <text x="798" y="740" fill="#b3b0aa" font-size="13">图片 D</text>
-    <text x="1310" y="740" fill="#b3b0aa" font-size="13">图片 E</text>
-    <text x="574" y="884" fill="#807d78" font-size="12">点赞 27 · 评论 9</text>
+    <rect x="16" y="54" width="1628" height="910" fill="#1a1816" stroke="rgba(255, 255, 255, 0.1)" />
+    <rect x="16" y="54" width="280" height="910" fill="rgba(40, 36, 32, 0.9)" stroke="rgba(255, 255, 255, 0.1)" />
+    <rect x="296" y="54" width="1348" height="910" fill="rgba(40, 36, 32, 0.9)" stroke="rgba(255, 255, 255, 0.1)" />
   
     </svg>
   

@@ -1,143 +1,25 @@
 
     <svg xmlns="http://www.w3.org/2000/svg" width="1660" height="980" viewBox="0 0 1660 980">
+      <defs>
+        <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#1a1816" />
+          <stop offset="100%" stop-color="#252220" />
+        </linearGradient>
+      </defs>
+      <rect x="0" y="0" width="1660" height="980" fill="url(#bg)" />
       
-    <defs>
-      <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-        <stop offset="0%" stop-color="#1a1816" />
-        <stop offset="100%" stop-color="#252220" />
-      </linearGradient>
-      <linearGradient id="titlebar" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0%" stop-color="#2f2a26" stop-opacity="0.7" />
-        <stop offset="100%" stop-color="#2f2a26" stop-opacity="0.45" />
-      </linearGradient>
-    </defs>
-
-    <rect x="0" y="0" width="1660" height="980" fill="url(#bg)" />
-
-    <rect x="16" y="16" width="1628" height="948" rx="24" fill="rgba(34,30,27,0.78)" stroke="rgba(255,255,255,0.1)" />
-
-    <rect x="24" y="24" width="140" height="932" rx="18" fill="rgba(40,36,32,0.9)" stroke="rgba(255,255,255,0.1)" />
-    <text x="52" y="70" fill="#C9A86C" font-size="24" font-weight="700">VX</text>
-    <text x="82" y="70" fill="#F0EEE9" font-size="16" font-weight="600">daochu</text>
-    <text x="32" y="98" fill="#807d78" font-size="11">core preview</text>
     
-      <rect x="32" y="134" width="124" height="44" rx="22" fill="transparent" />
-      <circle cx="52" cy="156" r="7" fill="#b3b0aa" />
-      <text x="68" y="162" fill="#b3b0aa" font-size="14" font-weight="500">导出数据</text>
-    
-      <rect x="32" y="192" width="124" height="44" rx="22" fill="#C9A86C" />
-      <circle cx="52" cy="214" r="7" fill="#ffffff" />
-      <text x="68" y="220" fill="#ffffff" font-size="14" font-weight="500">聊天记录</text>
-    
-      <rect x="32" y="250" width="124" height="44" rx="22" fill="transparent" />
-      <circle cx="52" cy="272" r="7" fill="#b3b0aa" />
-      <text x="68" y="278" fill="#b3b0aa" font-size="14" font-weight="500">朋友圈</text>
-    
-      <rect x="32" y="308" width="124" height="44" rx="22" fill="transparent" />
-      <circle cx="52" cy="330" r="7" fill="#b3b0aa" />
-      <text x="68" y="336" fill="#b3b0aa" font-size="14" font-weight="500">数据管理</text>
-    
-      <rect x="32" y="366" width="124" height="44" rx="22" fill="transparent" />
-      <circle cx="52" cy="388" r="7" fill="#b3b0aa" />
-      <text x="68" y="394" fill="#b3b0aa" font-size="14" font-weight="500">设置</text>
-    
-
-    <rect x="180" y="24" width="1456" height="932" rx="18" fill="rgba(40,36,32,0.9)" stroke="rgba(255,255,255,0.1)" />
-    <rect x="180" y="24" width="1456" height="84" rx="18" fill="url(#titlebar)" />
-    <circle cx="208" cy="53" r="6" fill="#fb7185" opacity="0.85" />
-    <circle cx="228" cy="53" r="6" fill="#fbbf24" opacity="0.85" />
-    <circle cx="248" cy="53" r="6" fill="#34d399" opacity="0.85" />
-
-    <text x="286" y="61" fill="#F0EEE9" font-size="21" font-weight="600">聊天记录查看</text>
-    <text x="286" y="87" fill="#b3b0aa" font-size="13">会话检索、消息流预览与关键内容定位</text>
-
-    <rect x="1420" y="40" width="88" height="30" rx="15" fill="rgba(201,168,108,0.2)" stroke="rgba(255,255,255,0.1)" />
-    <text x="1438" y="60" fill="#C9A86C" font-size="12" font-weight="600">Cloud</text>
-    <rect x="1516" y="40" width="104" height="30" rx="15" fill="rgba(201,168,108,0.2)" stroke="rgba(255,255,255,0.1)" />
-    <text x="1534" y="60" fill="#C9A86C" font-size="12" font-weight="600">Dark Mode</text>
+    <rect x="16" y="16" width="1628" height="38" rx="12" fill="rgba(255, 255, 255, 0.05)" stroke="rgba(255, 255, 255, 0.1)" />
+    <circle cx="30" cy="35" r="4" fill="#fb7185" />
+    <circle cx="44" cy="35" r="4" fill="#fbbf24" />
+    <circle cx="58" cy="35" r="4" fill="#34d399" />
+    <text x="78" y="34" fill="#F0EEE9" font-size="14" font-weight="600">聊天窗口</text>
+    <text x="78" y="47" fill="#b3b0aa" font-size="10">standalone /chat-window</text>
   
-      
-    <rect x="198" y="124" width="364" height="820" rx="14" fill="#2f2a26" fill-opacity="0.74" stroke="rgba(255,255,255,0.1)" />
-    <rect x="214" y="140" width="332" height="44" rx="10" fill="rgba(201,168,108,0.2)" stroke="rgba(255,255,255,0.1)" />
-    <text x="232" y="168" fill="#b3b0aa" font-size="12">搜索会话 / 联系人 / 关键词</text>
-    
-      <rect x="210" y="202" width="340" height="90" rx="12" fill="rgba(201,168,108,0.2)" stroke="#C9A86C" stroke-opacity="0.35" />
-      <circle cx="244" cy="247" r="19" fill="#C9A86C" />
-      <text x="236" y="253" fill="#fff" font-size="14" font-weight="700">产</text>
-      <text x="272" y="238" fill="#F0EEE9" font-size="15" font-weight="600">产品讨论群</text>
-      <text x="272" y="262" fill="#b3b0aa" font-size="12">导出目录已经按账号隔离好了</text>
-      <text x="504" y="236" fill="#807d78" font-size="11">10:42</text>
-      <rect x="516" y="250" width="24" height="20" rx="10" fill="#ef4444" /><text x="523" y="264" fill="#fff" font-size="11" font-weight="700">3</text>
-    
-      <rect x="210" y="306" width="340" height="90" rx="12" fill="transparent" stroke="rgba(255,255,255,0.1)" stroke-opacity="1" />
-      <circle cx="244" cy="351" r="19" fill="#C9A86C" />
-      <text x="236" y="357" fill="#fff" font-size="14" font-weight="700">陈</text>
-      <text x="272" y="342" fill="#F0EEE9" font-size="15" font-weight="600">陈小北</text>
-      <text x="272" y="366" fill="#b3b0aa" font-size="12">周报我晚点补上</text>
-      <text x="504" y="340" fill="#807d78" font-size="11">09:58</text>
-      
-    
-      <rect x="210" y="410" width="340" height="90" rx="12" fill="transparent" stroke="rgba(255,255,255,0.1)" stroke-opacity="1" />
-      <circle cx="244" cy="455" r="19" fill="#C9A86C" />
-      <text x="236" y="461" fill="#fff" font-size="14" font-weight="700">家</text>
-      <text x="272" y="446" fill="#F0EEE9" font-size="15" font-weight="600">家人群</text>
-      <text x="272" y="470" fill="#b3b0aa" font-size="12">[图片] 周末聚会安排</text>
-      <text x="504" y="444" fill="#807d78" font-size="11">昨天</text>
-      <rect x="516" y="458" width="24" height="20" rx="10" fill="#ef4444" /><text x="523" y="472" fill="#fff" font-size="11" font-weight="700">12</text>
-    
-      <rect x="210" y="514" width="340" height="90" rx="12" fill="transparent" stroke="rgba(255,255,255,0.1)" stroke-opacity="1" />
-      <circle cx="244" cy="559" r="19" fill="#C9A86C" />
-      <text x="236" y="565" fill="#fff" font-size="14" font-weight="700">设</text>
-      <text x="272" y="550" fill="#F0EEE9" font-size="15" font-weight="600">设计协作</text>
-      <text x="272" y="574" fill="#b3b0aa" font-size="12">这版卡片阴影更舒服</text>
-      <text x="504" y="548" fill="#807d78" font-size="11">昨天</text>
-      
-    
-      <rect x="210" y="618" width="340" height="90" rx="12" fill="transparent" stroke="rgba(255,255,255,0.1)" stroke-opacity="1" />
-      <circle cx="244" cy="663" r="19" fill="#C9A86C" />
-      <text x="236" y="669" fill="#fff" font-size="14" font-weight="700">A</text>
-      <text x="272" y="654" fill="#F0EEE9" font-size="15" font-weight="600">Arkme 项目组</text>
-      <text x="272" y="678" fill="#b3b0aa" font-size="12">请确认新版本导出字段</text>
-      <text x="504" y="652" fill="#807d78" font-size="11">周六</text>
-      
-    
-      <rect x="210" y="722" width="340" height="90" rx="12" fill="transparent" stroke="rgba(255,255,255,0.1)" stroke-opacity="1" />
-      <circle cx="244" cy="767" r="19" fill="#C9A86C" />
-      <text x="236" y="773" fill="#fff" font-size="14" font-weight="700">技</text>
-      <text x="272" y="758" fill="#F0EEE9" font-size="15" font-weight="600">技术支持</text>
-      <text x="272" y="782" fill="#b3b0aa" font-size="12">已收到日志包，处理中</text>
-      <text x="504" y="756" fill="#807d78" font-size="11">周五</text>
-      <rect x="516" y="770" width="24" height="20" rx="10" fill="#ef4444" /><text x="523" y="784" fill="#fff" font-size="11" font-weight="700">1</text>
-    
-
-    <rect x="578" y="124" width="1040" height="820" rx="14" fill="#2f2a26" fill-opacity="0.74" stroke="rgba(255,255,255,0.1)" />
-    <rect x="578" y="124" width="1040" height="64" rx="14" fill="rgba(201,168,108,0.2)" />
-    <text x="608" y="163" fill="#F0EEE9" font-size="17" font-weight="600">产品讨论群</text>
-    <text x="716" y="163" fill="#b3b0aa" font-size="12">(32984 条消息)</text>
-    <text x="1470" y="163" fill="#34d399" font-size="12">实时同步中</text>
-
-    <rect x="602" y="214" width="220" height="52" rx="14" fill="#302a25" stroke="rgba(255,255,255,0.1)" />
-    <text x="618" y="246" fill="#F0EEE9" font-size="14">导出前能看到历史记录吗？</text>
-
-    <rect x="998" y="288" width="540" height="52" rx="14" fill="#4f4334" stroke="rgba(255,255,255,0.1)" />
-    <text x="1014" y="320" fill="#F0EEE9" font-size="14">可以，会展示每次导出时间和消息增量。</text>
-
-    <rect x="602" y="362" width="260" height="52" rx="14" fill="#302a25" stroke="rgba(255,255,255,0.1)" />
-    <text x="618" y="394" fill="#F0EEE9" font-size="14">我想先看最近 30 天。</text>
-
-    <rect x="944" y="436" width="594" height="52" rx="14" fill="#4f4334" stroke="rgba(255,255,255,0.1)" />
-    <text x="960" y="468" fill="#F0EEE9" font-size="14">已支持日期筛选，语音/图片也能单独导出。</text>
-
-    <rect x="602" y="510" width="324" height="52" rx="14" fill="#302a25" stroke="rgba(255,255,255,0.1)" />
-    <text x="618" y="542" fill="#F0EEE9" font-size="14">那导出目录能按账号隔离吗？</text>
-
-    <rect x="1018" y="584" width="520" height="52" rx="14" fill="#4f4334" stroke="rgba(255,255,255,0.1)" />
-    <text x="1034" y="616" fill="#F0EEE9" font-size="14">可以，已支持共享目录和账号子目录策略。</text>
-
-    <rect x="598" y="866" width="884" height="54" rx="12" fill="#2f2a26" stroke="rgba(255,255,255,0.1)" />
-    <text x="620" y="900" fill="#807d78" font-size="13">输入消息、过滤关键词或跳转日期...</text>
-    <rect x="1492" y="866" width="106" height="54" rx="12" fill="#C9A86C" />
-    <text x="1528" y="899" fill="#fff" font-size="16" font-weight="600">发送</text>
+    <rect x="16" y="54" width="1628" height="910" fill="rgba(40, 36, 32, 0.9)" stroke="rgba(255, 255, 255, 0.1)" />
+    <text x="36" y="90" fill="#F0EEE9" font-size="14" font-weight="600">此图展示聊天独立窗口结构（来源 ChatPage standalone 样式）</text>
+    <rect x="34" y="106" width="324" height="818" rx="10" fill="rgba(40, 36, 32, 0.9)" stroke="rgba(255, 255, 255, 0.1)" />
+    <rect x="370" y="106" width="1256" height="818" rx="10" fill="rgba(40, 36, 32, 0.9)" stroke="rgba(255, 255, 255, 0.1)" />
   
     </svg>
   

@@ -43,7 +43,7 @@
     <circle cx="170" cy="35" r="4" fill="#fb7185" />
     <circle cx="184" cy="35" r="4" fill="#fbbf24" />
     <circle cx="198" cy="35" r="4" fill="#34d399" />
-    <text x="218" y="34" fill="#F0EEE9" font-size="14" font-weight="600">导出数据主界面（未选中会话）</text>
+    <text x="218" y="34" fill="#F0EEE9" font-size="14" font-weight="600">导出数据主界面（已选中会话）</text>
     <text x="218" y="47" fill="#b3b0aa" font-size="10">路由 /export：默认仅列表，选中会话后显示详情抽屉</text>
   
     <rect x="156" y="54" width="1488" height="910" fill="rgba(40, 36, 32, 0.9)" stroke="rgba(255, 255, 255, 0.1)" />
@@ -152,6 +152,29 @@
       <text x="718" y="620" fill="#b3b0aa" font-size="11">2026-02-28 16:31</text>
     
 
+    
+      <rect x="156" y="54" width="1488" height="910" fill="rgba(15, 23, 42, 0.12)" />
+      <rect x="874" y="64" width="760" height="890" rx="16" fill="rgba(40, 36, 32, 0.9)" stroke="rgba(255, 255, 255, 0.1)" />
+      <circle cx="1610" cy="84" r="14" fill="rgba(40, 36, 32, 0.9)" stroke="rgba(255, 255, 255, 0.1)" />
+      <text x="1606" y="88" fill="#b3b0aa" font-size="14">×</text>
+
+      <rect x="892" y="74" width="704" height="84" rx="12" fill="rgba(201, 168, 108, 0.15)" stroke="rgba(255, 255, 255, 0.1)" />
+      <text x="908" y="104" fill="#F0EEE9" font-size="14" font-weight="600">产品讨论群</text>
+      <text x="908" y="124" fill="#b3b0aa" font-size="11">wxid: wxid_team_product_2026 · 最近导出 2026-03-01 23:12</text>
+
+      <rect x="892" y="170" width="724" height="148" rx="10" fill="rgba(255, 255, 255, 0.05)" stroke="rgba(255, 255, 255, 0.1)" />
+      <text x="908" y="200" fill="#F0EEE9" font-size="13" font-weight="600">会话详情与导出设置</text>
+      <text x="908" y="222" fill="#b3b0aa" font-size="11">消息总数：32,984 · 图片：2,143 · 视频：132 · 语音：418 · 表情：265</text>
+      <text x="908" y="242" fill="#b3b0aa" font-size="11">格式：JSON / HTML / CSV / Excel / SQL / VCF / ChatLab</text>
+      <text x="908" y="262" fill="#b3b0aa" font-size="11">时间范围：2024-01-01 至 2026-03-02 · 跳过规则：无新增则跳过</text>
+
+      <rect x="908" y="278" width="138" height="34" rx="8" fill="#C9A86C" />
+      <text x="948" y="300" fill="#fff" font-size="12" font-weight="600">导出此会话</text>
+
+      <rect x="892" y="332" width="724" height="604" rx="10" fill="rgba(255, 255, 255, 0.05)" stroke="rgba(255, 255, 255, 0.1)" />
+      <text x="908" y="362" fill="#F0EEE9" font-size="13" font-weight="600">最近导出记录</text>
+      <text x="908" y="384" fill="#b3b0aa" font-size="11">2026-03-01 23:12 · HTML + JSON · 32,856 条</text>
+      <text x="908" y="404" fill="#b3b0aa" font-size="11">2026-02-28 20:45 · CSV · 32,721 条</text>
     
   
     </svg>

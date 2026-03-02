@@ -3,69 +3,68 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>VXdaochu Readme Showcase</title>
+  <title>VXdaochu README Showcase</title>
   <style>
     :root {
+      --bg: #f3f1ec;
+      --card: #ffffff;
+      --text: #2f2f2f;
+      --muted: #666;
+      --border: rgba(0, 0, 0, 0.1);
       --primary: #8b7355;
-      --primary-light: rgba(139, 115, 85, 0.12);
-      --bg-primary: #f0eee9;
-      --bg-secondary: rgba(255, 255, 255, 0.74);
-      --card-bg: rgba(255, 255, 255, 0.84);
-      --text-primary: #3d3d3d;
-      --text-secondary: #666666;
-      --text-tertiary: #999999;
-      --border: rgba(0, 0, 0, 0.08);
-      --gradient: linear-gradient(135deg, #f0eee9 0%, #e8e6e1 100%);
-      --success: #16a34a;
-      --warning: #d97706;
-      --danger: #ef4444;
     }
 
-    [data-theme='dark'] {
+    body[data-theme='dark'] {
+      --bg: #1a1816;
+      --card: #2a2521;
+      --text: #efede7;
+      --muted: #b3b0aa;
+      --border: rgba(255, 255, 255, 0.15);
       --primary: #c9a86c;
-      --primary-light: rgba(201, 168, 108, 0.2);
-      --bg-primary: #1a1816;
-      --bg-secondary: rgba(40, 36, 32, 0.9);
-      --card-bg: rgba(40, 36, 32, 0.9);
-      --text-primary: #f0eee9;
-      --text-secondary: #b3b0aa;
-      --text-tertiary: #807d78;
-      --border: rgba(255, 255, 255, 0.1);
-      --gradient: linear-gradient(135deg, #1a1816 0%, #252220 100%);
-      --success: #34d399;
-      --warning: #fbbf24;
-      --danger: #fb7185;
     }
 
-    * {
-      box-sizing: border-box;
-    }
+    * { box-sizing: border-box; }
 
     body {
       margin: 0;
-      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
       font-family: "PingFang SC", "Noto Sans SC", "Segoe UI", sans-serif;
-      color: var(--text-primary);
-      background: var(--gradient);
+      padding: 16px;
+      min-height: 100vh;
       display: flex;
       flex-direction: column;
       gap: 12px;
-      padding: 14px;
     }
 
     .toolbar {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 10px 14px;
       border: 1px solid var(--border);
       border-radius: 12px;
-      background: var(--card-bg);
+      background: var(--card);
+      padding: 12px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
     }
 
-    .toolbar h1 {
+    .title {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .title h1 {
       margin: 0;
       font-size: 18px;
+      font-weight: 600;
+    }
+
+    .title p {
+      margin: 0;
+      font-size: 12px;
+      color: var(--muted);
     }
 
     .controls {
@@ -76,11 +75,11 @@
 
     .chip {
       border: 1px solid var(--border);
-      background: transparent;
-      color: var(--text-secondary);
       border-radius: 999px;
       padding: 7px 12px;
       font-size: 12px;
+      background: transparent;
+      color: var(--muted);
       cursor: pointer;
     }
 
@@ -90,622 +89,94 @@
       border-color: var(--primary);
     }
 
-    .app-shell {
-      flex: 1;
-      min-height: 760px;
-      border: 1px solid var(--border);
-      border-radius: 16px;
-      overflow: hidden;
-      display: grid;
-      grid-template-columns: 140px 1fr;
-      background: var(--bg-secondary);
-    }
-
-    .sidebar {
-      border-right: 1px solid var(--border);
-      padding: 14px 10px;
-      background: var(--bg-secondary);
-    }
-
-    .logo {
-      display: flex;
-      align-items: baseline;
-      gap: 5px;
-      margin-bottom: 16px;
-      padding: 0 10px;
-    }
-
-    .logo strong {
-      color: var(--primary);
-      font-size: 22px;
-      line-height: 1;
-    }
-
-    .logo span {
-      color: var(--text-primary);
-      font-size: 12px;
-    }
-
-    .nav {
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    }
-
-    .nav-item {
-      border-radius: 999px;
-      padding: 10px 14px;
-      font-size: 13px;
-      color: var(--text-secondary);
-      border: 1px solid transparent;
-    }
-
-    .nav-item.active {
-      background: var(--primary);
-      color: #fff;
-    }
-
-    .main {
-      display: flex;
-      flex-direction: column;
-      background: var(--card-bg);
-    }
-
-    .main-header {
-      border-bottom: 1px solid var(--border);
-      padding: 14px 18px;
-      background: color-mix(in srgb, var(--card-bg) 85%, transparent);
-    }
-
-    .main-header h2 {
-      margin: 0;
-      font-size: 19px;
-      font-weight: 600;
-    }
-
-    .main-header p {
-      margin: 6px 0 0;
-      color: var(--text-secondary);
-      font-size: 12px;
-    }
-
-    .main-body {
-      flex: 1;
-      min-height: 0;
-      padding: 16px;
-      display: flex;
-      gap: 14px;
-    }
-
-    .card {
+    .viewer {
       border: 1px solid var(--border);
       border-radius: 12px;
-      background: color-mix(in srgb, var(--card-bg) 92%, transparent);
-    }
-
-    .chat-list {
-      width: 340px;
+      background: var(--card);
       padding: 10px;
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    }
-
-    .search {
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 10px 12px;
-      background: var(--primary-light);
-      color: var(--text-secondary);
-      font-size: 12px;
-    }
-
-    .session-item {
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 10px;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      color: var(--text-secondary);
-      font-size: 12px;
-    }
-
-    .session-item.active {
-      background: var(--primary-light);
-      border-color: color-mix(in srgb, var(--primary) 35%, var(--border));
-    }
-
-    .session-avatar {
-      width: 34px;
-      height: 34px;
-      border-radius: 50%;
-      background: var(--primary);
-      color: #fff;
-      display: grid;
-      place-items: center;
-      font-weight: 600;
-      font-size: 12px;
-      flex-shrink: 0;
-    }
-
-    .session-main {
-      min-width: 0;
-      flex: 1;
-    }
-
-    .session-main strong {
-      display: block;
-      color: var(--text-primary);
-      font-size: 13px;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-
-    .session-main span {
-      display: block;
-      margin-top: 4px;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-
-    .session-badge {
-      background: var(--danger);
-      color: #fff;
-      border-radius: 10px;
-      padding: 1px 7px;
-      font-size: 11px;
-      flex-shrink: 0;
-    }
-
-    .chat-board {
       flex: 1;
       display: flex;
-      flex-direction: column;
-      min-width: 0;
-      overflow: hidden;
+      min-height: 560px;
     }
 
-    .board-top {
-      border-bottom: 1px solid var(--border);
-      padding: 14px 16px;
-      font-size: 13px;
-      color: var(--text-secondary);
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      background: var(--primary-light);
-    }
-
-    .messages {
-      flex: 1;
-      padding: 14px;
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-    }
-
-    .bubble {
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 10px 12px;
-      font-size: 13px;
-      max-width: 72%;
-      line-height: 1.5;
-    }
-
-    .bubble.left {
-      align-self: flex-start;
-      background: color-mix(in srgb, var(--card-bg) 90%, transparent);
-    }
-
-    .bubble.right {
-      align-self: flex-end;
-      background: var(--primary-light);
-    }
-
-    .composer {
-      margin: 10px 14px 14px;
-      display: grid;
-      grid-template-columns: 1fr auto;
-      gap: 8px;
-    }
-
-    .composer .input {
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 11px 12px;
-      font-size: 12px;
-      color: var(--text-tertiary);
-    }
-
-    .composer .btn {
-      border: none;
-      border-radius: 10px;
-      background: var(--primary);
-      color: #fff;
-      padding: 0 18px;
-      font-size: 13px;
-      font-weight: 600;
-    }
-
-    .split {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 12px;
+    img {
       width: 100%;
-    }
-
-    .panel {
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      background: color-mix(in srgb, var(--card-bg) 92%, transparent);
-      padding: 12px;
-      min-height: 0;
-    }
-
-    .panel h3 {
-      margin: 0 0 10px;
-      font-size: 14px;
-      font-weight: 600;
-    }
-
-    .line {
-      height: 1px;
-      background: var(--border);
-      margin: 8px 0;
-    }
-
-    .kpi-row {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 8px;
-      margin-bottom: 10px;
-    }
-
-    .kpi {
-      border: 1px solid var(--border);
+      height: auto;
+      object-fit: contain;
       border-radius: 10px;
-      padding: 10px;
-      background: var(--primary-light);
-    }
-
-    .kpi span {
-      display: block;
-      color: var(--text-tertiary);
-      font-size: 11px;
-    }
-
-    .kpi strong {
-      display: block;
-      margin-top: 6px;
-      font-size: 18px;
-      color: var(--text-primary);
-    }
-
-    .pill-row {
-      display: flex;
-      gap: 6px;
-      flex-wrap: wrap;
-      margin: 8px 0 10px;
-    }
-
-    .pill {
       border: 1px solid var(--border);
-      border-radius: 999px;
-      font-size: 11px;
-      color: var(--primary);
-      background: var(--primary-light);
-      padding: 4px 9px;
+      background: var(--bg);
     }
 
-    .list-item {
-      border: 1px solid var(--border);
-      border-radius: 9px;
-      padding: 8px 10px;
-      margin-bottom: 8px;
+    .meta {
+      margin-top: 8px;
+      color: var(--muted);
       font-size: 12px;
-      color: var(--text-secondary);
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 10px;
-    }
-
-    .list-item strong {
-      color: var(--text-primary);
-      font-size: 12px;
-      font-weight: 600;
-    }
-
-    .status {
-      border-radius: 999px;
-      padding: 2px 8px;
-      font-size: 11px;
-      background: var(--primary-light);
-      color: var(--primary);
-    }
-
-    .status.success {
-      color: var(--success);
-    }
-
-    .status.warn {
-      color: var(--warning);
-    }
-
-    .progress {
-      height: 10px;
-      border-radius: 999px;
-      overflow: hidden;
-      border: 1px solid var(--border);
-      background: color-mix(in srgb, var(--card-bg) 60%, transparent);
-      margin: 8px 0;
-    }
-
-    .progress > span {
-      display: block;
-      height: 100%;
-      width: 73%;
-      background: linear-gradient(90deg, var(--primary) 0%, color-mix(in srgb, var(--primary) 75%, #ffffff) 100%);
-    }
-
-    .footnote {
-      margin-top: 4px;
-      font-size: 11px;
-      color: var(--text-tertiary);
-    }
-
-    @media (max-width: 1200px) {
-      .app-shell {
-        grid-template-columns: 96px 1fr;
-      }
-
-      .nav-item {
-        font-size: 11px;
-        padding: 9px 10px;
-      }
-
-      .split {
-        grid-template-columns: 1fr;
-      }
-
-      .chat-list {
-        width: 280px;
-      }
+      line-height: 1.5;
     }
   </style>
 </head>
 <body data-theme="light">
   <div class="toolbar">
-    <h1>README 高保真静态复刻页</h1>
+    <div class="title">
+      <h1>README 高保真静态复刻预览</h1>
+      <p>图像由脚本直接读取真实代码结构后生成（Sidebar/App/Theme）</p>
+    </div>
     <div class="controls" id="controls"></div>
   </div>
-  <div id="root"></div>
+
+  <div class="viewer">
+    <img id="preview" src="../readme-shots/light-export.svg" alt="preview" />
+  </div>
+
+  <div class="meta" id="meta"></div>
 
   <script>
     const state = {
       theme: 'light',
-      panel: 'chat'
+      panel: 'export'
     }
 
-    const panelMeta = {
-      chat: {
-        title: '聊天记录查看',
-        subtitle: '会话检索、消息流预览与关键内容定位'
-      },
-      export: {
-        title: '多格式数据导出',
-        subtitle: '会话筛选、导出统计、增量判断与格式配置'
-      },
-      moments: {
-        title: '朋友圈浏览',
-        subtitle: '按联系人和时间范围查看动态，支持媒体归档'
-      },
-      data: {
-        title: '数据管理与解密',
-        subtitle: '数据库状态、批量解密进度与缓存路径管理'
-      }
-    }
+    const panels = [
+      { key: 'export', label: '导出主界面' },
+      { key: 'export-selected', label: '导出详情态' },
+      { key: 'data', label: '数据管理' },
+      { key: 'chat', label: '聊天窗口' },
+      { key: 'moments', label: '朋友圈窗口' }
+    ]
 
-    const navLabels = {
-      export: '导出数据',
-      chat: '聊天记录',
-      moments: '朋友圈',
-      data: '数据管理',
-      settings: '设置'
-    }
+    const themes = [
+      { key: 'light', label: '浅色' },
+      { key: 'dark', label: '深色' }
+    ]
 
     function renderControls() {
       const host = document.getElementById('controls')
-      const themeButtons = ['light', 'dark']
-      const panelButtons = ['chat', 'export', 'moments', 'data']
-
       host.innerHTML = [
-        ...themeButtons.map((theme) => `<button class="chip ${state.theme === theme ? 'active' : ''}" data-type="theme" data-value="${theme}">${theme === 'light' ? '浅色' : '深色'}</button>`),
-        ...panelButtons.map((panel) => `<button class="chip ${state.panel === panel ? 'active' : ''}" data-type="panel" data-value="${panel}">${navLabels[panel]}</button>`)
+        ...themes.map((item) => `<button class="chip ${state.theme === item.key ? 'active' : ''}" data-type="theme" data-value="${item.key}">${item.label}</button>`),
+        ...panels.map((item) => `<button class="chip ${state.panel === item.key ? 'active' : ''}" data-type="panel" data-value="${item.key}">${item.label}</button>`)
       ].join('')
 
       host.onclick = (event) => {
-        const target = event.target.closest('button[data-type]')
-        if (!target) return
-        const type = target.getAttribute('data-type')
-        const value = target.getAttribute('data-value')
+        const btn = event.target.closest('button[data-type]')
+        if (!btn) return
+        const type = btn.getAttribute('data-type')
+        const value = btn.getAttribute('data-value')
         state[type] = value
-        document.body.setAttribute('data-theme', state.theme)
         render()
       }
     }
 
-    function renderChatBody() {
-      const sessions = [
-        ['产品讨论群', '导出目录已经按账号隔离好了', '3', true],
-        ['陈小北', '周报我晚点补上', '', false],
-        ['家人群', '[图片] 周末聚会安排', '12', false],
-        ['设计协作', '这版卡片阴影更舒服', '', false],
-        ['Arkme 项目组', '请确认新版本导出字段', '', false]
-      ]
-
-      return `
-        <div class="main-body">
-          <section class="chat-list card">
-            <div class="search">搜索会话 / 联系人 / 关键词</div>
-            ${sessions.map((session) => `
-              <div class="session-item ${session[3] ? 'active' : ''}">
-                <div class="session-avatar">${session[0].slice(0, 1)}</div>
-                <div class="session-main">
-                  <strong>${session[0]}</strong>
-                  <span>${session[1]}</span>
-                </div>
-                ${session[2] ? `<span class="session-badge">${session[2]}</span>` : ''}
-              </div>
-            `).join('')}
-          </section>
-
-          <section class="chat-board card">
-            <div class="board-top">
-              <span>产品讨论群（32984 条消息）</span>
-              <span style="color:var(--success)">实时同步中</span>
-            </div>
-            <div class="messages">
-              <div class="bubble left">导出前能看到历史记录吗？</div>
-              <div class="bubble right">可以，会展示每次导出时间和消息增量。</div>
-              <div class="bubble left">我想先看最近 30 天。</div>
-              <div class="bubble right">已支持日期筛选，语音/图片也能单独导出。</div>
-              <div class="bubble left">导出目录能按账号隔离吗？</div>
-              <div class="bubble right">可以，已支持共享目录和账号子目录策略。</div>
-            </div>
-            <div class="composer">
-              <div class="input">输入消息、过滤关键词或跳转日期...</div>
-              <button class="btn">发送</button>
-            </div>
-          </section>
-        </div>
-      `
-    }
-
-    function renderExportBody() {
-      return `
-        <div class="main-body split">
-          <section class="panel">
-            <h3>会话列表</h3>
-            <div class="list-item"><strong>产品讨论群</strong><span class="status success">+128</span></div>
-            <div class="list-item"><strong>陈小北</strong><span class="status">+0</span></div>
-            <div class="list-item"><strong>家人群</strong><span class="status success">+42</span></div>
-            <div class="list-item"><strong>Arkme 项目组</strong><span class="status success">+87</span></div>
-            <div class="footnote">筛选：仅私聊/群聊，排除公众号</div>
-          </section>
-
-          <section class="panel">
-            <h3>会话导出配置</h3>
-            <div class="kpi-row">
-              <div class="kpi"><span>消息总数</span><strong>32,984</strong></div>
-              <div class="kpi"><span>待同步增量</span><strong style="color:var(--success)">+128</strong></div>
-              <div class="kpi"><span>最近导出</span><strong style="font-size:14px">2026-03-01 23:12</strong></div>
-            </div>
-            <div class="pill-row">
-              <span class="pill">JSON</span><span class="pill">HTML</span><span class="pill">CSV</span><span class="pill">Excel</span>
-              <span class="pill">SQL</span><span class="pill">VCF</span><span class="pill">ChatLab</span>
-            </div>
-            <div class="list-item"><strong>时间范围</strong><span>2024-01-01 至 2026-03-02</span></div>
-            <div class="list-item"><strong>媒体选项</strong><span>图片/语音/视频/表情</span></div>
-            <div class="list-item"><strong>导出目录</strong><span>D:/VXdaochu/Export/产品讨论群</span></div>
-            <div class="line"></div>
-            <div class="list-item"><strong>2026-03-01 23:12</strong><span>HTML + JSON</span></div>
-            <div class="list-item"><strong>2026-02-28 20:45</strong><span>CSV</span></div>
-          </section>
-        </div>
-      `
-    }
-
-    function renderMomentsBody() {
-      return `
-        <div class="main-body split">
-          <section class="panel">
-            <h3>筛选条件</h3>
-            <div class="list-item"><strong>时间范围</strong><span>最近 90 天</span></div>
-            <div class="list-item"><strong>联系人</strong><span>全部（32）</span></div>
-            <div class="list-item"><strong>媒体类型</strong><span>图文 + 视频</span></div>
-            <div class="line"></div>
-            <div class="list-item"><strong>林予安</strong><span>45 条动态</span></div>
-            <div class="list-item"><strong>周同学</strong><span>28 条动态</span></div>
-            <div class="list-item"><strong>工作群助手</strong><span>19 条动态</span></div>
-          </section>
-
-          <section class="panel">
-            <h3>动态时间流</h3>
-            <div class="list-item"><strong>林予安 · 3月2日 09:21</strong><span>点赞 45 · 评论 18</span></div>
-            <div class="list-item"><strong>动态内容</strong><span>整理 2025 出行照片并导出时间轴</span></div>
-            <div class="list-item"><strong>媒体</strong><span>图片 A / B / C</span></div>
-            <div class="line"></div>
-            <div class="list-item"><strong>周同学 · 3月1日 21:03</strong><span>点赞 27 · 评论 9</span></div>
-            <div class="list-item"><strong>动态内容</strong><span>分享会提纲备忘</span></div>
-            <div class="list-item"><strong>媒体</strong><span>图片 D / E</span></div>
-          </section>
-        </div>
-      `
-    }
-
-    function renderDataBody() {
-      return `
-        <div class="main-body split">
-          <section class="panel">
-            <h3>数据库状态</h3>
-            <div class="progress"><span></span></div>
-            <div class="footnote">当前任务：图片批量解密（2,184 / 3,000）</div>
-            <div class="line"></div>
-            <div class="list-item"><strong>MSG0.db</strong><span class="status success">已解密</span></div>
-            <div class="list-item"><strong>MediaMSG0.db</strong><span class="status warn">需更新</span></div>
-            <div class="list-item"><strong>MicroMsg.db</strong><span class="status success">已解密</span></div>
-            <div class="list-item"><strong>OpenIMContact.db</strong><span class="status">待处理</span></div>
-          </section>
-
-          <section class="panel">
-            <h3>解密与路径</h3>
-            <div class="list-item"><strong>图片任务</strong><span>成功 2,184 · 失败 12 · 排队 804</span></div>
-            <div class="list-item"><strong>表情任务</strong><span>成功 836 · 失败 0</span></div>
-            <div class="line"></div>
-            <div class="list-item"><strong>数据库目录</strong><span>D:/WeChat/Data</span></div>
-            <div class="list-item"><strong>缓存目录</strong><span>D:/VXdaochu/Cache</span></div>
-            <div class="footnote">最近同步：2026-03-02 10:58 · 自动更新间隔 30 秒</div>
-          </section>
-        </div>
-      `
-    }
-
-    function renderBody() {
-      if (state.panel === 'chat') return renderChatBody()
-      if (state.panel === 'export') return renderExportBody()
-      if (state.panel === 'moments') return renderMomentsBody()
-      return renderDataBody()
-    }
-
     function render() {
+      document.body.setAttribute('data-theme', state.theme)
       renderControls()
-      const meta = panelMeta[state.panel]
-      document.getElementById('root').innerHTML = `
-        <div class="app-shell">
-          <aside class="sidebar">
-            <div class="logo"><strong>VX</strong><span>daochu</span></div>
-            <nav class="nav">
-              <div class="nav-item ${state.panel === 'export' ? 'active' : ''}">导出数据</div>
-              <div class="nav-item ${state.panel === 'chat' ? 'active' : ''}">聊天记录</div>
-              <div class="nav-item ${state.panel === 'moments' ? 'active' : ''}">朋友圈</div>
-              <div class="nav-item ${state.panel === 'data' ? 'active' : ''}">数据管理</div>
-              <div class="nav-item">设置</div>
-            </nav>
-          </aside>
-          <main class="main card">
-            <header class="main-header">
-              <h2>${meta.title}</h2>
-              <p>${meta.subtitle}</p>
-            </header>
-            ${renderBody()}
-          </main>
-        </div>
-      `
+      const fileName = `${state.theme}-${state.panel}.svg`
+      const src = `../readme-shots/${fileName}`
+      const preview = document.getElementById('preview')
+      preview.src = src
+      preview.alt = fileName
+
+      document.getElementById('meta').textContent = `当前：${fileName}（路径：docs/readme-shots/${fileName}）`
     }
 
     render()
