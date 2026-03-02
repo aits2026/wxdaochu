@@ -1,0 +1,58 @@
+
+    <svg xmlns="http://www.w3.org/2000/svg" width="1560" height="980" viewBox="0 0 1560 980">
+      <defs>
+        <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#f5f7fb" />
+          <stop offset="100%" stop-color="#eaf2ff" />
+        </linearGradient>
+      </defs>
+      <rect x="0" y="0" width="1560" height="980" fill="url(#bg)" />
+      
+    <text x="62" y="92" fill="#10203b" font-size="46" font-weight="700">朋友圈浏览</text>
+    <text x="62" y="132" fill="#617192" font-size="23">按时间流查看动态，支持媒体下载与归档</text>
+    <rect x="1180" y="52" width="145" height="40" rx="20" fill="#ffffff" stroke="#d8e2f0" />
+    <text x="1204" y="78" fill="#617192" font-size="18">VXdaochu 2.2.5</text>
+    <rect x="1338" y="52" width="160" height="40" rx="20" fill="#ffffff" stroke="#d8e2f0" />
+    <text x="1365" y="78" fill="#617192" font-size="18">Light Mode</text>
+  
+      
+    <rect x="40" y="168" width="1480" height="772" rx="30" fill="#ffffff" stroke="#d8e2f0" />
+  
+      
+    <rect x="80" y="222" width="320" height="690" rx="16" fill="#ffffff" stroke="#d8e2f0" />
+    <text x="106" y="270" fill="#10203b" font-size="26" font-weight="700">筛选条件</text>
+    <rect x="106" y="296" width="268" height="58" rx="10" fill="#e5f0ff" stroke="#d8e2f0" />
+    <text x="124" y="333" fill="#617192" font-size="19">时间范围：最近 90 天</text>
+    <rect x="106" y="370" width="268" height="58" rx="10" fill="#e5f0ff" stroke="#d8e2f0" />
+    <text x="124" y="407" fill="#617192" font-size="19">联系人：全部</text>
+    <rect x="106" y="444" width="268" height="58" rx="10" fill="#e5f0ff" stroke="#d8e2f0" />
+    <text x="124" y="481" fill="#617192" font-size="19">媒体类型：图文 + 视频</text>
+    <rect x="106" y="526" width="268" height="54" rx="10" fill="#1f7ae0" />
+    <text x="168" y="561" fill="#fff" font-size="21" font-weight="700">导出当前筛选</text>
+
+    <rect x="420" y="222" width="1060" height="320" rx="16" fill="#ffffff" stroke="#d8e2f0" />
+    <circle cx="458" cy="264" r="20" fill="#1f7ae0" />
+    <text x="492" y="270" fill="#10203b" font-size="24" font-weight="700">林予安</text>
+    <text x="492" y="302" fill="#617192" font-size="17">3月2日 09:21</text>
+    <text x="458" y="352" fill="#10203b" font-size="21">终于把 2025 年的出行照片整理完了，顺便导出做了个时间轴。</text>
+    <rect x="458" y="380" width="296" height="126" rx="12" fill="#e5f0ff" stroke="#d8e2f0" />
+    <rect x="772" y="380" width="296" height="126" rx="12" fill="#e5f0ff" stroke="#d8e2f0" />
+    <rect x="1086" y="380" width="296" height="126" rx="12" fill="#e5f0ff" stroke="#d8e2f0" />
+    <text x="570" y="450" fill="#617192" font-size="20">图片 A</text>
+    <text x="884" y="450" fill="#617192" font-size="20">图片 B</text>
+    <text x="1198" y="450" fill="#617192" font-size="20">图片 C</text>
+    <text x="458" y="530" fill="#617192" font-size="18">点赞 45 · 评论 18</text>
+
+    <rect x="420" y="560" width="1060" height="352" rx="16" fill="#ffffff" stroke="#d8e2f0" />
+    <circle cx="458" cy="604" r="20" fill="#1f7ae0" />
+    <text x="492" y="610" fill="#10203b" font-size="24" font-weight="700">周同学</text>
+    <text x="492" y="642" fill="#617192" font-size="17">3月1日 21:03</text>
+    <text x="458" y="692" fill="#10203b" font-size="21">昨天那场分享会的提纲，发在这里备忘。</text>
+    <rect x="458" y="720" width="460" height="126" rx="12" fill="#e5f0ff" stroke="#d8e2f0" />
+    <rect x="938" y="720" width="460" height="126" rx="12" fill="#e5f0ff" stroke="#d8e2f0" />
+    <text x="648" y="792" fill="#617192" font-size="20">图片 D</text>
+    <text x="1128" y="792" fill="#617192" font-size="20">图片 E</text>
+    <text x="458" y="888" fill="#617192" font-size="18">点赞 27 · 评论 9</text>
+  
+    </svg>
+  

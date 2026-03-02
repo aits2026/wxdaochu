@@ -7,6 +7,7 @@
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",
+    "readme:shots": "node scripts/generate-readme-screenshots.cjs",
     "ai:commit": "python3 scripts/ai_commit_journal.py commit --",
     "ai:journal:generate": "python3 scripts/ai_commit_journal.py generate",
     "ai:journal:install": "python3 scripts/ai_commit_journal.py install-hooks",

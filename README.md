@@ -54,6 +54,42 @@
   </tr>
 </table>
 
+## 🖼️ 核心界面预览
+
+> 以下界面由项目内置 `README Showcase` 假数据自动渲染并批量截图生成。
+
+### 浅色主题
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/readme-shots/light-chat.svg" alt="聊天记录查看（浅色）" /></td>
+    <td width="50%"><img src="docs/readme-shots/light-export.svg" alt="数据导出（浅色）" /></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/readme-shots/light-moments.svg" alt="朋友圈浏览（浅色）" /></td>
+    <td width="50%"><img src="docs/readme-shots/light-data.svg" alt="数据管理与解密（浅色）" /></td>
+  </tr>
+</table>
+
+### 深色主题
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/readme-shots/dark-chat.svg" alt="聊天记录查看（深色）" /></td>
+    <td width="50%"><img src="docs/readme-shots/dark-export.svg" alt="数据导出（深色）" /></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/readme-shots/dark-moments.svg" alt="朋友圈浏览（深色）" /></td>
+    <td width="50%"><img src="docs/readme-shots/dark-data.svg" alt="数据管理与解密（深色）" /></td>
+  </tr>
+</table>
+
+### 截图更新命令
+
+```bash
+npm run readme:shots
+```
+
 ## 🛠️ 技术栈
 
 <div align="center">

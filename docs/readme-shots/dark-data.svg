@@ -1,0 +1,53 @@
+
+    <svg xmlns="http://www.w3.org/2000/svg" width="1560" height="980" viewBox="0 0 1560 980">
+      <defs>
+        <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#1a2842" />
+          <stop offset="100%" stop-color="#0a101c" />
+        </linearGradient>
+      </defs>
+      <rect x="0" y="0" width="1560" height="980" fill="url(#bg)" />
+      
+    <text x="62" y="92" fill="#e4edff" font-size="46" font-weight="700">数据管理与解密</text>
+    <text x="62" y="132" fill="#9cb1d6" font-size="23">数据库扫描、媒体解密、缓存迁移一体化</text>
+    <rect x="1180" y="52" width="145" height="40" rx="20" fill="#14213a" stroke="#31415f" />
+    <text x="1204" y="78" fill="#9cb1d6" font-size="18">VXdaochu 2.2.5</text>
+    <rect x="1338" y="52" width="160" height="40" rx="20" fill="#14213a" stroke="#31415f" />
+    <text x="1365" y="78" fill="#9cb1d6" font-size="18">Dark Mode</text>
+  
+      
+    <rect x="40" y="168" width="1480" height="772" rx="30" fill="#14213a" stroke="#31415f" />
+  
+      
+    <rect x="80" y="222" width="1400" height="190" rx="16" fill="#14213a" stroke="#31415f" />
+    <text x="108" y="270" fill="#e4edff" font-size="28" font-weight="700">解密进度</text>
+    <rect x="108" y="292" width="1344" height="22" rx="11" fill="#23395f" stroke="#31415f" />
+    <rect x="108" y="292" width="981" height="22" rx="11" fill="#5ea7ff" />
+    <text x="108" y="354" fill="#9cb1d6" font-size="20">当前任务：图片批量解密（预计剩余 3 分钟）</text>
+
+    <rect x="80" y="432" width="690" height="220" rx="14" fill="#14213a" stroke="#31415f" />
+    <text x="108" y="474" fill="#e4edff" font-size="24" font-weight="700">数据库校验</text>
+    <rect x="608" y="444" width="134" height="34" rx="17" fill="#23395f" stroke="#31415f" />
+    <text x="654" y="468" fill="#34d399" font-size="18">完成</text>
+    <text x="108" y="538" fill="#9cb1d6" font-size="20">12/12 个库可读</text>
+
+    <rect x="790" y="432" width="690" height="220" rx="14" fill="#14213a" stroke="#31415f" />
+    <text x="818" y="474" fill="#e4edff" font-size="24" font-weight="700">图片解密</text>
+    <rect x="1318" y="444" width="134" height="34" rx="17" fill="#23395f" stroke="#31415f" />
+    <text x="1344" y="468" fill="#5ea7ff" font-size="18">进行中</text>
+    <text x="818" y="538" fill="#9cb1d6" font-size="20">2,184 / 3,000</text>
+
+    <rect x="80" y="672" width="690" height="220" rx="14" fill="#14213a" stroke="#31415f" />
+    <text x="108" y="714" fill="#e4edff" font-size="24" font-weight="700">表情修复</text>
+    <rect x="608" y="684" width="134" height="34" rx="17" fill="#23395f" stroke="#31415f" />
+    <text x="654" y="708" fill="#34d399" font-size="18">完成</text>
+    <text x="108" y="778" fill="#9cb1d6" font-size="20">836 / 836</text>
+
+    <rect x="790" y="672" width="690" height="220" rx="14" fill="#14213a" stroke="#31415f" />
+    <text x="818" y="714" fill="#e4edff" font-size="24" font-weight="700">缓存迁移</text>
+    <rect x="1318" y="684" width="134" height="34" rx="17" fill="#23395f" stroke="#31415f" />
+    <text x="1364" y="708" fill="#fbbf24" font-size="18">待执行</text>
+    <text x="818" y="778" fill="#9cb1d6" font-size="20">目标盘符 D:</text>
+  
+    </svg>
+  
