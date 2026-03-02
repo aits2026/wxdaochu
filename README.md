@@ -56,7 +56,9 @@
 
 ## 🖼️ 核心界面预览
 
-> 以下界面由项目内置 `README Showcase` 假数据自动渲染并批量截图生成。
+> 以下界面由项目内置 `README Showcase` 静态复刻页（基于现有前端布局与样式变量）生成。
+
+高保真静态复刻页入口：[`docs/readme-showcase/index.html`](docs/readme-showcase/index.html)
 
 ### 浅色主题
 
