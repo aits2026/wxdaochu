@@ -2456,6 +2456,38 @@ class ExportService {
       .replace(/\r/g, '\n')
   }
 
+  private extractArkmeLinkFields(content: string, localType: number): {
+    linkUrl?: string
+    linkTitle?: string
+    linkDesc?: string
+  } | undefined {
+    if (!content) return undefined
+
+    const xmlType = this.extractXmlValue(content, 'type')
+    const isLinkMessage = localType === 49 || xmlType === '5' || xmlType === '49'
+    if (!isLinkMessage) return undefined
+
+    const normalizeOptional = (value: string): string | undefined => {
+      const normalized = this.normalizeArkmeTextContent(value)
+      if (!normalized) return undefined
+      const trimmed = normalized.trim()
+      return trimmed.length > 0 ? trimmed : undefined
+    }
+
+    const linkUrl = normalizeOptional(this.extractXmlValue(content, 'url'))
+    const linkTitle = normalizeOptional(this.extractXmlValue(content, 'title'))
+    const linkDescRaw = this.extractXmlValue(content, 'des') || this.extractXmlValue(content, 'description')
+    const linkDesc = normalizeOptional(linkDescRaw)?.replace(/\\n/g, '\n')
+
+    if (!linkUrl && !linkTitle && !linkDesc) return undefined
+
+    return {
+      ...(linkUrl ? { linkUrl } : {}),
+      ...(linkTitle ? { linkTitle } : {}),
+      ...(linkDesc ? { linkDesc } : {})
+    }
+  }
+
   /**
    * 格式化聊天记录为 JSON 导出格式
    */
@@ -3154,6 +3186,7 @@ class ExportService {
 
             const parsedContent = this.parseMessageContent(content, localType, sessionId, createTime, options.mediaPathMap, mediaMapKey)
             const normalizedContent = this.normalizeArkmeTextContent(parsedContent)
+            const linkFields = this.extractArkmeLinkFields(content, localType)
             const formattedChatRecords = chatRecordList
               ? this.formatChatRecordsForJson(chatRecordList, options).map(record => ({
                 ...record,
@@ -3181,6 +3214,7 @@ class ExportService {
               ...(replyToMessageId && { replyToMessageId }),
               ...(mediaRef ? { mediaRef } : {}),
               ...(formattedChatRecords && { chatRecords: formattedChatRecords }),
+              ...(linkFields || {}),
               source
             })
 
@@ -3262,6 +3296,9 @@ class ExportService {
         content: msg.content,
         isSend: msg.isSend,
         senderId,
+        ...(msg.linkUrl && { linkUrl: msg.linkUrl }),
+        ...(msg.linkTitle && { linkTitle: msg.linkTitle }),
+        ...(msg.linkDesc && { linkDesc: msg.linkDesc }),
         ...(msg.groupNickname && { groupNickname: msg.groupNickname }),
         ...(msg.replyToMessageId && { replyToMessageId: msg.replyToMessageId }),
         ...(msg.mediaRef ? { mediaRef: msg.mediaRef } : {}),
