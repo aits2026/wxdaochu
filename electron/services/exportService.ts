@@ -199,6 +199,37 @@ interface ArkmeMediaIndexEntry extends ArkmeMediaRef {
   localMessageId?: string
 }
 
+interface ArkmeFinderFields {
+  finderTitle?: string
+  finderDesc?: string
+  finderAuthor?: string
+  finderUrl?: string
+  finderCoverUrl?: string
+  finderObjectId?: string
+  finderNonceId?: string
+  finderType?: string
+}
+
+interface ArkmeContactCardFields {
+  contactCardNickname?: string
+  contactCardWxid?: string
+  contactCardAlias?: string
+  contactCardV2?: string
+  contactCardRegion?: string
+  contactCardSign?: string
+  contactCardAvatar?: string
+}
+
+interface ArkmeLocationFields {
+  locationLat?: number
+  locationLng?: number
+  locationLabel?: string
+  locationPoiName?: string
+  locationAddress?: string
+  locationScale?: number
+  locationMapUrl?: string
+}
+
 type MediaDedupState = Record<ArkmeMediaKind, Map<string, string>>
 
 const createMediaDedupState = (): MediaDedupState => ({
@@ -260,22 +291,28 @@ class ExportService {
     return ''
   }
 
-  private resolveExportRootDir(outputDir: string): string {
-    const normalized = path.resolve(outputDir)
-    const base = path.basename(normalized).toLowerCase()
-    const knownSubdirs = new Set(['chat-text', 'chat-txt', 'images', 'videos', 'emojis', 'voices'])
-    if (knownSubdirs.has(base)) {
-      return path.dirname(normalized)
-    }
-    return normalized
-  }
-
-  private getKnownExportSubdirName(dirName: string): string | null {
+  private parseKnownExportSubdirName(dirName: string): { subdir: string; hasPrefix: boolean } | null {
     const normalized = String(dirName || '').trim().toLowerCase()
     if (!normalized) return null
 
     const knownSubdirs = ['chat-text', 'chat-txt', 'images', 'videos', 'emojis', 'voices']
-    return knownSubdirs.includes(normalized) ? normalized : null
+    if (knownSubdirs.includes(normalized)) {
+      return { subdir: normalized, hasPrefix: false }
+    }
+
+    const prefixedMatch = /^([a-z0-9]{1,5})_(chat-text|chat-txt|images|videos|emojis|voices)$/.exec(normalized)
+    if (prefixedMatch) {
+      return { subdir: prefixedMatch[2], hasPrefix: true }
+    }
+
+    return null
+  }
+
+  private resolveExportRootDir(outputDir: string): string {
+    const normalized = path.resolve(outputDir)
+    const parsed = this.parseKnownExportSubdirName(path.basename(normalized))
+    if (parsed) return path.dirname(normalized)
+    return normalized
   }
 
   private buildExportOwnerPrefix5(): string {
@@ -294,20 +331,19 @@ class ExportService {
     return prefix.toLowerCase()
   }
 
+  private buildScopedExportSubdirName(subdir: string, ownerPrefix?: string): string {
+    const prefix = ownerPrefix || this.buildExportOwnerPrefix5()
+    return `${prefix}_${subdir}`
+  }
+
   private resolveAccountScopedOutputDir(outputDir: string): string {
     const normalized = path.resolve(outputDir)
-    const subdirName = this.getKnownExportSubdirName(path.basename(normalized))
-    if (!subdirName) return normalized
-
-    const originalRootDir = path.dirname(normalized)
-    const originalRootBase = path.basename(originalRootDir)
-    if (/^[a-z0-9]{1,5}_exports$/i.test(originalRootBase)) {
-      return normalized
-    }
+    const parsed = this.parseKnownExportSubdirName(path.basename(normalized))
+    if (!parsed) return normalized
+    if (parsed.hasPrefix) return normalized
 
     const ownerPrefix = this.buildExportOwnerPrefix5()
-    const scopedRootDir = path.join(originalRootDir, `${ownerPrefix}_exports`)
-    return path.join(scopedRootDir, subdirName)
+    return path.join(path.dirname(normalized), this.buildScopedExportSubdirName(parsed.subdir, ownerPrefix))
   }
 
   private buildMediaMapSnapshotFileName(now = new Date()): string {
@@ -1323,21 +1359,29 @@ class ExportService {
   private convertMessageType(localType: number, content: string): number {
     // 检查 XML 中的 type 标签（支持大 localType 的情况）
     const xmlTypeMatch = /<type>(\d+)<\/type>/i.exec(content)
-    const xmlType = xmlTypeMatch ? parseInt(xmlTypeMatch[1]) : null
+    const xmlTypeText = xmlTypeMatch ? xmlTypeMatch[1] : ''
+    const xmlType = xmlTypeText ? parseInt(xmlTypeText, 10) : null
 
     // 特殊处理 type 49 或 XML type
     if (localType === 49 || xmlType) {
       const subType = xmlType || 0
       switch (subType) {
+        case 42: return 27  // 名片 -> CONTACT
+        case 48: return 8   // 位置 -> LOCATION
         case 6: return 4   // 文件 -> FILE
         case 19: return 7  // 聊天记录 -> LINK (ChatLab 没有专门的聊天记录类型)
         case 33:
         case 36: return 24 // 小程序 -> SHARE
         case 57: return 25 // 引用回复 -> REPLY
         case 2000: return 99 // 转账 -> OTHER (ChatLab 没有转账类型)
+        case 51:
+        case 53: return 24 // 视频号 -> SHARE
         case 5:
         case 49: return 7  // 链接 -> LINK
         default:
+          if (this.extractArkmeLocationFields(content, localType, xmlTypeText || undefined)) return 8
+          if (this.extractArkmeContactCardFields(content, localType, xmlTypeText || undefined)) return 27
+          if (this.extractArkmeFinderFields(content, localType, xmlTypeText || undefined)) return 24
           if (xmlType) return 7 // 有 XML type 但未知，默认为链接
       }
     }
@@ -1767,6 +1811,9 @@ class ExportService {
     // 检查 XML 中的 type 标签（支持大 localType 的情况）
     const xmlTypeMatch = /<type>(\d+)<\/type>/i.exec(content)
     const xmlType = xmlTypeMatch ? xmlTypeMatch[1] : null
+    const locationFields = this.extractArkmeLocationFields(content, localType, xmlType || undefined)
+    const contactCardFields = this.extractArkmeContactCardFields(content, localType, xmlType || undefined)
+    const finderFields = this.extractArkmeFinderFields(content, localType, xmlType || undefined)
 
     switch (localType) {
       case 1: // 文本
@@ -1791,7 +1838,8 @@ class ExportService {
         }
         return '[语音消息]'
       }
-      case 42: return '[名片]'
+      case 42:
+        return this.buildArkmeContactCardContent(contactCardFields)
       case 43: {
         const mediaPath = this.getMediaPathFromMap(mediaPathMap, mediaMapKey, createTime)
         if (mediaPath) {
@@ -1806,7 +1854,7 @@ class ExportService {
         }
         return '[动画表情]'
       }
-      case 48: return '[位置]'
+      case 48: return this.buildArkmeLocationContent(locationFields)
       case 49: {
         const title = this.extractXmlValue(content, 'title')
         const type = this.extractXmlValue(content, 'type')
@@ -1834,7 +1882,10 @@ class ExportService {
         if (type === '19') return title ? `[聊天记录] ${title}` : '[聊天记录]'
         if (type === '33' || type === '36') return title ? `[小程序] ${title}` : '[小程序]'
         if (type === '57') return title || '[引用消息]'
+        if (type === '48') return this.buildArkmeLocationContent(locationFields)
         if (type === '5' || type === '49') return title ? `[链接] ${title}` : '[链接]'
+        if (locationFields) return this.buildArkmeLocationContent(locationFields)
+        if (finderFields) return this.buildArkmeFinderContent(finderFields)
         return title ? `[链接] ${title}` : '[链接]'
       }
       case 50: return '[通话]'
@@ -1869,15 +1920,24 @@ class ExportService {
           }
 
           // 其他类型
+          if (xmlType === '48') return this.buildArkmeLocationContent(locationFields)
+          if (xmlType === '42') return this.buildArkmeContactCardContent(contactCardFields)
           if (xmlType === '6') return title ? `[文件] ${title}` : '[文件]'
           if (xmlType === '19') return title ? `[聊天记录] ${title}` : '[聊天记录]'
           if (xmlType === '33' || xmlType === '36') return title ? `[小程序] ${title}` : '[小程序]'
           if (xmlType === '57') return title || '[引用消息]'
           if (xmlType === '5' || xmlType === '49') return title ? `[链接] ${title}` : '[链接]'
+          if (locationFields) return this.buildArkmeLocationContent(locationFields)
+          if (finderFields) return this.buildArkmeFinderContent(finderFields)
+          if (contactCardFields) return this.buildArkmeContactCardContent(contactCardFields)
 
           // 有 title 就返回 title
           if (title) return title
         }
+
+        if (locationFields) return this.buildArkmeLocationContent(locationFields)
+        if (contactCardFields) return this.buildArkmeContactCardContent(contactCardFields)
+        if (finderFields) return this.buildArkmeFinderContent(finderFields)
 
         // 最后尝试提取文本内容
         return this.stripSenderPrefix(content) || null
@@ -2496,6 +2556,292 @@ class ExportService {
       .replace(/\r/g, '\n')
   }
 
+  private normalizeArkmeOptionalText(value: string | null | undefined): string | undefined {
+    const normalized = this.normalizeArkmeTextContent(value)
+    if (!normalized) return undefined
+    const trimmed = normalized.trim()
+    return trimmed.length > 0 ? trimmed : undefined
+  }
+
+  private extractXmlFirstValue(xml: string, tagNames: string[]): string {
+    for (const tagName of tagNames) {
+      const value = this.extractXmlValue(xml, tagName)
+      if (value && value.trim().length > 0) {
+        return value
+      }
+    }
+    return ''
+  }
+
+  private extractXmlAttributeValue(xml: string, tagName: string, attrName: string): string {
+    if (!xml || !tagName || !attrName) return ''
+    const tagRegex = new RegExp(`<${tagName}\\b([^>]*)>`, 'i')
+    const tagMatch = tagRegex.exec(xml)
+    if (!tagMatch) return ''
+    const attrs = tagMatch[1] || ''
+    const escapedAttrName = attrName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const attrRegex = new RegExp(`${escapedAttrName}\\s*=\\s*(['"])([\\s\\S]*?)\\1`, 'i')
+    const attrMatch = attrRegex.exec(attrs)
+    if (!attrMatch) return ''
+    return String(attrMatch[2] || '').trim()
+  }
+
+  private extractArkmeLocationFields(content: string, localType: number, xmlTypeHint?: string): ArkmeLocationFields | undefined {
+    if (!content) return undefined
+
+    const xmlType = xmlTypeHint || this.extractXmlValue(content, 'type')
+    const looksLikeLocation = localType === 48 ||
+      xmlType === '48' ||
+      /<location\b/i.test(content) ||
+      /(?:\bx\s*=|\blat(?:itude)?\s*=)[^>]*(?:\by\s*=|\blng|lon|long(?:itude)?\s*=)/i.test(content)
+    if (!looksLikeLocation) return undefined
+
+    const pickAttr = (attrName: string): string =>
+      this.extractXmlAttributeValue(content, 'location', attrName) ||
+      this.extractXmlAttributeValue(content, 'msg', attrName)
+    const pickTag = (tagNames: string[]): string =>
+      this.extractXmlFirstValue(content, tagNames)
+
+    const toNumber = (value: string): number | undefined => {
+      const normalized = this.normalizeArkmeOptionalText(value)
+      if (!normalized) return undefined
+      const num = Number.parseFloat(normalized)
+      return Number.isFinite(num) ? num : undefined
+    }
+
+    const locationLat = toNumber(
+      pickAttr('x') || pickTag(['x', 'lat', 'latitude'])
+    )
+    const locationLng = toNumber(
+      pickAttr('y') || pickTag(['y', 'lng', 'lon', 'long', 'longitude'])
+    )
+    const locationLabel = this.normalizeArkmeOptionalText(
+      pickAttr('label') || pickTag(['label', 'locationlabel', 'location_label'])
+    )
+    const locationPoiName = this.normalizeArkmeOptionalText(
+      pickAttr('poiname') || pickTag(['poiname', 'poi_name', 'poiName', 'title'])
+    )
+    const locationAddress = this.normalizeArkmeOptionalText(
+      pickAttr('address') || pickAttr('addr') || pickTag(['address', 'addr'])
+    )
+    const locationScale = toNumber(
+      pickAttr('scale') || pickTag(['scale'])
+    )
+    const locationMapUrl = this.normalizeArkmeOptionalText(
+      this.extractXmlFirstValue(content, ['mapurl', 'map_url', 'url'])
+    )
+
+    const fields: ArkmeLocationFields = {
+      ...(locationLat !== undefined ? { locationLat } : {}),
+      ...(locationLng !== undefined ? { locationLng } : {}),
+      ...(locationLabel ? { locationLabel } : {}),
+      ...(locationPoiName ? { locationPoiName } : {}),
+      ...(locationAddress ? { locationAddress } : {}),
+      ...(locationScale !== undefined ? { locationScale } : {}),
+      ...(locationMapUrl ? { locationMapUrl } : {})
+    }
+
+    return Object.keys(fields).length > 0 ? fields : undefined
+  }
+
+  private buildArkmeLocationContent(fields?: ArkmeLocationFields): string {
+    if (!fields) return '[位置]'
+    const label = this.normalizeArkmeOptionalText(fields.locationLabel)
+    const poi = this.normalizeArkmeOptionalText(fields.locationPoiName)
+    const lat = fields.locationLat
+    const lng = fields.locationLng
+    const title = label || poi
+    const hasCoord = Number.isFinite(lat) && Number.isFinite(lng)
+    const coordText = hasCoord ? `(${lat},${lng})` : ''
+
+    if (title && coordText) return `[位置] ${title} ${coordText}`
+    if (title) return `[位置] ${title}`
+    if (coordText) return `[位置] ${coordText}`
+    return '[位置]'
+  }
+
+  private extractArkmeContactCardFields(content: string, localType: number, xmlTypeHint?: string): ArkmeContactCardFields | undefined {
+    if (!content) return undefined
+
+    const xmlType = xmlTypeHint || this.extractXmlValue(content, 'type')
+    const looksLikeContactCard = localType === 42 ||
+      xmlType === '42' ||
+      /<msg\b[^>]*(?:nickname|username|alias|bigheadimgurl|smallheadimgurl)=/i.test(content)
+    if (!looksLikeContactCard) return undefined
+
+    const pickAttr = (attrName: string): string =>
+      this.extractXmlAttributeValue(content, 'msg', attrName)
+    const pickTag = (tagNames: string[]): string =>
+      this.extractXmlFirstValue(content, tagNames)
+
+    const nickname = this.normalizeArkmeOptionalText(
+      pickAttr('nickname') || pickTag(['nickname', 'nick_name', 'nickName', 'displayname', 'display_name'])
+    )
+    const wxid = this.normalizeArkmeOptionalText(
+      pickAttr('username') || pickTag(['username', 'wxid', 'wechatid', 'weixinid'])
+    )
+    const alias = this.normalizeArkmeOptionalText(
+      pickAttr('alias') || pickTag(['alias', 'wechatAlias', 'wechat_alias'])
+    )
+    const v2 = this.normalizeArkmeOptionalText(
+      pickAttr('antispamticket') || pickTag(['antispamticket', 'encryptusername', 'ticket', 'v2'])
+    )
+    const province = this.normalizeArkmeOptionalText(
+      pickAttr('province') || pickTag(['province'])
+    )
+    const city = this.normalizeArkmeOptionalText(
+      pickAttr('city') || pickTag(['city'])
+    )
+    const regionCode = this.normalizeArkmeOptionalText(
+      pickAttr('regionCode') || pickTag(['regionCode', 'region_code'])
+    )
+    const sign = this.normalizeArkmeOptionalText(
+      pickAttr('sign') || pickTag(['sign', 'signature'])
+    )
+    const avatar = this.normalizeArkmeOptionalText(
+      pickAttr('bigheadimgurl') ||
+      pickAttr('smallheadimgurl') ||
+      pickTag(['bigheadimgurl', 'smallheadimgurl', 'headimgurl', 'avatar'])
+    )
+    const region = [province, city].filter(Boolean).join(' ').trim() || regionCode
+
+    const fields: ArkmeContactCardFields = {
+      ...(nickname ? { contactCardNickname: nickname } : {}),
+      ...(wxid ? { contactCardWxid: wxid } : {}),
+      ...(alias ? { contactCardAlias: alias } : {}),
+      ...(v2 ? { contactCardV2: v2 } : {}),
+      ...(region ? { contactCardRegion: region } : {}),
+      ...(sign ? { contactCardSign: sign } : {}),
+      ...(avatar ? { contactCardAvatar: avatar } : {})
+    }
+
+    return Object.keys(fields).length > 0 ? fields : undefined
+  }
+
+  private buildArkmeContactCardContent(fields?: ArkmeContactCardFields): string {
+    if (!fields) return '[名片]'
+    const nickname = this.normalizeArkmeOptionalText(fields.contactCardNickname)
+    const wxid = this.normalizeArkmeOptionalText(fields.contactCardWxid)
+    const alias = this.normalizeArkmeOptionalText(fields.contactCardAlias)
+    const identity = wxid || alias
+
+    if (nickname && identity && nickname !== identity) {
+      return `[名片] ${nickname} (${identity})`
+    }
+    if (nickname) {
+      return `[名片] ${nickname}`
+    }
+    if (identity) {
+      return `[名片] ${identity}`
+    }
+    return '[名片]'
+  }
+
+  private isUnsupportedWeixinContentNotice(value: string | null | undefined): boolean {
+    if (!value) return false
+    const normalized = String(value).toLowerCase().replace(/\s+/g, ' ').trim()
+    if (!normalized) return false
+    return normalized.includes('your current weixin version does not support this content') ||
+      normalized.includes('update to the latest version') ||
+      normalized.includes('当前微信版本不支持') ||
+      normalized.includes('请升级到最新版本') ||
+      normalized.includes('版本过低')
+  }
+
+  private looksLikeFinderMessage(content: string, localType: number, xmlType: string, title: string): boolean {
+    if (!content) return false
+    if (xmlType === '51' || xmlType === '53') return true
+    if (/<finderFeed[\s>]/i.test(content)) return true
+    if (/<finder(username|_username|name|nickname|desc|objectid|_objectid|nonceid|_nonceid)>/i.test(content)) return true
+    if (/<finderusername>|<finder_username>|<findername>|<findernickname>|<finderobjectid>|<finder_objectid>|<findernonceid>|<finder_nonceid>/i.test(content)) return true
+    if (/<objectid>|<feedid>|<nonceid>|<coverUrl>|<thumbUrl>/i.test(content) && /finder/i.test(content)) return true
+    if (localType === 49 && this.isUnsupportedWeixinContentNotice(title)) return true
+    return false
+  }
+
+  private extractArkmeFinderFields(content: string, localType: number, xmlTypeHint?: string): ArkmeFinderFields | undefined {
+    if (!content) return undefined
+
+    const xmlType = xmlTypeHint || this.extractXmlValue(content, 'type')
+    const rawTitle = this.extractXmlValue(content, 'title')
+    const finderFeedMatch = /<finderFeed>([\s\S]*?)<\/finderFeed>/i.exec(content)
+    const finderXml = finderFeedMatch ? finderFeedMatch[1] : content
+
+    if (!this.looksLikeFinderMessage(content, localType, xmlType, rawTitle)) {
+      return undefined
+    }
+
+    const pickValue = (tags: string[]): string => {
+      const fromFinder = this.extractXmlFirstValue(finderXml, tags)
+      if (fromFinder) return fromFinder
+      return this.extractXmlFirstValue(content, tags)
+    }
+
+    const normalizedTitle = this.normalizeArkmeOptionalText(rawTitle)
+    const finderAuthor = this.normalizeArkmeOptionalText(pickValue([
+      'findernickname',
+      'findername',
+      'nickname',
+      'finderusername',
+      'finder_username',
+      'sourcename',
+      'sourceusername'
+    ]))
+    const finderDesc = this.normalizeArkmeOptionalText(
+      pickValue(['finderdesc', 'desc', 'description', 'des'])
+    )?.replace(/\\n/g, '\n')
+    const finderUrl = this.normalizeArkmeOptionalText(
+      pickValue(['finderurl', 'url', 'contenturl', 'jumpurl', 'playurl'])
+    )
+    const finderCoverUrl = this.normalizeArkmeOptionalText(
+      pickValue(['coverUrl', 'coverurl', 'thumbUrl', 'thumburl', 'cover', 'thumb'])
+    )
+    const finderObjectId = this.normalizeArkmeOptionalText(
+      pickValue(['finderobjectid', 'finder_objectid', 'objectid', 'objectId', 'feedid'])
+    )
+    const finderNonceId = this.normalizeArkmeOptionalText(
+      pickValue(['findernonceid', 'finder_nonceid', 'nonceid'])
+    )
+    const finderType = this.normalizeArkmeOptionalText(xmlType)
+
+    const finderTitle = normalizedTitle && !this.isUnsupportedWeixinContentNotice(normalizedTitle)
+      ? normalizedTitle
+      : (finderAuthor || finderDesc)
+
+    const fields: ArkmeFinderFields = {
+      ...(finderTitle ? { finderTitle } : {}),
+      ...(finderDesc ? { finderDesc } : {}),
+      ...(finderAuthor ? { finderAuthor } : {}),
+      ...(finderUrl ? { finderUrl } : {}),
+      ...(finderCoverUrl ? { finderCoverUrl } : {}),
+      ...(finderObjectId ? { finderObjectId } : {}),
+      ...(finderNonceId ? { finderNonceId } : {}),
+      ...(finderType ? { finderType } : {})
+    }
+
+    return Object.keys(fields).length > 0 ? fields : undefined
+  }
+
+  private buildArkmeFinderContent(fields: ArkmeFinderFields): string {
+    const title = this.normalizeArkmeOptionalText(fields.finderTitle)
+    const desc = this.normalizeArkmeOptionalText(fields.finderDesc)
+    const author = this.normalizeArkmeOptionalText(fields.finderAuthor)
+
+    if (title && desc && desc !== title) {
+      return `[视频号] ${title} - ${desc}`
+    }
+    if (title) {
+      return `[视频号] ${title}`
+    }
+    if (desc) {
+      return `[视频号] ${desc}`
+    }
+    if (author) {
+      return `[视频号] ${author}`
+    }
+    return '[视频号]'
+  }
+
   private extractArkmeLinkFields(content: string, localType: number): {
     linkUrl?: string
     linkTitle?: string
@@ -2507,17 +2853,10 @@ class ExportService {
     const isLinkMessage = localType === 49 || xmlType === '5' || xmlType === '49'
     if (!isLinkMessage) return undefined
 
-    const normalizeOptional = (value: string): string | undefined => {
-      const normalized = this.normalizeArkmeTextContent(value)
-      if (!normalized) return undefined
-      const trimmed = normalized.trim()
-      return trimmed.length > 0 ? trimmed : undefined
-    }
-
-    const linkUrl = normalizeOptional(this.extractXmlValue(content, 'url'))
-    const linkTitle = normalizeOptional(this.extractXmlValue(content, 'title'))
+    const linkUrl = this.normalizeArkmeOptionalText(this.extractXmlValue(content, 'url'))
+    const linkTitle = this.normalizeArkmeOptionalText(this.extractXmlValue(content, 'title'))
     const linkDescRaw = this.extractXmlValue(content, 'des') || this.extractXmlValue(content, 'description')
-    const linkDesc = normalizeOptional(linkDescRaw)?.replace(/\\n/g, '\n')
+    const linkDesc = this.normalizeArkmeOptionalText(linkDescRaw)?.replace(/\\n/g, '\n')
 
     if (!linkUrl && !linkTitle && !linkDesc) return undefined
 
@@ -2768,6 +3107,10 @@ class ExportService {
         switch (xmlType) {
           case '87': return '群公告'
           case '2000': return '转账消息'
+          case '48': return '位置消息'
+          case '42': return '名片消息'
+          case '51':
+          case '53': return '视频号消息'
           case '5': return '链接消息'
           case '6': return '文件消息'
           case '19': return '聊天记录'
@@ -2775,6 +3118,26 @@ class ExportService {
           case '36': return '小程序消息'
           case '57': return '引用消息'
         }
+
+        if (this.extractArkmeFinderFields(content, localType, xmlType)) {
+          return '视频号消息'
+        }
+        if (this.extractArkmeLocationFields(content, localType, xmlType)) {
+          return '位置消息'
+        }
+        if (this.extractArkmeContactCardFields(content, localType, xmlType)) {
+          return '名片消息'
+        }
+      }
+
+      if (this.extractArkmeLocationFields(content, localType)) {
+        return '位置消息'
+      }
+      if (this.extractArkmeContactCardFields(content, localType)) {
+        return '名片消息'
+      }
+      if (this.extractArkmeFinderFields(content, localType)) {
+        return '视频号消息'
       }
     }
 
@@ -3227,6 +3590,9 @@ class ExportService {
             const parsedContent = this.parseMessageContent(content, localType, sessionId, createTime, options.mediaPathMap, mediaMapKey)
             const normalizedContent = this.normalizeArkmeTextContent(parsedContent)
             const linkFields = this.extractArkmeLinkFields(content, localType)
+            const locationFields = this.extractArkmeLocationFields(content, localType, xmlType || undefined)
+            const contactCardFields = this.extractArkmeContactCardFields(content, localType, xmlType || undefined)
+            const finderFields = this.extractArkmeFinderFields(content, localType, xmlType || undefined)
             const formattedChatRecords = chatRecordList
               ? this.formatChatRecordsForJson(chatRecordList, options).map(record => ({
                 ...record,
@@ -3255,6 +3621,9 @@ class ExportService {
               ...(mediaRef ? { mediaRef } : {}),
               ...(formattedChatRecords && { chatRecords: formattedChatRecords }),
               ...(linkFields || {}),
+              ...(locationFields || {}),
+              ...(contactCardFields || {}),
+              ...(finderFields || {}),
               source
             })
 
@@ -3339,6 +3708,28 @@ class ExportService {
         ...(msg.linkUrl && { linkUrl: msg.linkUrl }),
         ...(msg.linkTitle && { linkTitle: msg.linkTitle }),
         ...(msg.linkDesc && { linkDesc: msg.linkDesc }),
+        ...(msg.locationLat !== undefined && { locationLat: msg.locationLat }),
+        ...(msg.locationLng !== undefined && { locationLng: msg.locationLng }),
+        ...(msg.locationLabel && { locationLabel: msg.locationLabel }),
+        ...(msg.locationPoiName && { locationPoiName: msg.locationPoiName }),
+        ...(msg.locationAddress && { locationAddress: msg.locationAddress }),
+        ...(msg.locationScale !== undefined && { locationScale: msg.locationScale }),
+        ...(msg.locationMapUrl && { locationMapUrl: msg.locationMapUrl }),
+        ...(msg.contactCardNickname && { contactCardNickname: msg.contactCardNickname }),
+        ...(msg.contactCardWxid && { contactCardWxid: msg.contactCardWxid }),
+        ...(msg.contactCardAlias && { contactCardAlias: msg.contactCardAlias }),
+        ...(msg.contactCardV2 && { contactCardV2: msg.contactCardV2 }),
+        ...(msg.contactCardRegion && { contactCardRegion: msg.contactCardRegion }),
+        ...(msg.contactCardSign && { contactCardSign: msg.contactCardSign }),
+        ...(msg.contactCardAvatar && { contactCardAvatar: msg.contactCardAvatar }),
+        ...(msg.finderTitle && { finderTitle: msg.finderTitle }),
+        ...(msg.finderDesc && { finderDesc: msg.finderDesc }),
+        ...(msg.finderAuthor && { finderAuthor: msg.finderAuthor }),
+        ...(msg.finderUrl && { finderUrl: msg.finderUrl }),
+        ...(msg.finderCoverUrl && { finderCoverUrl: msg.finderCoverUrl }),
+        ...(msg.finderObjectId && { finderObjectId: msg.finderObjectId }),
+        ...(msg.finderNonceId && { finderNonceId: msg.finderNonceId }),
+        ...(msg.finderType && { finderType: msg.finderType }),
         ...(msg.groupNickname && { groupNickname: msg.groupNickname }),
         ...(msg.replyToMessageId && { replyToMessageId: msg.replyToMessageId }),
         ...(msg.mediaRef ? { mediaRef: msg.mediaRef } : {}),
@@ -4395,11 +4786,12 @@ class ExportService {
         const hasMedia = Boolean(options.exportImages || options.exportVideos || options.exportEmojis || options.exportVoices)
         const chatTextDisabledMediaOnlyMode = !shouldExportChatText && hasMedia
         const effectiveMediaOnlyMode = mediaOnlyMode || chatTextDisabledMediaOnlyMode
+        const ownerPrefix = this.buildExportOwnerPrefix5()
         const selectedMediaSubdirs: string[] = []
-        if (options.exportImages) selectedMediaSubdirs.push('images')
-        if (options.exportVideos) selectedMediaSubdirs.push('videos')
-        if (options.exportEmojis) selectedMediaSubdirs.push('emojis')
-        if (options.exportVoices) selectedMediaSubdirs.push('voices')
+        if (options.exportImages) selectedMediaSubdirs.push(this.buildScopedExportSubdirName('images', ownerPrefix))
+        if (options.exportVideos) selectedMediaSubdirs.push(this.buildScopedExportSubdirName('videos', ownerPrefix))
+        if (options.exportEmojis) selectedMediaSubdirs.push(this.buildScopedExportSubdirName('emojis', ownerPrefix))
+        if (options.exportVoices) selectedMediaSubdirs.push(this.buildScopedExportSubdirName('voices', ownerPrefix))
         const mediaOnlyOutputDir = selectedMediaSubdirs.length === 1
           ? path.join(exportRootDir, selectedMediaSubdirs[0])
           : exportRootDir
@@ -4866,11 +5258,12 @@ class ExportService {
       return { mediaPathMap, arkmeMediaIndexMap }
     }
 
-    // 媒体统一写入导出根目录下固定子目录（images/videos/emojis/voices）
-    const imageOutDir = options.exportImages ? path.join(mediaRootDir, 'images') : ''
-    const videoOutDir = options.exportVideos ? path.join(mediaRootDir, 'videos') : ''
-    const emojiOutDir = options.exportEmojis ? path.join(mediaRootDir, 'emojis') : ''
-    const voiceOutDir = options.exportVoices ? path.join(mediaRootDir, 'voices') : ''
+    const ownerPrefix = this.buildExportOwnerPrefix5()
+    // 媒体统一写入导出根目录下固定子目录（prefix5_images/videos/emojis/voices）
+    const imageOutDir = options.exportImages ? path.join(mediaRootDir, this.buildScopedExportSubdirName('images', ownerPrefix)) : ''
+    const videoOutDir = options.exportVideos ? path.join(mediaRootDir, this.buildScopedExportSubdirName('videos', ownerPrefix)) : ''
+    const emojiOutDir = options.exportEmojis ? path.join(mediaRootDir, this.buildScopedExportSubdirName('emojis', ownerPrefix)) : ''
+    const voiceOutDir = options.exportVoices ? path.join(mediaRootDir, this.buildScopedExportSubdirName('voices', ownerPrefix)) : ''
 
     if (!fs.existsSync(mediaRootDir)) {
       fs.mkdirSync(mediaRootDir, { recursive: true })

@@ -10,6 +10,7 @@ import { useExportPageCacheStore } from '../stores/exportPageCacheStore'
 import { useTaskCenterStore } from '../stores/taskCenterStore'
 import * as configService from '../services/config'
 import * as localProfileService from '../services/profile'
+import type { ExportOptions as ElectronExportOptions } from '../types/electron'
 import './ExportPage.scss'
 
 type ExportTab = 'chat' | 'contacts'
@@ -4413,7 +4414,7 @@ function ExportPage() {
     const shouldExportChatText = job.options.exportChatText !== false
     const batchProgress = job.batchTaskId ? chatExportBatchTaskProgressRef.current[job.batchTaskId] : undefined
     const isBatchFinalJob = Boolean(batchProgress && batchProgress.completed + 1 >= batchProgress.total)
-    const exportOptions: ExportOptions = {
+    const exportOptions: ElectronExportOptions = {
       format: job.options.format,
       dateRange: (job.options.startDate && job.options.endDate) ? {
         start: Math.floor(new Date(job.options.startDate + 'T00:00:00').getTime() / 1000),
