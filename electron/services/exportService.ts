@@ -230,6 +230,20 @@ interface ArkmeLocationFields {
   locationMapUrl?: string
 }
 
+interface ArkmeQuoteFallback {
+  senderUsername?: string
+  senderDisplayName?: string
+  createTime?: number
+  formattedTime?: string
+  contentType?: string
+  content?: string
+}
+
+interface ArkmeQuoteCandidate {
+  sourceMessageId?: string
+  fallback?: ArkmeQuoteFallback
+}
+
 type MediaDedupState = Record<ArkmeMediaKind, Map<string, string>>
 
 const createMediaDedupState = (): MediaDedupState => ({
@@ -2660,6 +2674,137 @@ class ExportService {
     return '[位置]'
   }
 
+  private looksLikeWxid(value: string): boolean {
+    if (!value) return false
+    const trimmed = String(value).trim().toLowerCase()
+    if (!trimmed) return false
+    if (trimmed.startsWith('wxid_')) return true
+    return /^wx[a-z0-9_-]{4,}$/.test(trimmed)
+  }
+
+  private sanitizeQuotedContent(content: string): string {
+    if (!content) return ''
+    let result = this.decodeHtmlEntities(content)
+    result = result.replace(/wxid_[A-Za-z0-9_-]{3,}/g, '')
+    result = result.replace(/^[\s:：\-]+/, '')
+    result = result.replace(/[:：]{2,}/g, ':')
+    result = result.replace(/^[\s:：\-]+/, '')
+    return result.replace(/\s+/g, ' ').trim()
+  }
+
+  private extractArkmeQuoteCandidate(content: string, localType: number, xmlTypeHint?: string): ArkmeQuoteCandidate | undefined {
+    if (!content) return undefined
+
+    const xmlType = xmlTypeHint || this.extractXmlValue(content, 'type')
+    const isQuoteMessage = localType === 244813135921 ||
+      xmlType === '57' ||
+      /<type>\s*57\s*<\/type>/i.test(content) ||
+      /<refermsg>/i.test(content)
+    if (!isQuoteMessage) return undefined
+
+    const sourceMessageId = this.normalizeArkmeOptionalText(this.extractXmlValue(content, 'svrid'))
+    const referMsgMatch = /<refermsg>([\s\S]*?)<\/refermsg>/i.exec(content)
+    if (!referMsgMatch) {
+      return sourceMessageId ? { sourceMessageId } : undefined
+    }
+
+    const referXml = referMsgMatch[0]
+    const referType = this.normalizeArkmeOptionalText(this.extractXmlValue(referXml, 'type')) || ''
+    const referSenderUsername = this.normalizeArkmeOptionalText(
+      this.extractXmlFirstValue(referXml, ['fromusr', 'fromusername', 'chatusr', 'realchatname'])
+    )
+
+    let referDisplayName = this.normalizeArkmeOptionalText(
+      this.extractXmlValue(referXml, 'displayname')
+    )
+    if (referDisplayName && this.looksLikeWxid(referDisplayName)) {
+      referDisplayName = undefined
+    }
+    if (!referDisplayName && referSenderUsername && !this.looksLikeWxid(referSenderUsername)) {
+      referDisplayName = referSenderUsername
+    }
+
+    const referCreateTimeRaw = this.normalizeArkmeOptionalText(this.extractXmlValue(referXml, 'createtime'))
+    let referCreateTime: number | undefined
+    if (referCreateTimeRaw) {
+      const parsed = Number.parseInt(referCreateTimeRaw, 10)
+      if (Number.isFinite(parsed) && parsed > 0) {
+        referCreateTime = parsed > 1_000_000_000_000 ? Math.floor(parsed / 1000) : parsed
+      }
+    }
+
+    const referContentRaw = this.extractXmlValue(referXml, 'content')
+    const referContentDecoded = this.decodeHtmlEntities(referContentRaw || '')
+
+    let fallbackContentType = 'unknown'
+    let fallbackContent = '[消息]'
+    switch (referType) {
+      case '1':
+        fallbackContentType = 'text'
+        fallbackContent = this.sanitizeQuotedContent(referContentDecoded) || '[消息]'
+        break
+      case '3':
+        fallbackContentType = 'image'
+        fallbackContent = '[图片]'
+        break
+      case '34':
+        fallbackContentType = 'voice'
+        fallbackContent = '[语音]'
+        break
+      case '43':
+        fallbackContentType = 'video'
+        fallbackContent = '[视频]'
+        break
+      case '47':
+        fallbackContentType = 'emoji'
+        fallbackContent = '[动画表情]'
+        break
+      case '49': {
+        fallbackContentType = 'link'
+        const appTitle = this.normalizeArkmeOptionalText(this.extractXmlValue(referContentDecoded, 'title'))
+        fallbackContent = appTitle ? `[链接] ${appTitle}` : '[链接]'
+        break
+      }
+      case '42':
+        fallbackContentType = 'contact'
+        fallbackContent = '[名片]'
+        break
+      case '48':
+        fallbackContentType = 'location'
+        fallbackContent = '[位置]'
+        break
+      case '57':
+        fallbackContentType = 'quote'
+        fallbackContent = '[引用消息]'
+        break
+      default: {
+        const sanitized = this.sanitizeQuotedContent(referContentDecoded)
+        if (sanitized) {
+          fallbackContentType = 'text'
+          fallbackContent = sanitized
+        }
+        break
+      }
+    }
+
+    const fallback: ArkmeQuoteFallback = {
+      ...(referSenderUsername ? { senderUsername: referSenderUsername } : {}),
+      ...(referDisplayName ? { senderDisplayName: referDisplayName } : {}),
+      ...(referCreateTime ? { createTime: referCreateTime } : {}),
+      ...(referCreateTime ? { formattedTime: this.formatTimestamp(referCreateTime) } : {}),
+      ...(fallbackContentType ? { contentType: fallbackContentType } : {}),
+      ...(fallbackContent ? { content: fallbackContent } : {})
+    }
+
+    const hasFallback = Object.keys(fallback).length > 0
+    if (!sourceMessageId && !hasFallback) return undefined
+
+    return {
+      ...(sourceMessageId ? { sourceMessageId } : {}),
+      ...(hasFallback ? { fallback } : {})
+    }
+  }
+
   private extractArkmeContactCardFields(content: string, localType: number, xmlTypeHint?: string): ArkmeContactCardFields | undefined {
     if (!content) return undefined
 
@@ -3561,14 +3706,15 @@ class ExportService {
               isSend
             })
 
-            let replyToMessageId: string | undefined
-            if (localType === 49 && content.includes('<type>57</type>')) {
+            const xmlType = this.extractXmlValue(content, 'type')
+            const quoteCandidate = this.extractArkmeQuoteCandidate(content, localType, xmlType || undefined)
+            let replyToMessageId: string | undefined = quoteCandidate?.sourceMessageId
+            if (!replyToMessageId && localType === 49 && content.includes('<type>57</type>')) {
               const svridMatch = /<svrid>(\d+)<\/svrid>/i.exec(content)
               if (svridMatch) replyToMessageId = svridMatch[1]
             }
 
             const groupNickname = isGroup ? this.extractGroupNickname(content, actualSender) : undefined
-            const xmlType = this.extractXmlValue(content, 'type')
             let chatRecordList: any[] | undefined
             if (xmlType === '19' || localType === 49) {
               chatRecordList = this.parseChatHistory(content)
@@ -3618,6 +3764,7 @@ class ExportService {
               ...(options.exportAvatars && senderInfo.avatarUrl && { senderAvatar: senderInfo.avatarUrl }),
               ...(groupNickname && { groupNickname }),
               ...(replyToMessageId && { replyToMessageId }),
+              ...(quoteCandidate && { quoteCandidate }),
               ...(mediaRef ? { mediaRef } : {}),
               ...(formattedChatRecords && { chatRecords: formattedChatRecords }),
               ...(linkFields || {}),
@@ -3731,7 +3878,8 @@ class ExportService {
         ...(msg.finderNonceId && { finderNonceId: msg.finderNonceId }),
         ...(msg.finderType && { finderType: msg.finderType }),
         ...(msg.groupNickname && { groupNickname: msg.groupNickname }),
-        ...(msg.replyToMessageId && { replyToMessageId: msg.replyToMessageId }),
+        ...((msg.replyToMessageId || msg.quoteCandidate?.sourceMessageId) && { replyToMessageId: msg.replyToMessageId || msg.quoteCandidate?.sourceMessageId }),
+        ...(msg.quoteCandidate && { quoteCandidate: msg.quoteCandidate }),
         ...(msg.mediaRef ? { mediaRef: msg.mediaRef } : {}),
         ...(msg.chatRecords && { chatRecords: msg.chatRecords }),
         ...(msg.source ? { source: msg.source } : {})
@@ -3978,6 +4126,51 @@ class ExportService {
           return toCompactMessage(msg, senderId)
         })
       }
+
+      const normalizeMessageId = (value: unknown): string | undefined => {
+        const normalized = this.normalizeArkmeOptionalText(value as string | null | undefined)
+        return normalized || undefined
+      }
+
+      const messageIdToSenderId = new Map<string, string>()
+      for (const msg of compactMessages) {
+        const messageId = normalizeMessageId(msg.platformMessageId)
+        const senderId = this.normalizeArkmeOptionalText(msg.senderId)
+        if (messageId && senderId) {
+          messageIdToSenderId.set(messageId, senderId)
+        }
+      }
+
+      const buildQuotePayloadForCompactMessage = (msg: any): Record<string, unknown> | undefined => {
+        const quoteCandidate = msg.quoteCandidate as ArkmeQuoteCandidate | undefined
+        const sourceMessageId = normalizeMessageId(msg.replyToMessageId || quoteCandidate?.sourceMessageId)
+        const sourceSenderId = sourceMessageId ? messageIdToSenderId.get(sourceMessageId) : undefined
+
+        if (sourceMessageId && sourceSenderId) {
+          return {
+            status: 'resolved',
+            sourceMessageId,
+            sourceSenderId
+          }
+        }
+
+        if (!sourceMessageId && !quoteCandidate?.fallback) {
+          return undefined
+        }
+
+        return {
+          status: 'missing',
+          ...(sourceMessageId ? { sourceMessageId } : {}),
+          note: 'original_message_deleted',
+          ...(quoteCandidate?.fallback ? { fallback: quoteCandidate.fallback } : {})
+        }
+      }
+
+      compactMessages = compactMessages.map((msg: any) => {
+        const quotePayload = buildQuotePayloadForCompactMessage(msg)
+        const { quoteCandidate, ...rest } = msg
+        return quotePayload ? { ...rest, quote: quotePayload } : rest
+      })
 
       let commonGroups = !isGroup
         ? await this.getCommonGroupsForArkme(sessionId, myWxid, cleanedMyWxid)
