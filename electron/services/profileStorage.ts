@@ -163,7 +163,16 @@ function migrateLegacyConfigIfNeeded(registry: ProfileRegistry): void {
 
 function getSuggestedCacheBasePath(profileId: string): string {
   void profileId
+  return path.join(app.getPath('documents'), 'VXdaochuData')
+}
+
+function getLegacySuggestedCacheBasePath(profileId: string): string {
+  void profileId
   return path.join(app.getPath('documents'), 'VXdaochu')
+}
+
+function getFallbackAppDataCacheBasePath(): string {
+  return path.join(app.getPath('appData'), 'vxdaochu')
 }
 
 function readProfileCachePath(profileId: string): string | null {
@@ -233,38 +242,76 @@ function collectProfileExportOutputPaths(profileId: string): string[] {
   }
 }
 
+function normalizeWxidAccountDirName(wxid: string): string {
+  const trimmed = wxid.trim()
+  if (!trimmed) return trimmed
+  if (trimmed.toLowerCase().startsWith('wxid_')) {
+    const match = trimmed.match(/^(wxid_[a-zA-Z0-9]+)/i)
+    if (match) return match[1]
+  }
+  return trimmed
+}
+
 function getWxidCacheDirCandidates(wxid: string): string[] {
   const normalized = wxid.trim()
   if (!normalized) return []
-  const candidates = new Set<string>([normalized])
-  const cleaned = normalized.replace(/^wxid_/, '')
-  if (cleaned) {
-    candidates.add(cleaned)
+
+  const candidates = new Set<string>()
+  const addCandidate = (value: string): void => {
+    const trimmed = value.trim()
+    if (!trimmed) return
+    candidates.add(trimmed)
   }
+
+  addCandidate(normalized)
+  addCandidate(normalizeWxidAccountDirName(normalized))
+
+  if (normalized.toLowerCase().startsWith('wxid_')) {
+    addCandidate(normalized.replace(/^wxid_/i, ''))
+  }
+
+  const normalizedClean = normalizeWxidAccountDirName(normalized)
+  if (normalizedClean.toLowerCase().startsWith('wxid_')) {
+    addCandidate(normalizedClean.replace(/^wxid_/i, ''))
+  }
+
+  // 兼容某些缓存目录会把最后的短后缀截断（例如 xxx_03d9 -> xxx）
+  const suffixMatch = normalized.match(/^(.+)_([a-zA-Z0-9]{4})$/)
+  if (suffixMatch?.[1]) addCandidate(suffixMatch[1])
+  const normalizedCleanSuffixMatch = normalizedClean.match(/^(.+)_([a-zA-Z0-9]{4})$/)
+  if (normalizedCleanSuffixMatch?.[1]) addCandidate(normalizedCleanSuffixMatch[1])
+
   return Array.from(candidates)
+}
+
+function collectCacheRootCandidates(profileId: string): string[] {
+  const roots = new Set<string>()
+  const addRoot = (target: string | null | undefined): void => {
+    const normalized = String(target || '').trim()
+    if (!normalized) return
+    roots.add(path.resolve(normalized))
+  }
+
+  addRoot(readSharedMachineCachePath())
+  addRoot(readProfileCachePath(profileId))
+  addRoot(getSuggestedCacheBasePath(profileId))
+  addRoot(getLegacySuggestedCacheBasePath(profileId))
+  addRoot(getFallbackAppDataCacheBasePath())
+
+  return Array.from(roots)
 }
 
 function collectProfileCacheCleanupTargets(profileId: string): string[] {
   const wxid = readProfileWxid(profileId)
-  if (!wxid) return []
+  const cacheRootCandidates = collectCacheRootCandidates(profileId)
+  if (cacheRootCandidates.length === 0) return []
 
-  const cacheRootCandidates = new Set<string>()
-  const sharedCachePath = readSharedMachineCachePath()
-  if (sharedCachePath) {
-    cacheRootCandidates.add(sharedCachePath)
-  }
-  const legacyProfileCachePath = readProfileCachePath(profileId)
-  if (legacyProfileCachePath) {
-    cacheRootCandidates.add(legacyProfileCachePath)
-  }
-  cacheRootCandidates.add(getSuggestedCacheBasePath(profileId))
-
-  const accountNames = getWxidCacheDirCandidates(wxid)
-  if (accountNames.length === 0) return []
+  const accountNames = wxid ? getWxidCacheDirCandidates(wxid) : []
 
   const targets = new Set<string>()
   for (const cacheRoot of cacheRootCandidates) {
     if (!cacheRoot) continue
+    // 账号级目录（解密数据库、局部缓存）
     for (const accountName of accountNames) {
       targets.add(path.join(cacheRoot, accountName))
       targets.add(path.join(cacheRoot, 'databases', accountName))
@@ -272,8 +319,25 @@ function collectProfileCacheCleanupTargets(profileId: string): string[] {
       targets.add(path.join(cacheRoot, 'Images', accountName))
       targets.add(path.join(cacheRoot, 'sns_cache', accountName))
     }
+
+    // 公共缓存目录（更彻底清理，可能影响其他账号但可自动重建）
+    targets.add(path.join(cacheRoot, 'images'))
+    targets.add(path.join(cacheRoot, 'Images'))
+    targets.add(path.join(cacheRoot, 'Emojis'))
+    targets.add(path.join(cacheRoot, 'sns_cache'))
+    targets.add(path.join(cacheRoot, 'logs'))
+    targets.add(path.join(cacheRoot, 'whisper-gpu'))
+
+    // 根目录级数据库缓存
+    targets.add(path.join(cacheRoot, 'ai_summary.db'))
+    targets.add(path.join(cacheRoot, 'stt-cache.db'))
+    targets.add(path.join(cacheRoot, 'stt-cache.db-shm'))
+    targets.add(path.join(cacheRoot, 'stt-cache.db-wal'))
+    targets.add(path.join(cacheRoot, 'hardlink.db'))
+    targets.add(path.join(cacheRoot, 'hardlink.db-shm'))
+    targets.add(path.join(cacheRoot, 'hardlink.db-wal'))
   }
-  return Array.from(targets)
+  return Array.from(targets).sort()
 }
 
 function normalizePendingTask(input: unknown): PendingProfileResetTask | null {
