@@ -2577,6 +2577,22 @@ class ExportService {
     return trimmed.length > 0 ? trimmed : undefined
   }
 
+  private normalizeMessageIdValue(value: unknown): string | undefined {
+    if (value === null || value === undefined) return undefined
+    if (typeof value === 'string') {
+      const trimmed = value.trim()
+      return trimmed.length > 0 ? trimmed : undefined
+    }
+    if (typeof value === 'bigint') {
+      return value.toString()
+    }
+    if (typeof value === 'number') {
+      if (!Number.isFinite(value)) return undefined
+      return Math.trunc(value).toString()
+    }
+    return undefined
+  }
+
   private extractXmlFirstValue(xml: string, tagNames: string[]): string {
     for (const tagName of tagNames) {
       const value = this.extractXmlValue(xml, tagName)
@@ -2598,6 +2614,39 @@ class ExportService {
     const attrMatch = attrRegex.exec(attrs)
     if (!attrMatch) return ''
     return String(attrMatch[2] || '').trim()
+  }
+
+  private extractArkmeSourceMeta(content: string): Record<string, unknown> | undefined {
+    if (!content) return undefined
+
+    const msgsourceMatch = /<msgsource>([\s\S]*?)<\/msgsource>/i.exec(content)
+    if (!msgsourceMatch) return undefined
+
+    const innerRaw = msgsourceMatch[1] || ''
+    const decodedInner = this.decodeHtmlEntities(innerRaw)
+    const sourceXml = /<msgsource[\s>]/i.test(decodedInner)
+      ? decodedInner
+      : `<msgsource>${decodedInner}</msgsource>`
+    const pick = (tagName: string): string | undefined =>
+      this.normalizeArkmeOptionalText(this.extractXmlValue(sourceXml, tagName))
+
+    const signature = pick('signature')
+    const atUserList = pick('atuserlist')
+    const displayName = pick('displayname')
+    const publisherId = pick('publisher-id') || pick('publisherid')
+    const fr = pick('fr')
+    const silence = pick('silence')
+
+    const sourceMeta: Record<string, unknown> = {
+      ...(signature ? { signature } : {}),
+      ...(atUserList ? { atUserList } : {}),
+      ...(displayName ? { displayName } : {}),
+      ...(publisherId ? { publisherId } : {}),
+      ...(fr ? { fr } : {}),
+      ...(silence ? { silence } : {})
+    }
+
+    return Object.keys(sourceMeta).length > 0 ? sourceMeta : undefined
   }
 
   private extractArkmeLocationFields(content: string, localType: number, xmlTypeHint?: string): ArkmeLocationFields | undefined {
@@ -3381,12 +3430,18 @@ class ExportService {
 
           let sql: string
           if (hasName2Id) {
-            sql = `SELECT m.*, n.user_name AS sender_username
+            sql = `SELECT m.*, n.user_name AS sender_username,
+                          CAST(m.server_id AS TEXT) AS server_id_text,
+                          CAST(m.local_id AS TEXT) AS local_id_text
                    FROM ${tableName} m
                    LEFT JOIN Name2Id n ON m.real_sender_id = n.rowid
                    ORDER BY m.create_time ASC`
           } else {
-            sql = `SELECT * FROM ${tableName} ORDER BY create_time ASC`
+            sql = `SELECT m.*,
+                          CAST(m.server_id AS TEXT) AS server_id_text,
+                          CAST(m.local_id AS TEXT) AS local_id_text
+                   FROM ${tableName} m
+                   ORDER BY m.create_time ASC`
           }
 
           const rows = db.prepare(sql).all() as any[]
@@ -3689,14 +3744,13 @@ class ExportService {
 
             const senderInfo = await getCachedContactInfo(actualSender)
             const senderIdentity = this.normalizeWechatIdentity(actualSender, senderInfo)
-            let source = ''
-            const msgsourceMatch = /<msgsource>[\s\S]*?<\/msgsource>/i.exec(content)
-            if (msgsourceMatch) {
-              source = msgsourceMatch[0]
-            }
-
-            const platformMessageId = row.server_id ? String(row.server_id) : (row.local_id ? String(row.local_id) : undefined)
-            const localMessageId = row.local_id ? String(row.local_id) : undefined
+            const sourceMeta = this.extractArkmeSourceMeta(content)
+            const platformMessageId = this.normalizeMessageIdValue(row.server_id_text) ||
+              this.normalizeMessageIdValue(row.server_id) ||
+              this.normalizeMessageIdValue(row.local_id_text) ||
+              this.normalizeMessageIdValue(row.local_id)
+            const localMessageId = this.normalizeMessageIdValue(row.local_id_text) ||
+              this.normalizeMessageIdValue(row.local_id)
             const mediaMapKey = this.buildMediaPathMapKey({
               platformMessageId,
               localMessageId,
@@ -3771,7 +3825,7 @@ class ExportService {
               ...(locationFields || {}),
               ...(contactCardFields || {}),
               ...(finderFields || {}),
-              source
+              ...(sourceMeta ? { sourceMeta } : {})
             })
 
             if (firstMessageTime === null || createTime < firstMessageTime) firstMessageTime = createTime
@@ -3882,7 +3936,7 @@ class ExportService {
         ...(msg.quoteCandidate && { quoteCandidate: msg.quoteCandidate }),
         ...(msg.mediaRef ? { mediaRef: msg.mediaRef } : {}),
         ...(msg.chatRecords && { chatRecords: msg.chatRecords }),
-        ...(msg.source ? { source: msg.source } : {})
+        ...(msg.sourceMeta ? { sourceMeta: msg.sourceMeta } : {})
       })
 
       let compactMessages: any[] = []
