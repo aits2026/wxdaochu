@@ -270,6 +270,46 @@ class ExportService {
     return normalized
   }
 
+  private getKnownExportSubdirName(dirName: string): string | null {
+    const normalized = String(dirName || '').trim().toLowerCase()
+    if (!normalized) return null
+
+    const knownSubdirs = ['chat-text', 'chat-txt', 'images', 'videos', 'emojis', 'voices']
+    return knownSubdirs.includes(normalized) ? normalized : null
+  }
+
+  private buildExportOwnerPrefix5(): string {
+    const myWxidRaw = String(this.configService.get('myWxid') || '').trim()
+    const cleaned = this.cleanAccountDirName(myWxidRaw)
+
+    const normalizeAlphaNum = (value: string): string => String(value || '').replace(/[^a-zA-Z0-9]/g, '')
+    const cleanedWithoutWxid = cleaned.toLowerCase().startsWith('wxid_') ? cleaned.slice(5) : cleaned
+
+    const candidate =
+      normalizeAlphaNum(cleanedWithoutWxid) ||
+      normalizeAlphaNum(cleaned) ||
+      normalizeAlphaNum(myWxidRaw)
+
+    const prefix = (candidate || 'user').slice(0, 5)
+    return prefix.toLowerCase()
+  }
+
+  private resolveAccountScopedOutputDir(outputDir: string): string {
+    const normalized = path.resolve(outputDir)
+    const subdirName = this.getKnownExportSubdirName(path.basename(normalized))
+    if (!subdirName) return normalized
+
+    const originalRootDir = path.dirname(normalized)
+    const originalRootBase = path.basename(originalRootDir)
+    if (/^[a-z0-9]{1,5}_exports$/i.test(originalRootBase)) {
+      return normalized
+    }
+
+    const ownerPrefix = this.buildExportOwnerPrefix5()
+    const scopedRootDir = path.join(originalRootDir, `${ownerPrefix}_exports`)
+    return path.join(scopedRootDir, subdirName)
+  }
+
   private buildMediaMapSnapshotFileName(now = new Date()): string {
     const yyyy = now.getFullYear()
     const mm = String(now.getMonth() + 1).padStart(2, '0')
@@ -4220,7 +4260,8 @@ class ExportService {
     const sessionOutputs: ExportSessionOutputTarget[] = []
     const globalArkmeMediaIndexMap = new Map<string, ArkmeMediaIndexEntry>()
     const hasAnyMediaExport = Boolean(options.exportImages || options.exportVideos || options.exportEmojis || options.exportVoices)
-    const exportRootDir = this.resolveExportRootDir(outputDir)
+    const scopedOutputDir = this.resolveAccountScopedOutputDir(outputDir)
+    const exportRootDir = this.resolveExportRootDir(scopedOutputDir)
     const globalMapPath = path.join(exportRootDir, 'arkme-media-map.json')
     const globalMediaDedupState = createMediaDedupState()
     const sessionWithExistingMedia = new Set<string>()
@@ -4234,8 +4275,8 @@ class ExportService {
       }
 
       // 确保输出目录存在
-      if (!fs.existsSync(outputDir)) {
-        fs.mkdirSync(outputDir, { recursive: true })
+      if (!fs.existsSync(scopedOutputDir)) {
+        fs.mkdirSync(scopedOutputDir, { recursive: true })
       }
       if (!fs.existsSync(exportRootDir)) {
         fs.mkdirSync(exportRootDir, { recursive: true })
@@ -4362,7 +4403,7 @@ class ExportService {
         const mediaOnlyOutputDir = selectedMediaSubdirs.length === 1
           ? path.join(exportRootDir, selectedMediaSubdirs[0])
           : exportRootDir
-        const sessionOutputDir = hasMedia && !effectiveMediaOnlyMode ? path.join(outputDir, safeName) : outputDir
+        const sessionOutputDir = hasMedia && !effectiveMediaOnlyMode ? path.join(scopedOutputDir, safeName) : scopedOutputDir
         if (hasMedia && !effectiveMediaOnlyMode && !fs.existsSync(sessionOutputDir)) {
           fs.mkdirSync(sessionOutputDir, { recursive: true })
         }
