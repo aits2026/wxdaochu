@@ -2579,18 +2579,25 @@ class ExportService {
 
   private normalizeMessageIdValue(value: unknown): string | undefined {
     if (value === null || value === undefined) return undefined
+    let normalized: string | undefined
     if (typeof value === 'string') {
       const trimmed = value.trim()
-      return trimmed.length > 0 ? trimmed : undefined
+      normalized = trimmed.length > 0 ? trimmed : undefined
     }
-    if (typeof value === 'bigint') {
-      return value.toString()
+    if (!normalized && typeof value === 'bigint') {
+      normalized = value.toString()
     }
-    if (typeof value === 'number') {
+    if (!normalized && typeof value === 'number') {
       if (!Number.isFinite(value)) return undefined
-      return Math.trunc(value).toString()
+      normalized = Math.trunc(value).toString()
     }
-    return undefined
+    if (!normalized) return undefined
+
+    // Some WCDB rows use placeholder IDs (e.g. 0/-1), which should not be
+    // treated as stable message identifiers for quote matching.
+    if (/^(?:0+|-1)$/.test(normalized)) return undefined
+
+    return normalized
   }
 
   private extractXmlFirstValue(xml: string, tagNames: string[]): string {
@@ -3746,11 +3753,8 @@ class ExportService {
             const senderIdentity = this.normalizeWechatIdentity(actualSender, senderInfo)
             const sourceMeta = this.extractArkmeSourceMeta(content)
             const platformMessageId = this.normalizeMessageIdValue(row.server_id_text) ||
-              this.normalizeMessageIdValue(row.server_id) ||
-              this.normalizeMessageIdValue(row.local_id_text) ||
-              this.normalizeMessageIdValue(row.local_id)
-            const localMessageId = this.normalizeMessageIdValue(row.local_id_text) ||
-              this.normalizeMessageIdValue(row.local_id)
+              this.normalizeMessageIdValue(row.local_id_text)
+            const localMessageId = this.normalizeMessageIdValue(row.local_id_text)
             const mediaMapKey = this.buildMediaPathMapKey({
               platformMessageId,
               localMessageId,
@@ -4182,8 +4186,21 @@ class ExportService {
       }
 
       const normalizeMessageId = (value: unknown): string | undefined => {
-        const normalized = this.normalizeArkmeOptionalText(value as string | null | undefined)
-        return normalized || undefined
+        return this.normalizeMessageIdValue(value)
+      }
+
+      const normalizeComparableText = (value: unknown): string | undefined => {
+        if (value === null || value === undefined) return undefined
+        const normalized = this.normalizeArkmeOptionalText(String(value))
+        if (!normalized) return undefined
+        return normalized.replace(/\s+/g, ' ').trim().toLowerCase()
+      }
+
+      const normalizeComparableIdentity = (value: unknown): string | undefined => {
+        if (value === null || value === undefined) return undefined
+        const normalized = this.normalizeArkmeOptionalText(String(value))
+        if (!normalized) return undefined
+        return normalized.toLowerCase()
       }
 
       const messageIdToSenderId = new Map<string, string>()
@@ -4192,6 +4209,129 @@ class ExportService {
         const senderId = this.normalizeArkmeOptionalText(msg.senderId)
         if (messageId && senderId) {
           messageIdToSenderId.set(messageId, senderId)
+        }
+      }
+
+      type QuoteLookupEntry = {
+        messageId?: string
+        platformMessageId?: string
+        localMessageId?: string
+        senderId?: string
+        senderUsername?: string
+        senderDisplayName?: string
+        createTime?: number
+        content?: string
+      }
+      const quoteLookupEntries: QuoteLookupEntry[] = compactMessages.map((msg: any, index: number) => {
+        const rawMsg = allMessages[index] || {}
+        const createTimeRaw = Number(rawMsg.createTime ?? msg.createTime)
+        const createTime = Number.isFinite(createTimeRaw) && createTimeRaw > 0
+          ? Math.trunc(createTimeRaw)
+          : undefined
+        const platformMessageId = normalizeMessageId(msg.platformMessageId ?? rawMsg.platformMessageId)
+        const localMessageId = normalizeMessageId(msg.localId ?? rawMsg.localId)
+        return {
+          messageId: platformMessageId || localMessageId,
+          platformMessageId,
+          localMessageId,
+          senderId: this.normalizeArkmeOptionalText(msg.senderId),
+          senderUsername: normalizeComparableIdentity(rawMsg.senderUsername),
+          senderDisplayName: normalizeComparableText(rawMsg.senderDisplayName),
+          createTime,
+          content: normalizeComparableText(rawMsg.content ?? msg.content)
+        }
+      })
+
+      const resolveQuoteByFallback = (
+        msg: any,
+        quoteCandidate: ArkmeQuoteCandidate | undefined
+      ): { sourceMessageId: string, sourceSenderId: string } | undefined => {
+        const fallback = quoteCandidate?.fallback
+        if (!fallback) return undefined
+
+        const currentPlatformMessageId = normalizeMessageId(msg.platformMessageId)
+        const currentLocalMessageId = normalizeMessageId(msg.localId)
+        const currentCreateTimeRaw = Number(msg.createTime)
+        const currentCreateTime = Number.isFinite(currentCreateTimeRaw) && currentCreateTimeRaw > 0
+          ? Math.trunc(currentCreateTimeRaw)
+          : undefined
+
+        const fallbackSenderUsername = normalizeComparableIdentity(fallback.senderUsername)
+        const fallbackDisplayName = normalizeComparableText(fallback.senderDisplayName)
+        const fallbackContent = normalizeComparableText(fallback.content)
+        const fallbackCreateTimeRaw = Number(fallback.createTime)
+        const fallbackCreateTime = Number.isFinite(fallbackCreateTimeRaw) && fallbackCreateTimeRaw > 0
+          ? Math.trunc(fallbackCreateTimeRaw)
+          : undefined
+
+        let candidates = quoteLookupEntries.filter(entry => {
+          if (!entry.messageId || !entry.senderId) return false
+          if (currentPlatformMessageId && entry.platformMessageId === currentPlatformMessageId) return false
+          if (currentLocalMessageId && entry.localMessageId === currentLocalMessageId) return false
+          if (currentCreateTime !== undefined && entry.createTime !== undefined && entry.createTime > currentCreateTime) {
+            return false
+          }
+          return true
+        })
+
+        if (fallbackSenderUsername) {
+          const bySender = candidates.filter(entry => entry.senderUsername === fallbackSenderUsername)
+          if (bySender.length > 0) candidates = bySender
+        }
+
+        if (fallbackDisplayName && !fallbackSenderUsername) {
+          const byDisplayName = candidates.filter(entry => entry.senderDisplayName === fallbackDisplayName)
+          if (byDisplayName.length > 0) candidates = byDisplayName
+        }
+
+        if (fallbackContent) {
+          const byExactContent = candidates.filter(entry => entry.content === fallbackContent)
+          if (byExactContent.length > 0) {
+            candidates = byExactContent
+          } else {
+            const byFuzzyContent = candidates.filter(entry => {
+              if (!entry.content) return false
+              return entry.content.includes(fallbackContent) || fallbackContent.includes(entry.content)
+            })
+            if (byFuzzyContent.length > 0) candidates = byFuzzyContent
+          }
+        }
+
+        if (fallbackCreateTime !== undefined) {
+          const byTightTime = candidates.filter(entry =>
+            entry.createTime !== undefined && Math.abs(entry.createTime - fallbackCreateTime) <= 2
+          )
+          if (byTightTime.length > 0) {
+            candidates = byTightTime
+          } else {
+            const byLooseTime = candidates.filter(entry =>
+              entry.createTime !== undefined && Math.abs(entry.createTime - fallbackCreateTime) <= 120
+            )
+            if (byLooseTime.length > 0) candidates = byLooseTime
+          }
+        }
+
+        if (candidates.length === 0) return undefined
+
+        candidates.sort((a, b) => {
+          if (fallbackCreateTime !== undefined) {
+            const aDiff = a.createTime !== undefined ? Math.abs(a.createTime - fallbackCreateTime) : Number.MAX_SAFE_INTEGER
+            const bDiff = b.createTime !== undefined ? Math.abs(b.createTime - fallbackCreateTime) : Number.MAX_SAFE_INTEGER
+            if (aDiff !== bDiff) return aDiff - bDiff
+          }
+          const aTime = a.createTime ?? 0
+          const bTime = b.createTime ?? 0
+          if (aTime !== bTime) return bTime - aTime
+          if (a.platformMessageId && !b.platformMessageId) return -1
+          if (!a.platformMessageId && b.platformMessageId) return 1
+          return 0
+        })
+
+        const hit = candidates[0]
+        if (!hit?.messageId || !hit.senderId) return undefined
+        return {
+          sourceMessageId: hit.messageId,
+          sourceSenderId: hit.senderId
         }
       }
 
@@ -4205,6 +4345,15 @@ class ExportService {
             status: 'resolved',
             sourceMessageId,
             sourceSenderId
+          }
+        }
+
+        const fallbackResolved = resolveQuoteByFallback(msg, quoteCandidate)
+        if (fallbackResolved) {
+          return {
+            status: 'resolved',
+            sourceMessageId: fallbackResolved.sourceMessageId,
+            sourceSenderId: fallbackResolved.sourceSenderId
           }
         }
 
