@@ -11,6 +11,7 @@
     "ai:commit": "python3 scripts/ai_commit_journal.py commit --",
     "ai:journal:generate": "python3 scripts/ai_commit_journal.py generate",
     "ai:journal:install": "python3 scripts/ai_commit_journal.py install-hooks",
+    "win:remote": "bash scripts/remote-win/run-remote-win.sh",
     "prebuild": "node scripts/update-readme-version.js",
     "build:full": "node scripts/build-full.js",
     "build": "tsc && vite build && electron-builder && node scripts/add-size-to-yml.js",

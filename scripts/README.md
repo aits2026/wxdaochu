@@ -187,6 +187,27 @@ node scripts/build-shell-only.js
 
 用于快速测试安装程序界面。
 
+### Mac 远程触发 Windows 自动运行（调试提效）
+
+```bash
+WIN_HOST=192.168.1.23 WIN_USER=your-user npm run win:remote
+```
+
+默认会自动读取当前项目分支，并在 Windows 对应项目执行：
+- `git fetch` + `git switch 当前分支` + `git pull`
+- `npm ci`（可跳过）
+- 你指定的构建/运行命令（默认 `npm run build`）
+
+并把日志自动拉回当前项目：`logs/remote-win/<timestamp>/`
+
+如果你在其他项目目录，也可以直接运行通用脚本（默认映射 `/Users/tison/...` 到 `C:\...`）：
+
+```bash
+WIN_HOST=192.168.1.23 WIN_USER=your-user /Users/tison/wxdaochu/scripts/remote-win/run-remote-win.sh
+```
+
+详细说明见：`scripts/remote-win/README.md`
+
 ---
 
 ## 🤖 GitHub Actions 自动化
