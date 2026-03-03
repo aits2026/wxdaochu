@@ -2425,6 +2425,38 @@ class ExportService {
   }
 
   /**
+   * Arkme 文本标准化：
+   * - 解码常见 HTML 实体
+   * - 解码数字实体（十进制/十六进制），如 &#10; / &#x0A;
+   * - 统一换行符
+   */
+  private normalizeArkmeTextContent(value: string | null | undefined): string | null {
+    if (value === null || value === undefined) return null
+
+    const namedDecoded = this.decodeHtmlEntities(String(value))
+    const numericDecoded = namedDecoded.replace(/&#(x?[0-9a-fA-F]+);/g, (entity, numericPart) => {
+      const raw = String(numericPart || '')
+      const isHex = raw[0]?.toLowerCase() === 'x'
+      const digits = isHex ? raw.slice(1) : raw
+      const codePoint = Number.parseInt(digits, isHex ? 16 : 10)
+
+      if (!Number.isFinite(codePoint)) return entity
+      if (codePoint < 0 || codePoint > 0x10FFFF) return entity
+      if (codePoint >= 0xD800 && codePoint <= 0xDFFF) return entity
+
+      try {
+        return String.fromCodePoint(codePoint)
+      } catch {
+        return entity
+      }
+    })
+
+    return numericDecoded
+      .replace(/\r\n/g, '\n')
+      .replace(/\r/g, '\n')
+  }
+
+  /**
    * 格式化聊天记录为 JSON 导出格式
    */
   private formatChatRecordsForJson(chatRecordList: any[], options: ExportOptions): any[] {
@@ -3120,6 +3152,15 @@ class ExportService {
               arkmeMediaIndexMap: options.arkmeMediaIndexMap
             })
 
+            const parsedContent = this.parseMessageContent(content, localType, sessionId, createTime, options.mediaPathMap, mediaMapKey)
+            const normalizedContent = this.normalizeArkmeTextContent(parsedContent)
+            const formattedChatRecords = chatRecordList
+              ? this.formatChatRecordsForJson(chatRecordList, options).map(record => ({
+                ...record,
+                content: this.normalizeArkmeTextContent(record.content) ?? ''
+              }))
+              : undefined
+
             allMessages.push({
               localId: row.local_id || allMessages.length + 1,
               platformMessageId,
@@ -3128,7 +3169,7 @@ class ExportService {
               type: this.getMessageTypeName(localType, content),
               localType,
               chatLabType: this.convertMessageType(localType, content),
-              content: this.parseMessageContent(content, localType, sessionId, createTime, options.mediaPathMap, mediaMapKey),
+              content: normalizedContent,
               rawContent: content,
               isSend: isSend ? 1 : 0,
               senderUsername: actualSender,
@@ -3139,7 +3180,7 @@ class ExportService {
               ...(groupNickname && { groupNickname }),
               ...(replyToMessageId && { replyToMessageId }),
               ...(mediaRef ? { mediaRef } : {}),
-              ...(chatRecordList && { chatRecords: this.formatChatRecordsForJson(chatRecordList, options) }),
+              ...(formattedChatRecords && { chatRecords: formattedChatRecords }),
               source
             })
 
