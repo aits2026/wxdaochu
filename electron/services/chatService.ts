@@ -1323,9 +1323,9 @@ class ChatService extends EventEmitter {
               imageMd5 = imageInfo.md5
               imageDatName = this.parseImageDatNameFromRow(row)
               isLivePhoto = imageInfo.isLivePhoto
-            } else if (localType === 43 && content) {
+            } else if (localType === 43) {
               // 视频消息
-              videoMd5 = this.parseVideoMd5(content)
+              videoMd5 = this.extractVideoMd5(content, row)
               videoDuration = this.parseVideoDuration(content)
             } else if (localType === 34 && content) {
               // 语音消息
@@ -1743,7 +1743,7 @@ class ChatService extends EventEmitter {
 
           for (const row of rows) {
             const content = this.decodeMessageContent(row.message_content, row.compress_content)
-            const videoMd5 = this.parseVideoMd5(content)
+            const videoMd5 = this.extractVideoMd5(content, row)
             const videoDuration = this.parseVideoDuration(content)
             if (videoMd5) {
               parsedMessageCount++
@@ -2020,8 +2020,8 @@ class ChatService extends EventEmitter {
               imageMd5 = imageInfo.md5
               imageDatName = this.parseImageDatNameFromRow(row)
               isLivePhoto = imageInfo.isLivePhoto
-            } else if (localType === 43 && content) {
-              videoMd5 = this.parseVideoMd5(content)
+            } else if (localType === 43) {
+              videoMd5 = this.extractVideoMd5(content, row)
               videoDuration = this.parseVideoDuration(content)
             } else if (localType === 34 && content) {
               voiceDuration = this.parseVoiceDuration(content)
@@ -2459,6 +2459,44 @@ class ChatService extends EventEmitter {
     } catch {
       return undefined
     }
+  }
+
+  private parseVideoMd5FromRow(row: Record<string, any>): string | undefined {
+    const packed = this.getRowField(row, [
+      'packed_info_data',
+      'packed_info',
+      'packedInfoData',
+      'packedInfo',
+      'PackedInfoData',
+      'PackedInfo',
+      'WCDB_CT_packed_info_data',
+      'WCDB_CT_packed_info',
+      'WCDB_CT_PackedInfoData',
+      'WCDB_CT_PackedInfo'
+    ])
+    const buffer = this.decodePackedInfo(packed)
+    if (!buffer || buffer.length === 0) return undefined
+
+    const printable: number[] = []
+    for (let i = 0; i < buffer.length; i++) {
+      const byte = buffer[i]
+      if ((byte >= 0x30 && byte <= 0x39) || (byte >= 0x41 && byte <= 0x46) || (byte >= 0x61 && byte <= 0x66)) {
+        printable.push(byte)
+      } else {
+        printable.push(0x20)
+      }
+    }
+
+    const match = /([0-9a-fA-F]{32})/.exec(Buffer.from(printable).toString('utf-8'))
+    return match?.[1]?.toLowerCase()
+  }
+
+  private extractVideoMd5(content: string, row?: Record<string, any>): string | undefined {
+    return this.parseVideoMd5(content) || (row ? this.parseVideoMd5FromRow(row) : undefined)
+  }
+
+  extractVideoMd5FromMessage(content: string, row?: Record<string, any>): string | undefined {
+    return this.extractVideoMd5(content, row)
   }
 
   private parseVideoMd5(content: string): string | undefined {
@@ -5087,21 +5125,98 @@ class ChatService extends EventEmitter {
   private findMediaDbs(): string[] {
     if (!this.dbDir) return []
 
-    const mediaDbFiles: string[] = []
+    const mediaDbFiles = new Set<string>()
+    const searchDirs = new Set<string>()
 
-    try {
-      const files = fs.readdirSync(this.dbDir)
-      for (const file of files) {
-        const lower = file.toLowerCase()
-        if (lower.startsWith('media') && lower.endsWith('.db')) {
-          mediaDbFiles.push(path.join(this.dbDir, file))
+    const addSearchDir = (dirPath?: string | null) => {
+      if (!dirPath || !fs.existsSync(dirPath)) return
+      try {
+        if (fs.statSync(dirPath).isDirectory()) {
+          searchDirs.add(dirPath)
         }
+      } catch {
+        // 忽略无法访问的目录
       }
-    } catch (e) {
-      console.error('[ChatService][Voice] 查找 media 数据库失败:', e)
     }
 
-    return mediaDbFiles
+    const scanDir = (dirPath: string) => {
+      try {
+        const files = fs.readdirSync(dirPath, { withFileTypes: true })
+        for (const file of files) {
+          if (file.isFile()) {
+            const lower = file.name.toLowerCase()
+            if (lower.startsWith('media') && lower.endsWith('.db')) {
+              mediaDbFiles.add(path.join(dirPath, file.name))
+            }
+            continue
+          }
+
+          if (!file.isDirectory()) continue
+
+          const subDir = path.join(dirPath, file.name)
+          try {
+            const subFiles = fs.readdirSync(subDir, { withFileTypes: true })
+            for (const subFile of subFiles) {
+              if (!subFile.isFile()) continue
+              const lower = subFile.name.toLowerCase()
+              if (lower.startsWith('media') && lower.endsWith('.db')) {
+                mediaDbFiles.add(path.join(subDir, subFile.name))
+              }
+            }
+          } catch {
+            // 忽略单个子目录扫描失败
+          }
+        }
+      } catch {
+        // 忽略单个目录扫描失败
+      }
+    }
+
+    addSearchDir(this.dbDir)
+    addSearchDir(path.join(this.dbDir, 'db_storage'))
+    addSearchDir(path.dirname(this.dbDir))
+
+    const wxid = this.configService.get('myWxid')
+    const dbPath = this.configService.get('dbPath')
+    const decryptedBaseDir = this.getDecryptedDbDir()
+
+    if (decryptedBaseDir) {
+      addSearchDir(decryptedBaseDir)
+      if (wxid) {
+        const decryptedAccountDir = this.findAccountDir(decryptedBaseDir, wxid)
+        if (decryptedAccountDir) {
+          addSearchDir(path.join(decryptedBaseDir, decryptedAccountDir))
+          addSearchDir(path.join(decryptedBaseDir, decryptedAccountDir, 'db_storage'))
+        }
+      }
+    }
+
+    if (dbPath) {
+      addSearchDir(dbPath)
+      addSearchDir(path.join(dbPath, 'db_storage'))
+
+      if (wxid) {
+        const directAccountDir = this.findAccountDir(dbPath, wxid)
+        if (directAccountDir) {
+          addSearchDir(path.join(dbPath, directAccountDir))
+          addSearchDir(path.join(dbPath, directAccountDir, 'db_storage'))
+        }
+
+        const weChatFilesDir = path.join(dbPath, 'WeChat Files')
+        addSearchDir(weChatFilesDir)
+        const weChatFilesAccountDir = this.findAccountDir(weChatFilesDir, wxid)
+        if (weChatFilesAccountDir) {
+          addSearchDir(path.join(weChatFilesDir, weChatFilesAccountDir))
+          addSearchDir(path.join(weChatFilesDir, weChatFilesAccountDir, 'db_storage'))
+        }
+      }
+    }
+
+    for (const dirPath of searchDirs) {
+      scanDir(dirPath)
+    }
+
+    return Array.from(mediaDbFiles)
   }
 
   /**
@@ -5111,6 +5226,13 @@ class ChatService extends EventEmitter {
    * 获取单条消息
    */
   public async getMessageByLocalId(sessionId: string, localId: number): Promise<{ success: boolean; message?: Message; error?: string }> {
+    if (!this.dbDir) {
+      const connectResult = await this.connect()
+      if (!connectResult.success) {
+        return { success: false, error: connectResult.error || '数据库未连接' }
+      }
+    }
+
     const dbTablePairs = this.findSessionTables(sessionId)
 
     for (const { db, tableName } of dbTablePairs) {
@@ -5153,6 +5275,13 @@ class ChatService extends EventEmitter {
    */
   async getVoiceData(sessionId: string, msgId: string, createTime?: number): Promise<{ success: boolean; data?: string; error?: string }> {
     try {
+      if (!this.dbDir) {
+        const connectResult = await this.connect()
+        if (!connectResult.success) {
+          return { success: false, error: connectResult.error || '数据库未连接' }
+        }
+      }
+
       const localId = parseInt(msgId, 10)
       if (isNaN(localId)) {
         return { success: false, error: '无效的消息ID' }
@@ -5179,11 +5308,17 @@ class ChatService extends EventEmitter {
       }
 
       // 构建查找候选：sessionId, myWxid
-      const candidates: string[] = []
-      if (sessionId) candidates.push(sessionId)
+      const candidates = new Set<string>()
+      if (sessionId) {
+        candidates.add(sessionId)
+        const cleanedSessionId = this.cleanAccountDirName(sessionId)
+        if (cleanedSessionId) candidates.add(cleanedSessionId)
+      }
       const myWxid = this.configService.get('myWxid')
-      if (myWxid && !candidates.includes(myWxid)) {
-        candidates.push(myWxid)
+      if (myWxid) {
+        candidates.add(myWxid)
+        const cleanedMyWxid = this.cleanAccountDirName(myWxid)
+        if (cleanedMyWxid) candidates.add(cleanedMyWxid)
       }
 
       // 在 media 数据库中查找语音数据
@@ -5208,26 +5343,33 @@ class ChatService extends EventEmitter {
 
             // 获取表结构
             const columns = mediaDb.prepare(`PRAGMA table_info('${voiceTable}')`).all() as any[]
-            const columnNames = columns.map((c: any) => c.name.toLowerCase())
+            const columnMap = new Map<string, string>()
+            for (const column of columns) {
+              const name = String(column.name || '')
+              if (name) {
+                columnMap.set(name.toLowerCase(), name)
+              }
+            }
 
             // 找到数据列
-            const dataColumn = columnNames.find(c =>
-              c === 'voice_data' || c === 'buf' || c === 'voicebuf' || c === 'data'
-            )
+            const dataColumnLower = ['voice_data', 'buf', 'voicebuf', 'data'].find(name => columnMap.has(name))
+            const dataColumn = dataColumnLower ? columnMap.get(dataColumnLower) : undefined
             if (!dataColumn) {
               mediaDb.close()
               continue
             }
 
             // 找到 chat_name_id 列
-            const chatNameIdColumn = columnNames.find(c =>
-              c === 'chat_name_id' || c === 'chatnameid' || c === 'chat_nameid'
-            )
+            const chatNameIdColumnLower = ['chat_name_id', 'chatnameid', 'chat_nameid'].find(name => columnMap.has(name))
+            const chatNameIdColumn = chatNameIdColumnLower ? columnMap.get(chatNameIdColumnLower) : undefined
 
             // 找到时间列
-            const timeColumn = columnNames.find(c =>
-              c === 'create_time' || c === 'createtime' || c === 'time'
-            )
+            const timeColumnLower = ['create_time', 'createtime', 'time'].find(name => columnMap.has(name))
+            const timeColumn = timeColumnLower ? columnMap.get(timeColumnLower) : undefined
+
+            // 找到消息本地 ID 列
+            const localIdColumnLower = ['msg_local_id', 'msglocalid', 'msg_localid', 'local_id', 'localid', 'msg_id', 'msgid'].find(name => columnMap.has(name))
+            const localIdColumn = localIdColumnLower ? columnMap.get(localIdColumnLower) : undefined
 
             // 查找 Name2Id 表
             const name2IdTables = mediaDb.prepare(
@@ -5237,28 +5379,37 @@ class ChatService extends EventEmitter {
             // 策略1: 通过 chat_name_id + create_time 查找（最准确）
             if (chatNameIdColumn && timeColumn && name2IdTables.length > 0) {
               const name2IdTable = name2IdTables[0].name
+              const name2IdColumns = mediaDb.prepare(`PRAGMA table_info('${name2IdTable}')`).all() as any[]
+              const userNameColumn = name2IdColumns
+                .map((column: any) => String(column.name || ''))
+                .find((name: string) => {
+                  const lower = name.toLowerCase()
+                  return lower === 'user_name' || lower === 'username'
+                })
 
-              for (const candidate of candidates) {
-                // 获取 chat_name_id
-                const name2IdRow = mediaDb.prepare(
-                  `SELECT rowid FROM ${name2IdTable} WHERE user_name = ?`
-                ).get(candidate) as any
+              if (userNameColumn) {
+                const candidateList = Array.from(candidates)
+                const placeholders = candidateList.map(() => '?').join(', ')
+                if (placeholders) {
+                  const name2IdRows = mediaDb.prepare(
+                    `SELECT rowid, ${userNameColumn} AS userName FROM ${name2IdTable} WHERE ${userNameColumn} IN (${placeholders})`
+                  ).all(...candidateList) as Array<{ rowid?: number }>
 
-                if (!name2IdRow?.rowid) {
-                  continue
-                }
+                  const chatNameIds = name2IdRows
+                    .map(row => Number(row.rowid))
+                    .filter(rowId => Number.isFinite(rowId) && rowId > 0)
 
-                const chatNameId = name2IdRow.rowid
+                  if (chatNameIds.length > 0) {
+                    const chatNameIdPlaceholders = chatNameIds.map(() => '?').join(', ')
+                    const sql = `SELECT ${dataColumn} AS data FROM ${voiceTable} WHERE ${chatNameIdColumn} IN (${chatNameIdPlaceholders}) AND ${timeColumn} = ? LIMIT 1`
+                    const row = mediaDb.prepare(sql).get(...chatNameIds, msgCreateTime) as any
 
-                // 用 chat_name_id + create_time 查找
-                const sql = `SELECT ${dataColumn} AS data FROM ${voiceTable} WHERE ${chatNameIdColumn} = ? AND ${timeColumn} = ? LIMIT 1`
-
-                const row = mediaDb.prepare(sql).get(chatNameId, msgCreateTime) as any
-
-                if (row?.data) {
-                  silkData = this.decodeVoiceBlob(row.data)
-                  if (silkData) {
-                    break
+                    if (row?.data) {
+                      silkData = this.decodeVoiceBlob(row.data)
+                      if (silkData) {
+                        break
+                      }
+                    }
                   }
                 }
               }
@@ -5268,6 +5419,26 @@ class ChatService extends EventEmitter {
             if (!silkData && timeColumn) {
               const sql = `SELECT ${dataColumn} AS data FROM ${voiceTable} WHERE ${timeColumn} = ? LIMIT 1`
               const row = mediaDb.prepare(sql).get(msgCreateTime) as any
+
+              if (row?.data) {
+                silkData = this.decodeVoiceBlob(row.data)
+              }
+            }
+
+            // 策略3: 通过 localId / msgLocalId 查找（兼容时间戳不一致）
+            if (!silkData && localIdColumn) {
+              const sql = `SELECT ${dataColumn} AS data FROM ${voiceTable} WHERE ${localIdColumn} = ? LIMIT 1`
+              const row = mediaDb.prepare(sql).get(localId) as any
+
+              if (row?.data) {
+                silkData = this.decodeVoiceBlob(row.data)
+              }
+            }
+
+            // 策略4: 时间范围查找（±5 秒）
+            if (!silkData && timeColumn) {
+              const sql = `SELECT ${dataColumn} AS data FROM ${voiceTable} WHERE ${timeColumn} BETWEEN ? AND ? ORDER BY ABS(${timeColumn} - ?) LIMIT 1`
+              const row = mediaDb.prepare(sql).get(msgCreateTime - 5, msgCreateTime + 5, msgCreateTime) as any
 
               if (row?.data) {
                 silkData = this.decodeVoiceBlob(row.data)
@@ -5603,8 +5774,8 @@ class ChatService extends EventEmitter {
             imageMd5 = imageInfo.md5
             imageDatName = this.parseImageDatNameFromRow(row)
             isLivePhoto = imageInfo.isLivePhoto
-          } else if (localType === 43 && content) {
-            videoMd5 = this.parseVideoMd5(content)
+          } else if (localType === 43) {
+            videoMd5 = this.extractVideoMd5(content, row)
             videoDuration = this.parseVideoDuration(content)
           } else if (localType === 34 && content) {
             voiceDuration = this.parseVoiceDuration(content)

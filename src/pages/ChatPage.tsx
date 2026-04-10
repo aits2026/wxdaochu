@@ -33,6 +33,27 @@ interface GroupMemberListItem {
   isFriend?: boolean
 }
 
+type MediaBrowserStatus = 'idle' | 'loading' | 'ready' | 'error'
+
+interface SessionVideoBrowserItem {
+  key: string
+  videoMd5?: string
+  createTime?: number
+  videoDuration?: number
+  exists: boolean
+  hasPreview: boolean
+  videoUrl?: string
+  coverUrl?: string
+  thumbUrl?: string
+}
+
+interface SessionVoiceBrowserItem extends Message {
+  key: string
+  status: MediaBrowserStatus
+  dataUrl?: string
+  error?: string
+}
+
 // 头像组件 - 支持骨架屏加载和懒加载
 function SessionAvatar({ session, size = 48 }: { session: ChatSession; size?: number }) {
   const [imageLoaded, setImageLoaded] = useState(false)
@@ -265,6 +286,27 @@ function ChatPage(_props: ChatPageProps) {
   const [batchImageMessages, setBatchImageMessages] = useState<{ imageMd5?: string; imageDatName?: string; createTime?: number }[] | null>(null)
   const [batchImageDates, setBatchImageDates] = useState<string[]>([])
   const [batchImageSelectedDates, setBatchImageSelectedDates] = useState<Set<string>>(new Set())
+
+  // 会话媒体浏览弹窗
+  const [showSessionVideoBrowser, setShowSessionVideoBrowser] = useState(false)
+  const [sessionVideoBrowserLoading, setSessionVideoBrowserLoading] = useState(false)
+  const [sessionVideoBrowserError, setSessionVideoBrowserError] = useState<string | null>(null)
+  const [sessionVideoBrowserSessionName, setSessionVideoBrowserSessionName] = useState('')
+  const [sessionVideoBrowserItems, setSessionVideoBrowserItems] = useState<SessionVideoBrowserItem[]>([])
+  const [sessionVideoBrowserCurrentKey, setSessionVideoBrowserCurrentKey] = useState<string | null>(null)
+  const [sessionVideoBrowserRawCount, setSessionVideoBrowserRawCount] = useState(0)
+  const [sessionVideoBrowserDuplicateCount, setSessionVideoBrowserDuplicateCount] = useState(0)
+  const [sessionVideoBrowserParseFailedCount, setSessionVideoBrowserParseFailedCount] = useState(0)
+
+  const [showSessionVoiceBrowser, setShowSessionVoiceBrowser] = useState(false)
+  const [sessionVoiceBrowserLoading, setSessionVoiceBrowserLoading] = useState(false)
+  const [sessionVoiceBrowserError, setSessionVoiceBrowserError] = useState<string | null>(null)
+  const [sessionVoiceBrowserSessionName, setSessionVoiceBrowserSessionName] = useState('')
+  const [sessionVoiceBrowserItems, setSessionVoiceBrowserItems] = useState<SessionVoiceBrowserItem[]>([])
+  const [sessionVoiceBrowserCurrentKey, setSessionVoiceBrowserCurrentKey] = useState<string | null>(null)
+  const [voiceBrowserPendingPlayKey, setVoiceBrowserPendingPlayKey] = useState<string | null>(null)
+  const [voiceBrowserPlayingKey, setVoiceBrowserPlayingKey] = useState<string | null>(null)
+  const voiceBrowserAudioRef = useRef<HTMLAudioElement>(null)
 
   // 检查图片密钥配置（XOR 和 AES 都需要配置）
   useEffect(() => {
@@ -1212,6 +1254,334 @@ function ChatPage(_props: ChatPageProps) {
     })
   }
 
+  const buildVideoBrowserKey = useCallback((video: { videoMd5?: string; createTime?: number }) => {
+    return `${video.videoMd5 || 'video'}:${video.createTime || 0}`
+  }, [])
+
+  const buildVoiceBrowserKey = useCallback((message: Pick<Message, 'localId' | 'createTime'>) => {
+    return `${message.localId}:${message.createTime}`
+  }, [])
+
+  const toLocalPathFromFileUrl = useCallback((fileUrl?: string) => {
+    if (!fileUrl) return undefined
+    if (!fileUrl.startsWith('file:///')) return fileUrl
+    return decodeURIComponent(fileUrl.replace('file:///', ''))
+  }, [])
+
+  const formatMediaDurationLabel = useCallback((seconds?: number) => {
+    if (!seconds || seconds <= 0) return ''
+    const rounded = Math.max(1, Math.round(seconds))
+    const minutes = Math.floor(rounded / 60)
+    const remainSeconds = rounded % 60
+    if (minutes <= 0) return `${remainSeconds} 秒`
+    return `${minutes}:${String(remainSeconds).padStart(2, '0')}`
+  }, [])
+
+  const stopVoiceBrowserPlayback = useCallback(() => {
+    const audio = voiceBrowserAudioRef.current
+    if (audio) {
+      audio.pause()
+      audio.currentTime = 0
+      globalVoiceManager.stop(audio)
+    }
+    setVoiceBrowserPlayingKey(null)
+    setVoiceBrowserPendingPlayKey(null)
+  }, [])
+
+  const selectedVideoBrowserItem = useMemo(() => {
+    if (!sessionVideoBrowserCurrentKey) return null
+    return sessionVideoBrowserItems.find(item => item.key === sessionVideoBrowserCurrentKey) || null
+  }, [sessionVideoBrowserCurrentKey, sessionVideoBrowserItems])
+
+  const selectedVoiceBrowserItem = useMemo(() => {
+    if (!sessionVoiceBrowserCurrentKey) return null
+    return sessionVoiceBrowserItems.find(item => item.key === sessionVoiceBrowserCurrentKey) || null
+  }, [sessionVoiceBrowserCurrentKey, sessionVoiceBrowserItems])
+
+  const sessionVideoReadyCount = useMemo(
+    () => sessionVideoBrowserItems.filter(item => item.exists).length,
+    [sessionVideoBrowserItems]
+  )
+  const sessionVideoThumbOnlyCount = useMemo(
+    () => sessionVideoBrowserItems.filter(item => !item.exists && item.hasPreview).length,
+    [sessionVideoBrowserItems]
+  )
+  const sessionVideoMissingCount = useMemo(
+    () => sessionVideoBrowserItems.filter(item => !item.exists && !item.hasPreview).length,
+    [sessionVideoBrowserItems]
+  )
+
+  const sessionVoiceReadyCount = useMemo(
+    () => sessionVoiceBrowserItems.filter(item => item.status === 'ready').length,
+    [sessionVoiceBrowserItems]
+  )
+  const sessionVoiceErrorCount = useMemo(
+    () => sessionVoiceBrowserItems.filter(item => item.status === 'error').length,
+    [sessionVoiceBrowserItems]
+  )
+  const sessionVoicePendingCount = useMemo(
+    () => sessionVoiceBrowserItems.filter(item => item.status === 'idle' || item.status === 'loading').length,
+    [sessionVoiceBrowserItems]
+  )
+
+  const closeSessionVideoBrowser = useCallback(() => {
+    setShowSessionVideoBrowser(false)
+  }, [])
+
+  const closeSessionVoiceBrowser = useCallback(() => {
+    stopVoiceBrowserPlayback()
+    setShowSessionVoiceBrowser(false)
+  }, [stopVoiceBrowserPlayback])
+
+  const openSessionVideoBrowser = useCallback(async (targetMessage?: Message) => {
+    if (!currentSession) return
+
+    setShowSessionVideoBrowser(true)
+    setSessionVideoBrowserLoading(true)
+    setSessionVideoBrowserError(null)
+    setSessionVideoBrowserSessionName(currentSession.displayName || currentSession.username)
+
+    try {
+      const listResult = await window.electronAPI.chat.getAllVideoMessages(currentSession.username)
+      if (!listResult.success || !listResult.videos) {
+        throw new Error(listResult.error || '读取会话视频失败')
+      }
+
+      const nextItems: SessionVideoBrowserItem[] = []
+      for (let index = 0; index < listResult.videos.length; index += 1) {
+        const video = listResult.videos[index]
+        let exists = false
+        let videoUrl: string | undefined
+        let coverUrl: string | undefined
+        let thumbUrl: string | undefined
+
+        if (video.videoMd5) {
+          const cached = videoInfoCache.get(video.videoMd5)
+          if (cached) {
+            exists = Boolean(cached.exists)
+            videoUrl = cached.videoUrl
+            coverUrl = cached.coverUrl
+            thumbUrl = cached.thumbUrl
+          } else {
+            try {
+              const result = await window.electronAPI.video.getVideoInfo(video.videoMd5)
+              if (result.success) {
+                exists = Boolean(result.exists)
+                videoUrl = result.videoUrl
+                coverUrl = result.coverUrl
+                thumbUrl = result.thumbUrl
+                videoInfoCache.set(video.videoMd5, {
+                  exists,
+                  videoUrl,
+                  coverUrl,
+                  thumbUrl,
+                  cachedAt: Date.now()
+                })
+              }
+            } catch {
+              // 单条视频检测失败时保留缺失态
+            }
+          }
+        }
+
+        nextItems.push({
+          key: buildVideoBrowserKey(video),
+          videoMd5: video.videoMd5,
+          createTime: video.createTime,
+          videoDuration: video.videoDuration,
+          exists,
+          hasPreview: Boolean(thumbUrl || coverUrl),
+          videoUrl,
+          coverUrl,
+          thumbUrl
+        })
+
+        if (index % 20 === 0) {
+          await new Promise(resolve => setTimeout(resolve, 0))
+        }
+      }
+
+      const sortedItems = nextItems.slice().sort((a, b) => (b.createTime || 0) - (a.createTime || 0))
+      const targetKey = targetMessage
+        ? (
+            sortedItems.find(item => item.videoMd5 && item.videoMd5 === targetMessage.videoMd5 && item.createTime === targetMessage.createTime)?.key ||
+            sortedItems.find(item => item.videoMd5 && item.videoMd5 === targetMessage.videoMd5)?.key
+          )
+        : undefined
+
+      setSessionVideoBrowserItems(sortedItems)
+      setSessionVideoBrowserCurrentKey(targetKey || sortedItems[0]?.key || null)
+      setSessionVideoBrowserRawCount(Number(listResult.stats?.rawMessageCount ?? sortedItems.length))
+      setSessionVideoBrowserDuplicateCount(Number(listResult.stats?.duplicateMessageCount ?? 0))
+      setSessionVideoBrowserParseFailedCount(Number(listResult.stats?.parseFailedCount ?? 0))
+    } catch (error) {
+      setSessionVideoBrowserItems([])
+      setSessionVideoBrowserCurrentKey(null)
+      setSessionVideoBrowserError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setSessionVideoBrowserLoading(false)
+    }
+  }, [buildVideoBrowserKey, currentSession])
+
+  const loadVoiceBrowserItem = useCallback(async (itemKey: string) => {
+    if (!currentSessionId) return false
+
+    const targetItem = sessionVoiceBrowserItems.find(item => item.key === itemKey)
+    if (!targetItem) return false
+    if (targetItem.status === 'ready' && targetItem.dataUrl) return true
+    if (targetItem.status === 'loading') return false
+
+    setSessionVoiceBrowserItems(prev => prev.map(item => (
+      item.key === itemKey
+        ? { ...item, status: 'loading', error: undefined }
+        : item
+    )))
+
+    try {
+      const result = await window.electronAPI.chat.getVoiceData(
+        currentSessionId,
+        String(targetItem.localId),
+        targetItem.createTime
+      )
+
+      if (!result.success || !result.data) {
+        setSessionVoiceBrowserItems(prev => prev.map(item => (
+          item.key === itemKey
+            ? { ...item, status: 'error', error: result.error || '语音加载失败' }
+            : item
+        )))
+        return false
+      }
+
+      setSessionVoiceBrowserItems(prev => prev.map(item => (
+        item.key === itemKey
+          ? { ...item, status: 'ready', dataUrl: `data:audio/wav;base64,${result.data}`, error: undefined }
+          : item
+      )))
+      return true
+    } catch (error) {
+      setSessionVoiceBrowserItems(prev => prev.map(item => (
+        item.key === itemKey
+          ? { ...item, status: 'error', error: error instanceof Error ? error.message : String(error) }
+          : item
+      )))
+      return false
+    }
+  }, [currentSessionId, sessionVoiceBrowserItems])
+
+  const openSessionVoiceBrowser = useCallback(async (targetMessage?: Message) => {
+    if (!currentSession) return
+
+    stopVoiceBrowserPlayback()
+    setShowSessionVoiceBrowser(true)
+    setSessionVoiceBrowserLoading(true)
+    setSessionVoiceBrowserError(null)
+    setSessionVoiceBrowserSessionName(currentSession.displayName || currentSession.username)
+
+    try {
+      const result = await window.electronAPI.chat.getAllVoiceMessages(currentSession.username)
+      if (!result.success || !result.messages) {
+        throw new Error(result.error || '读取会话语音失败')
+      }
+
+      const items = result.messages
+        .slice()
+        .sort((a, b) => b.createTime - a.createTime)
+        .map((message) => ({
+          ...message,
+          key: buildVoiceBrowserKey(message),
+          status: 'idle' as MediaBrowserStatus
+        }))
+
+      const targetKey = targetMessage
+        ? items.find(item => item.localId === targetMessage.localId && item.createTime === targetMessage.createTime)?.key
+        : undefined
+
+      setSessionVoiceBrowserItems(items)
+      setSessionVoiceBrowserCurrentKey(targetKey || items[0]?.key || null)
+    } catch (error) {
+      setSessionVoiceBrowserItems([])
+      setSessionVoiceBrowserCurrentKey(null)
+      setSessionVoiceBrowserError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setSessionVoiceBrowserLoading(false)
+    }
+  }, [buildVoiceBrowserKey, currentSession, stopVoiceBrowserPlayback])
+
+  const handleVoiceBrowserSelect = useCallback((itemKey: string) => {
+    stopVoiceBrowserPlayback()
+    setSessionVoiceBrowserCurrentKey(itemKey)
+  }, [stopVoiceBrowserPlayback])
+
+  const handleVoiceBrowserPlay = useCallback(async (itemKey?: string) => {
+    const targetKey = itemKey || sessionVoiceBrowserCurrentKey
+    if (!targetKey) return
+
+    const targetItem = sessionVoiceBrowserItems.find(item => item.key === targetKey)
+    if (!targetItem) return
+
+    if (voiceBrowserPlayingKey === targetKey) {
+      stopVoiceBrowserPlayback()
+      return
+    }
+
+    if (sessionVoiceBrowserCurrentKey !== targetKey) {
+      setSessionVoiceBrowserCurrentKey(targetKey)
+    }
+
+    if (targetItem.status !== 'ready' || !targetItem.dataUrl) {
+      setVoiceBrowserPendingPlayKey(targetKey)
+      const loaded = await loadVoiceBrowserItem(targetKey)
+      if (!loaded) {
+        setVoiceBrowserPendingPlayKey(null)
+      }
+      return
+    }
+
+    setVoiceBrowserPendingPlayKey(targetKey)
+  }, [
+    loadVoiceBrowserItem,
+    sessionVoiceBrowserCurrentKey,
+    sessionVoiceBrowserItems,
+    stopVoiceBrowserPlayback,
+    voiceBrowserPlayingKey
+  ])
+
+  useEffect(() => {
+    if (!showSessionVoiceBrowser || !sessionVoiceBrowserCurrentKey) return
+    const currentItem = sessionVoiceBrowserItems.find(item => item.key === sessionVoiceBrowserCurrentKey)
+    if (currentItem && currentItem.status === 'idle') {
+      void loadVoiceBrowserItem(currentItem.key)
+    }
+  }, [loadVoiceBrowserItem, sessionVoiceBrowserCurrentKey, sessionVoiceBrowserItems, showSessionVoiceBrowser])
+
+  useEffect(() => {
+    if (!voiceBrowserPendingPlayKey) return
+    if (voiceBrowserPendingPlayKey !== sessionVoiceBrowserCurrentKey) return
+
+    const currentItem = sessionVoiceBrowserItems.find(item => item.key === voiceBrowserPendingPlayKey)
+    const audio = voiceBrowserAudioRef.current
+    if (!audio || !currentItem?.dataUrl || currentItem.status !== 'ready') return
+
+    const startPlayback = async () => {
+      audio.currentTime = 0
+      globalVoiceManager.play(audio, () => {
+        audio.pause()
+        setVoiceBrowserPlayingKey(null)
+      })
+      try {
+        await audio.play()
+        setVoiceBrowserPlayingKey(currentItem.key)
+      } catch {
+        setVoiceBrowserPlayingKey(null)
+      } finally {
+        setVoiceBrowserPendingPlayKey(null)
+      }
+    }
+
+    void startPlayback()
+  }, [sessionVoiceBrowserCurrentKey, sessionVoiceBrowserItems, voiceBrowserPendingPlayKey])
+
   return (
     <div className="chat-page standalone">
       {/* 单会话消息区域 */}
@@ -1515,6 +1885,8 @@ function ChatPage(_props: ChatPageProps) {
                           isGroupChat={isGroupChat(currentSession.username)}
                           hasImageKey={hasImageKey === true}
                           quoteStyle={quoteStyle}
+                          onOpenVideoBrowser={(message) => { void openSessionVideoBrowser(message) }}
+                          onOpenVoiceBrowser={(message) => { void openSessionVoiceBrowser(message) }}
                           onContextMenu={(e, message, handlers) => {
                             // 系统消息不显示右键菜单
                             const isSystem = message.localType === 10000
@@ -1886,6 +2258,468 @@ function ChatPage(_props: ChatPageProps) {
         document.body
       )}
 
+      {showSessionVideoBrowser && createPortal(
+        <div className="chat-media-browser-overlay" onClick={closeSessionVideoBrowser}>
+          <div className="chat-media-browser-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="chat-media-browser-header">
+              <div>
+                <h3>会话视频</h3>
+                <p>优先保证浏览可达，后续再复用这条链路修导出</p>
+              </div>
+              <button
+                type="button"
+                className="chat-media-browser-close-btn"
+                onClick={closeSessionVideoBrowser}
+                aria-label="关闭会话视频弹窗"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="chat-media-browser-subtitle">
+              {sessionVideoBrowserSessionName || currentSession?.displayName || currentSession?.username}
+            </div>
+
+            <div className="chat-media-browser-summary">
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                原始视频消息 <strong style={{ color: 'var(--text-primary)' }}>{sessionVideoBrowserRawCount.toLocaleString()}</strong> 条
+                {' '}→ 识别到唯一视频 <strong style={{ color: 'var(--text-primary)' }}>{sessionVideoBrowserItems.length.toLocaleString()}</strong> 个
+                {' '}→ 可浏览视频 <strong style={{ color: 'var(--text-primary)' }}>{sessionVideoReadyCount.toLocaleString()}</strong> 个
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text-tertiary)', lineHeight: 1.5 }}>
+                差异说明：
+                {sessionVideoBrowserDuplicateCount > 0 ? ` 重复引用 ${sessionVideoBrowserDuplicateCount.toLocaleString()} 条；` : ' 无重复引用；'}
+                {sessionVideoBrowserParseFailedCount > 0 ? ` 无法解析 ${sessionVideoBrowserParseFailedCount.toLocaleString()} 条；` : ' 无解析失败；'}
+                {sessionVideoThumbOnlyCount > 0 ? ` 仅缩略图 ${sessionVideoThumbOnlyCount.toLocaleString()} 个；` : ''}
+                {sessionVideoMissingCount > 0 ? ` 文件缺失 ${sessionVideoMissingCount.toLocaleString()} 个。` : ''}
+              </div>
+            </div>
+
+            <div className="chat-media-browser-toolbar">
+              <div className="chat-media-browser-stats">
+                <div className="chat-media-browser-stat">
+                  <span className="label">原始消息</span>
+                  <strong>{sessionVideoBrowserRawCount.toLocaleString()}</strong>
+                </div>
+                <div className="chat-media-browser-stat">
+                  <span className="label">唯一视频</span>
+                  <strong>{sessionVideoBrowserItems.length.toLocaleString()}</strong>
+                </div>
+                <div className="chat-media-browser-stat success">
+                  <span className="label">可浏览</span>
+                  <strong>{sessionVideoReadyCount.toLocaleString()}</strong>
+                </div>
+                <div className="chat-media-browser-stat info">
+                  <span className="label">仅缩略图</span>
+                  <strong>{sessionVideoThumbOnlyCount.toLocaleString()}</strong>
+                </div>
+                <div className="chat-media-browser-stat warning">
+                  <span className="label">缺失</span>
+                  <strong>{sessionVideoMissingCount.toLocaleString()}</strong>
+                </div>
+              </div>
+              <div className="chat-media-browser-actions">
+                {sessionVideoBrowserLoading ? (
+                  <span className="chat-media-browser-pill checking">
+                    <Loader2 size={11} className="spin" />
+                    <span>检查中</span>
+                  </span>
+                ) : sessionVideoBrowserError ? (
+                  <button
+                    type="button"
+                    className="chat-media-browser-action-btn"
+                    onClick={() => { void openSessionVideoBrowser() }}
+                  >
+                    <span>重试</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="chat-media-browser-action-btn"
+                    onClick={() => { void openSessionVideoBrowser() }}
+                  >
+                    <span>重新检查</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="chat-media-browser-content">
+              {sessionVideoBrowserLoading ? (
+                <div className="chat-media-browser-empty">
+                  <Loader2 size={16} className="spin" />
+                  <span>正在检查会话视频...</span>
+                </div>
+              ) : sessionVideoBrowserError ? (
+                <div className="chat-media-browser-empty">
+                  <span>加载失败：{sessionVideoBrowserError}</span>
+                </div>
+              ) : sessionVideoBrowserItems.length === 0 ? (
+                <div className="chat-media-browser-empty">
+                  <span>当前会话没有可识别的视频消息</span>
+                </div>
+              ) : (
+                <div className="chat-media-browser-body">
+                  <div className="chat-media-browser-preview-panel">
+                    <div className="chat-media-browser-preview-frame video">
+                      {selectedVideoBrowserItem?.exists && selectedVideoBrowserItem.videoUrl ? (
+                        <video
+                          key={selectedVideoBrowserItem.key}
+                          controls
+                          preload="metadata"
+                          poster={selectedVideoBrowserItem.thumbUrl || selectedVideoBrowserItem.coverUrl}
+                          src={selectedVideoBrowserItem.videoUrl}
+                        />
+                      ) : selectedVideoBrowserItem?.thumbUrl || selectedVideoBrowserItem?.coverUrl ? (
+                        <img src={selectedVideoBrowserItem.thumbUrl || selectedVideoBrowserItem.coverUrl} alt="" />
+                      ) : (
+                        <div className="chat-media-browser-placeholder">
+                          <Video size={28} />
+                          <span>暂无可用预览</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {selectedVideoBrowserItem && (
+                      <>
+                        <div className="chat-media-browser-preview-meta">
+                          <div className="chat-media-browser-preview-title">
+                            <strong>
+                              {selectedVideoBrowserItem.createTime
+                                ? new Date(selectedVideoBrowserItem.createTime * 1000).toLocaleString('zh-CN')
+                                : '未知时间'}
+                            </strong>
+                            {selectedVideoBrowserItem.videoMd5 && (
+                              <code>{selectedVideoBrowserItem.videoMd5}</code>
+                            )}
+                          </div>
+                          <div className="chat-media-browser-preview-submeta">
+                            {formatMediaDurationLabel(selectedVideoBrowserItem.videoDuration) || '未记录时长'}
+                            {' · '}
+                            {selectedVideoBrowserItem.exists
+                              ? '可直接播放'
+                              : (selectedVideoBrowserItem.hasPreview ? '仅保留缩略图' : '源文件缺失')}
+                          </div>
+                        </div>
+
+                        <div className="chat-media-browser-action-row">
+                          <button
+                            type="button"
+                            className="chat-media-browser-action-btn"
+                            disabled={!selectedVideoBrowserItem.videoUrl}
+                            onClick={() => {
+                              if (selectedVideoBrowserItem.videoUrl) {
+                                void window.electronAPI.window.openVideoPlayerWindow(selectedVideoBrowserItem.videoUrl)
+                              }
+                            }}
+                          >
+                            独立播放
+                          </button>
+                          <button
+                            type="button"
+                            className="chat-media-browser-action-btn"
+                            disabled={!toLocalPathFromFileUrl(selectedVideoBrowserItem.videoUrl)}
+                            onClick={() => {
+                              const localPath = toLocalPathFromFileUrl(selectedVideoBrowserItem.videoUrl)
+                              if (localPath) {
+                                void window.electronAPI.shell.showItemInFolder(localPath)
+                              }
+                            }}
+                          >
+                            定位文件
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+
+                  <div className="chat-media-browser-grid">
+                    {sessionVideoBrowserItems.map((item) => {
+                      const dateLabel = item.createTime
+                        ? new Date(item.createTime * 1000).toLocaleDateString('zh-CN')
+                        : '未知时间'
+                      const durationLabel = formatMediaDurationLabel(item.videoDuration)
+
+                      return (
+                        <button
+                          key={item.key}
+                          type="button"
+                          className={`chat-media-browser-grid-item ${sessionVideoBrowserCurrentKey === item.key ? 'is-active' : ''} ${!item.exists ? 'is-dimmed' : ''}`}
+                          onClick={() => setSessionVideoBrowserCurrentKey(item.key)}
+                          title={item.exists ? '查看并播放该视频' : (item.hasPreview ? '仅可浏览缩略图' : '源文件缺失')}
+                        >
+                          {item.thumbUrl || item.coverUrl ? (
+                            <img src={item.thumbUrl || item.coverUrl} alt="" loading="lazy" />
+                          ) : (
+                            <div className="chat-media-browser-grid-placeholder">
+                              <Video size={18} />
+                            </div>
+                          )}
+                          <div className="chat-media-browser-grid-footer">
+                            <div className="chat-media-browser-grid-text">
+                              <span>{dateLabel}</span>
+                              {durationLabel && (
+                                <small>{durationLabel}</small>
+                              )}
+                            </div>
+                            <span className={`chat-media-browser-pill ${item.exists ? 'success' : (item.hasPreview ? 'warning' : 'checking')}`}>
+                              {item.exists ? '可播' : (item.hasPreview ? '缩略图' : '缺失')}
+                            </span>
+                          </div>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {showSessionVoiceBrowser && createPortal(
+        <div className="chat-media-browser-overlay" onClick={closeSessionVoiceBrowser}>
+          <div className="chat-media-browser-modal voice" onClick={(e) => e.stopPropagation()}>
+            <div className="chat-media-browser-header">
+              <div>
+                <h3>会话语音</h3>
+                <p>点击语音消息进入会话级浏览器，先保证可以定位和试听</p>
+              </div>
+              <button
+                type="button"
+                className="chat-media-browser-close-btn"
+                onClick={closeSessionVoiceBrowser}
+                aria-label="关闭会话语音弹窗"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="chat-media-browser-subtitle">
+              {sessionVoiceBrowserSessionName || currentSession?.displayName || currentSession?.username}
+            </div>
+
+            <div className="chat-media-browser-summary">
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                会话语音消息 <strong style={{ color: 'var(--text-primary)' }}>{sessionVoiceBrowserItems.length.toLocaleString()}</strong> 条
+                {' '}→ 已可试听 <strong style={{ color: 'var(--text-primary)' }}>{sessionVoiceReadyCount.toLocaleString()}</strong> 条
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text-tertiary)', lineHeight: 1.5 }}>
+                当前策略：优先按时间与会话定位语音，首次只加载当前选中条目，后续按需加载其余语音。
+              </div>
+            </div>
+
+            <div className="chat-media-browser-toolbar">
+              <div className="chat-media-browser-stats">
+                <div className="chat-media-browser-stat">
+                  <span className="label">原始语音</span>
+                  <strong>{sessionVoiceBrowserItems.length.toLocaleString()}</strong>
+                </div>
+                <div className="chat-media-browser-stat success">
+                  <span className="label">可试听</span>
+                  <strong>{sessionVoiceReadyCount.toLocaleString()}</strong>
+                </div>
+                <div className="chat-media-browser-stat info">
+                  <span className="label">待加载</span>
+                  <strong>{sessionVoicePendingCount.toLocaleString()}</strong>
+                </div>
+                <div className="chat-media-browser-stat warning">
+                  <span className="label">失败</span>
+                  <strong>{sessionVoiceErrorCount.toLocaleString()}</strong>
+                </div>
+              </div>
+              <div className="chat-media-browser-actions">
+                {sessionVoiceBrowserLoading ? (
+                  <span className="chat-media-browser-pill checking">
+                    <Loader2 size={11} className="spin" />
+                    <span>读取中</span>
+                  </span>
+                ) : sessionVoiceBrowserError ? (
+                  <button
+                    type="button"
+                    className="chat-media-browser-action-btn"
+                    onClick={() => { void openSessionVoiceBrowser() }}
+                  >
+                    <span>重试</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="chat-media-browser-action-btn"
+                    onClick={() => { void openSessionVoiceBrowser() }}
+                  >
+                    <span>刷新列表</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="chat-media-browser-content">
+              {sessionVoiceBrowserLoading ? (
+                <div className="chat-media-browser-empty">
+                  <Loader2 size={16} className="spin" />
+                  <span>正在读取会话语音...</span>
+                </div>
+              ) : sessionVoiceBrowserError ? (
+                <div className="chat-media-browser-empty">
+                  <span>加载失败：{sessionVoiceBrowserError}</span>
+                </div>
+              ) : sessionVoiceBrowserItems.length === 0 ? (
+                <div className="chat-media-browser-empty">
+                  <span>当前会话没有语音消息</span>
+                </div>
+              ) : (
+                <div className="chat-media-browser-body voice">
+                  <div className="chat-voice-browser-preview">
+                    <div className={`chat-voice-browser-hero ${selectedVoiceBrowserItem?.status || 'idle'}`}>
+                      <div className="chat-voice-browser-hero-icon">
+                        <Mic size={24} />
+                      </div>
+                      <div className="chat-voice-browser-hero-text">
+                        <strong>
+                          {selectedVoiceBrowserItem?.createTime
+                            ? new Date(selectedVoiceBrowserItem.createTime * 1000).toLocaleString('zh-CN')
+                            : '未选中语音'}
+                        </strong>
+                        <span>
+                          {selectedVoiceBrowserItem
+                            ? (formatMediaDurationLabel(selectedVoiceBrowserItem.voiceDuration) || '未记录时长')
+                            : '点击右侧列表开始浏览'}
+                        </span>
+                      </div>
+                      {selectedVoiceBrowserItem && (
+                        <span className={`chat-media-browser-pill ${selectedVoiceBrowserItem.status === 'ready' ? 'success' : (selectedVoiceBrowserItem.status === 'error' ? 'warning' : 'checking')}`}>
+                          {selectedVoiceBrowserItem.status === 'ready'
+                            ? '可试听'
+                            : (selectedVoiceBrowserItem.status === 'error'
+                                ? '加载失败'
+                                : (selectedVoiceBrowserItem.status === 'loading' ? '加载中' : '待加载'))}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="chat-media-browser-action-row">
+                      <button
+                        type="button"
+                        className="chat-media-browser-action-btn"
+                        disabled={!selectedVoiceBrowserItem}
+                        onClick={() => { void handleVoiceBrowserPlay() }}
+                      >
+                        {voiceBrowserPlayingKey && selectedVoiceBrowserItem?.key === voiceBrowserPlayingKey
+                          ? '暂停'
+                          : (selectedVoiceBrowserItem?.status === 'ready' ? '播放' : '加载并播放')}
+                      </button>
+                      {selectedVoiceBrowserItem?.status === 'error' && (
+                        <button
+                          type="button"
+                          className="chat-media-browser-action-btn"
+                          onClick={() => {
+                            if (selectedVoiceBrowserItem) {
+                              void loadVoiceBrowserItem(selectedVoiceBrowserItem.key)
+                            }
+                          }}
+                        >
+                          重新加载
+                        </button>
+                      )}
+                    </div>
+
+                    {selectedVoiceBrowserItem?.dataUrl ? (
+                      <audio
+                        key={selectedVoiceBrowserItem.key}
+                        ref={voiceBrowserAudioRef}
+                        controls
+                        src={selectedVoiceBrowserItem.dataUrl}
+                        className="chat-voice-browser-audio"
+                        onPlay={() => {
+                          const audio = voiceBrowserAudioRef.current
+                          if (!audio || !selectedVoiceBrowserItem) return
+                          globalVoiceManager.play(audio, () => {
+                            audio.pause()
+                            setVoiceBrowserPlayingKey(null)
+                          })
+                          setVoiceBrowserPlayingKey(selectedVoiceBrowserItem.key)
+                        }}
+                        onPause={() => {
+                          setVoiceBrowserPlayingKey(null)
+                          if (voiceBrowserAudioRef.current) {
+                            globalVoiceManager.stop(voiceBrowserAudioRef.current)
+                          }
+                        }}
+                        onEnded={() => {
+                          setVoiceBrowserPlayingKey(null)
+                          if (voiceBrowserAudioRef.current) {
+                            globalVoiceManager.stop(voiceBrowserAudioRef.current)
+                          }
+                        }}
+                        onError={() => {
+                          if (!selectedVoiceBrowserItem) return
+                          setSessionVoiceBrowserItems(prev => prev.map(item => (
+                            item.key === selectedVoiceBrowserItem.key
+                              ? { ...item, status: 'error', error: '音频播放失败' }
+                              : item
+                          )))
+                          setVoiceBrowserPlayingKey(null)
+                        }}
+                      />
+                    ) : (
+                      <div className="chat-media-browser-inline-empty">
+                        <span>{selectedVoiceBrowserItem?.error || '点击“加载并播放”后即可在这里试听语音。'}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="chat-voice-browser-list">
+                    {sessionVoiceBrowserItems.map((item) => (
+                      <div
+                        key={item.key}
+                        className={`chat-voice-browser-item ${sessionVoiceBrowserCurrentKey === item.key ? 'is-active' : ''}`}
+                      >
+                        <button
+                          type="button"
+                          className="chat-voice-browser-item-main"
+                          onClick={() => handleVoiceBrowserSelect(item.key)}
+                        >
+                          <div className="chat-voice-browser-item-meta">
+                            <strong>
+                              {new Date(item.createTime * 1000).toLocaleString('zh-CN')}
+                            </strong>
+                            <span>{formatMediaDurationLabel(item.voiceDuration) || '未记录时长'}</span>
+                          </div>
+                          <span className={`chat-media-browser-pill ${item.status === 'ready' ? 'success' : (item.status === 'error' ? 'warning' : 'checking')}`}>
+                            {item.status === 'ready'
+                              ? '可试听'
+                              : (item.status === 'error'
+                                  ? '失败'
+                                  : (item.status === 'loading' ? '加载中' : '待加载'))}
+                          </span>
+                        </button>
+                        <div className="chat-voice-browser-item-actions">
+                          <button
+                            type="button"
+                            className="chat-media-browser-action-btn"
+                            onClick={() => { void handleVoiceBrowserPlay(item.key) }}
+                          >
+                            {voiceBrowserPlayingKey === item.key ? '暂停' : '播放'}
+                          </button>
+                          {item.error && (
+                            <span className="chat-voice-browser-item-error" title={item.error}>
+                              {item.error}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
       {/* 批量转写确认对话框 */}
       {showBatchConfirm && createPortal(
         <div className="modal-overlay" onClick={() => setShowBatchConfirm(false)}>
@@ -2194,7 +3028,7 @@ const videoInfoCache = new Map<string, {
 let lastIncrementalUpdateTime = 0
 
 // 消息气泡组件
-function MessageBubble({ message, session, showTime, myAvatarUrl, isGroupChat, hasImageKey, onContextMenu, isSelected, quoteStyle = 'default' }: {
+function MessageBubble({ message, session, showTime, myAvatarUrl, isGroupChat, hasImageKey, onContextMenu, isSelected, quoteStyle = 'default', onOpenVideoBrowser, onOpenVoiceBrowser }: {
   message: Message;
   session: ChatSession;
   showTime?: boolean;
@@ -2204,6 +3038,8 @@ function MessageBubble({ message, session, showTime, myAvatarUrl, isGroupChat, h
   onContextMenu?: (e: React.MouseEvent, message: Message, handlers?: any) => void;
   isSelected?: boolean;
   quoteStyle?: 'default' | 'wechat';
+  onOpenVideoBrowser?: (message: Message) => void;
+  onOpenVoiceBrowser?: (message: Message) => void;
 }) {
   const syncVersion = useChatStore(state => state.syncVersion)
   const lastSyncVersionRef = useRef(syncVersion)
@@ -2231,7 +3067,7 @@ function MessageBubble({ message, session, showTime, myAvatarUrl, isGroupChat, h
   const [imageLoading, setImageLoading] = useState(false)
 
   // 语音相关状态
-  const [voiceLoading, setVoiceLoading] = useState(false)
+  const [voiceLoading] = useState(false)
   const [voicePlaying, setVoicePlaying] = useState(false)
   const [voiceError, setVoiceError] = useState<string | null>(null)
   const [voiceDataUrl, setVoiceDataUrl] = useState<string | null>(null)
@@ -2484,76 +3320,24 @@ function MessageBubble({ message, session, showTime, myAvatarUrl, isGroupChat, h
     })
   }, [isVideo, isVisible, videoInfo, videoLoading, message.videoMd5])
 
-  // 播放视频 - 打开独立窗口
-  const handlePlayVideo = useCallback(async () => {
-    if (!videoInfo?.videoUrl) return
-
-    // 直接打开独立视频播放窗口
-    try {
-      await window.electronAPI.window.openVideoPlayerWindow(videoInfo.videoUrl)
-    } catch {
-      // 忽略错误
-    }
-  }, [videoInfo?.videoUrl])
-
-  // 语音播放处理
-  const handlePlayVoice = useCallback(async () => {
-    if (voiceLoading) return
-
-    // 如果已经有数据，直接播放/暂停
-    if (voiceDataUrl && voiceRef.current) {
-      if (voicePlaying) {
-        voiceRef.current.pause()
-        setVoicePlaying(false)
-        globalVoiceManager.stop(voiceRef.current)
-      } else {
-        voiceRef.current.currentTime = 0
-        // 停止其他正在播放的语音，确保同一时间只播放一条
-        globalVoiceManager.play(voiceRef.current, () => {
-          voiceRef.current?.pause()
-          setVoicePlaying(false)
-        })
-        voiceRef.current.play()
-        setVoicePlaying(true)
-      }
+  const handleOpenVideoBrowser = useCallback(() => {
+    if (onOpenVideoBrowser) {
+      onOpenVideoBrowser(message)
       return
     }
 
-    // 加载语音数据
-    setVoiceLoading(true)
-    setVoiceError(null)
-    try {
-      const result = await window.electronAPI.chat.getVoiceData(session.username, String(message.localId), message.createTime)
-      if (result.success && result.data) {
-        const dataUrl = `data:audio/wav;base64,${result.data}`
-        setVoiceDataUrl(dataUrl)
-        // 等待状态更新后播放
-        requestAnimationFrame(() => {
-          if (voiceRef.current) {
-            // 停止其他正在播放的语音
-            globalVoiceManager.play(voiceRef.current, () => {
-              voiceRef.current?.pause()
-              setVoicePlaying(false)
-            })
-            voiceRef.current.play()
-            setVoicePlaying(true)
-          }
-        })
-      } else {
-        setVoiceError(result.error || '加载失败')
-      }
-    } catch (e) {
-      setVoiceError(String(e))
-    } finally {
-      setVoiceLoading(false)
+    if (message.videoMd5) {
+      videoInfoCache.delete(message.videoMd5)
+      setVideoInfo(null)
+      setVideoLoading(false)
     }
-  }, [voiceLoading, voiceDataUrl, voicePlaying, session.username, message.localId])
+  }, [message, onOpenVideoBrowser])
 
-  // 语音播放结束
-  const handleVoiceEnded = useCallback(() => {
-    setVoicePlaying(false)
-    if (voiceRef.current) globalVoiceManager.stop(voiceRef.current)
-  }, [])
+  const handleOpenVoiceBrowser = useCallback(() => {
+    if (onOpenVoiceBrowser) {
+      onOpenVoiceBrowser(message)
+    }
+  }, [message, onOpenVoiceBrowser])
 
   // 语音转文字处理
   const handleTranscribeVoice = useCallback(async (e?: React.MouseEvent, force = false) => {
@@ -3113,19 +3897,12 @@ function MessageBubble({ message, session, showTime, myAvatarUrl, isGroupChat, h
           <button
             className="video-unavailable"
             ref={videoContainerRef as unknown as React.RefObject<HTMLButtonElement>}
-            onClick={() => {
-              // 清除缓存并重新加载
-              if (message.videoMd5) {
-                videoInfoCache.delete(message.videoMd5)
-              }
-              setVideoInfo(null)
-              setVideoLoading(false)
-            }}
+            onClick={handleOpenVideoBrowser}
             type="button"
           >
             <Video size={24} />
             <span>视频不可用</span>
-            <span className="video-action">点击重试</span>
+            <span className="video-action">点击浏览</span>
           </button>
         )
       }
@@ -3133,7 +3910,7 @@ function MessageBubble({ message, session, showTime, myAvatarUrl, isGroupChat, h
       // 默认显示缩略图，点击打开独立播放窗口
       const thumbSrc = videoInfo.thumbUrl || videoInfo.coverUrl
       return (
-        <div className="video-thumb-wrapper" ref={videoContainerRef} onClick={handlePlayVideo}>
+        <div className="video-thumb-wrapper" ref={videoContainerRef} onClick={handleOpenVideoBrowser}>
           {thumbSrc ? (
             <img src={thumbSrc} alt="视频缩略图" className="video-thumb" />
           ) : (
@@ -3194,7 +3971,7 @@ function MessageBubble({ message, session, showTime, myAvatarUrl, isGroupChat, h
           <div
             className="bubble-content voice-bubble"
             style={{ minWidth: `${width}px` }}
-            onClick={handlePlayVoice}
+            onClick={handleOpenVoiceBrowser}
           >
             <div
               className={`voice-message ${voicePlaying ? 'playing' : ''} ${voiceError ? 'error' : ''} ${isSent ? 'sent' : ''}`}
@@ -3214,7 +3991,10 @@ function MessageBubble({ message, session, showTime, myAvatarUrl, isGroupChat, h
                 <audio
                   ref={voiceRef}
                   src={voiceDataUrl}
-                  onEnded={handleVoiceEnded}
+                  onEnded={() => {
+                    setVoicePlaying(false)
+                    if (voiceRef.current) globalVoiceManager.stop(voiceRef.current)
+                  }}
                   onError={() => setVoiceError('播放失败')}
                 />
               )}

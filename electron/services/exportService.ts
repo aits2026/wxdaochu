@@ -10,6 +10,7 @@ import { voiceTranscribeService } from './voiceTranscribeService'
 import * as XLSX from 'xlsx'
 import { HtmlExportGenerator } from './htmlExportGenerator'
 import { imageDecryptService } from './imageDecryptService'
+import { chatService } from './chatService'
 import { videoService } from './videoService'
 import { exportRecordService } from './exportRecordService'
 
@@ -1648,7 +1649,7 @@ class ExportService {
     }
 
     if (localType === 43) {
-      const videoMd5 = this.normalizeMd5(videoService.parseVideoMd5(content)) || undefined
+      const videoMd5 = this.normalizeMd5(chatService.extractVideoMd5FromMessage(content, row)) || undefined
       if (!videoMd5) return undefined
       return { videoMd5 }
     }
@@ -5698,7 +5699,7 @@ class ExportService {
       unknown: 0
     }
     const videoFailReasons: Record<string, number> = {
-      no_md5: 0,
+      no_identifier: 0,
       source_missing: 0,
       copy_failed: 0,
       unknown: 0
@@ -5713,10 +5714,8 @@ class ExportService {
       unknown: 0
     }
     const voiceFailReasons: Record<string, number> = {
-      media_db_missing: 0,
-      decoder_missing: 0,
+      resolver_failed: 0,
       source_missing: 0,
-      decode_timeout: 0,
       decode_error: 0,
       write_failed: 0,
       unknown: 0
@@ -6110,7 +6109,7 @@ class ExportService {
               }
               try {
                 let videoHandled = false
-                const videoMd5 = this.normalizeMd5(videoService.parseVideoMd5(content)) || undefined
+                const videoMd5 = this.normalizeMd5(chatService.extractVideoMd5FromMessage(content, row)) || undefined
                 this.upsertArkmeMediaIndexEntry(arkmeMediaIndexMap, {
                   mediaKey,
                   kind: 'video',
@@ -6195,7 +6194,7 @@ class ExportService {
                   }
                 }
                 if (!videoMd5) {
-                  bumpReason(videoFailReasons, 'no_md5')
+                  bumpReason(videoFailReasons, 'no_identifier')
                 }
                 if (!videoHandled) {
                   videoFailCount++
@@ -6346,237 +6345,164 @@ class ExportService {
         createTime: number
         platformMessageId?: string
         localMessageId?: string
+        resolverMessageId?: string
         mediaMapKey?: string
         mediaKey: string
       }> = []
-      for (const { db, tableName } of dbTablePairs) {
-        try {
-          let sql = `SELECT create_time, server_id, local_id, is_send, real_sender_id, message_content, compress_content FROM ${tableName} WHERE local_type = 34`
-          if (options.dateRange) {
-            sql += ` AND create_time >= ${options.dateRange.start} AND create_time <= ${options.dateRange.end}`
+      const voiceListResult = await chatService.getAllVoiceMessages(sessionId)
+      if (!voiceListResult.success || !voiceListResult.messages) {
+        emitMediaProgress(`语音处理失败：${voiceListResult.error || '读取语音消息失败'}`, 0, 0, '条')
+      } else {
+        for (const message of voiceListResult.messages) {
+          const createTime = Number(message.createTime || 0)
+          if (!createTime) continue
+          if (options.dateRange && (createTime < options.dateRange.start || createTime > options.dateRange.end)) {
+            continue
           }
-          sql += ` ORDER BY create_time`
-          const rows = db.prepare(sql).all() as any[]
-          for (const row of rows) {
-            const createTime = Number(row.create_time || 0)
-            if (!createTime) continue
-            const content = this.decodeMessageContent(row.message_content, row.compress_content)
-            const platformMessageId = row.server_id ? String(row.server_id) : (row.local_id ? String(row.local_id) : undefined)
-            const localMessageId = row.local_id ? String(row.local_id) : undefined
-            const mediaMapKey = this.buildMediaPathMapKey({
-              platformMessageId,
-              localMessageId,
-              createTime,
-              localType: 34,
-              senderUsername: row.sender_username || '',
-              isSend: row.is_send === 1
-            })
-            const mediaKey = this.buildArkmeMediaKey({
-              sessionId,
-              platformMessageId,
-              localMessageId,
-              createTime,
-              localType: 34,
-              isSend: row.is_send === 1,
-              realSenderId: row.real_sender_id,
-              contentHint: content
-            })
 
-            voiceMessages.push({
-              createTime,
-              platformMessageId,
-              localMessageId,
-              mediaMapKey,
-              mediaKey
-            })
-            this.upsertArkmeMediaIndexEntry(arkmeMediaIndexMap, {
-              mediaKey,
-              kind: 'voice',
-              exported: false,
-              relativePath: null,
-              fileName: null,
-              sourceMd5: null,
-              fileMd5: null,
-              createTime,
-              sessionId,
-              ...(platformMessageId ? { platformMessageId } : {}),
-              ...(localMessageId ? { localMessageId } : {}),
-              source: { voiceCreateTime: createTime }
-            })
-          }
-        } catch { }
+          const platformMessageId = message.serverId ? String(message.serverId) : (message.localId ? String(message.localId) : undefined)
+          const localMessageId = message.localId ? String(message.localId) : undefined
+          const mediaMapKey = this.buildMediaPathMapKey({
+            platformMessageId,
+            localMessageId,
+            createTime,
+            localType: 34,
+            senderUsername: message.senderUsername || '',
+            isSend: message.isSend === 1
+          })
+          const mediaKey = this.buildArkmeMediaKey({
+            sessionId,
+            platformMessageId,
+            localMessageId,
+            createTime,
+            localType: 34,
+            isSend: message.isSend === 1,
+            contentHint: message.rawContent
+          })
+
+          voiceMessages.push({
+            createTime,
+            platformMessageId,
+            localMessageId,
+            resolverMessageId: localMessageId || platformMessageId,
+            mediaMapKey,
+            mediaKey
+          })
+          this.upsertArkmeMediaIndexEntry(arkmeMediaIndexMap, {
+            mediaKey,
+            kind: 'voice',
+            exported: false,
+            relativePath: null,
+            fileName: null,
+            sourceMd5: null,
+            fileMd5: null,
+            createTime,
+            sessionId,
+            ...(platformMessageId ? { platformMessageId } : {}),
+            ...(localMessageId ? { localMessageId } : {}),
+            source: { voiceCreateTime: createTime }
+          })
+        }
       }
 
       if (voiceMessages.length > 0) {
-        // 2. 查找 MediaDb
-        const mediaDbs = this.findMediaDbs()
+        const total = voiceMessages.length
+        const shouldReportVoiceStep = (processed: number) => (
+          processed % 5 === 0 || processed === total || processed <= 3
+        )
 
-        if (mediaDbs.length > 0) {
-          // 3. 只初始化一次 silk-wasm
-          let silkWasm: any = null
-          try {
-            silkWasm = require('silk-wasm')
-          } catch (e) {
-            console.error('[Export] silk-wasm 加载失败:', e)
+        for (let idx = 0; idx < total; idx++) {
+          const voiceMessage = voiceMessages[idx]
+          const createTime = voiceMessage.createTime
+          const messageDedupeKey = voiceMessage.localMessageId
+            ? `voice-local:${sessionId}:${voiceMessage.localMessageId}`
+            : (voiceMessage.platformMessageId
+              ? `voice-platform:${sessionId}:${voiceMessage.platformMessageId}`
+              : `voice-media:${voiceMessage.mediaKey}`)
+
+          const bindVoiceExported = async (bindAbsPath: string, sourceMd5?: string | null) => {
+            const bindPath = toSessionRelativePath(bindAbsPath)
+            const fileMd5 = await resolveExportedFileMd5(bindAbsPath, bindPath)
+            this.setMediaPathMapEntry(mediaPathMap, bindPath, voiceMessage.mediaMapKey, createTime)
+            this.upsertArkmeMediaIndexEntry(arkmeMediaIndexMap, {
+              mediaKey: voiceMessage.mediaKey,
+              kind: 'voice',
+              exported: true,
+              relativePath: bindPath,
+              fileName: path.basename(bindPath),
+              sourceMd5: sourceMd5 || null,
+              fileMd5,
+              createTime,
+              sessionId,
+              ...(voiceMessage.platformMessageId ? { platformMessageId: voiceMessage.platformMessageId } : {}),
+              ...(voiceMessage.localMessageId ? { localMessageId: voiceMessage.localMessageId } : {}),
+              source: {
+                voiceCreateTime: createTime,
+                ...(sourceMd5 ? { voiceMd5: sourceMd5 } : {})
+              }
+            })
           }
 
-          if (silkWasm) {
-            // 4. 打开所有 MediaDb，预先建立 VoiceInfo 查询
-            interface VoiceDbInfo {
-              db: InstanceType<typeof Database>
-              voiceTable: string
-              dataColumn: string
-              timeColumn: string
-              chatNameIdColumn: string | null
-              name2IdTable: string | null
+          const cachedVoiceAbsPath = findDedupAbsPath('voice', [messageDedupeKey])
+          if (cachedVoiceAbsPath) {
+            await bindVoiceExported(cachedVoiceAbsPath)
+            if (shouldReportVoiceStep(idx + 1)) {
+              emitMediaProgress(`语音处理: ${idx + 1}/${total}（已导出 ${voiceCount}）`, idx + 1, total, '条')
             }
-            const voiceDbs: VoiceDbInfo[] = []
+            continue
+          }
 
-            for (const dbPath of mediaDbs) {
-              try {
-                const mediaDb = new Database(dbPath, { readonly: true })
-                const tables = mediaDb.prepare(
-                  "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'VoiceInfo%'"
-                ).all() as any[]
-                if (tables.length === 0) { mediaDb.close(); continue }
-
-                const voiceTable = tables[0].name
-                const columns = mediaDb.prepare(`PRAGMA table_info('${voiceTable}')`).all() as any[]
-                const colNames = columns.map((c: any) => c.name.toLowerCase())
-
-                const dataColumn = colNames.find((c: string) => ['voice_data', 'buf', 'voicebuf', 'data'].includes(c))
-                const timeColumn = colNames.find((c: string) => ['create_time', 'createtime', 'time'].includes(c))
-                if (!dataColumn || !timeColumn) { mediaDb.close(); continue }
-
-                const chatNameIdColumn = colNames.find((c: string) => ['chat_name_id', 'chatnameid', 'chat_nameid'].includes(c)) || null
-                const n2iTables = mediaDb.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Name2Id%'").all() as any[]
-                const name2IdTable = n2iTables.length > 0 ? n2iTables[0].name : null
-
-                voiceDbs.push({ db: mediaDb, voiceTable, dataColumn, timeColumn, chatNameIdColumn, name2IdTable })
-              } catch { }
+          if (!voiceMessage.resolverMessageId) {
+            voiceFailCount++
+            bumpReason(voiceFailReasons, 'resolver_failed')
+            if (shouldReportVoiceStep(idx + 1)) {
+              emitMediaProgress(`语音处理: ${idx + 1}/${total}（已导出 ${voiceCount}，未成功 ${voiceFailCount}）`, idx + 1, total, '条')
             }
+            continue
+          }
 
-            // 5. 串行处理语音（避免内存溢出）
-            const myWxid = this.configService.get('myWxid')
-            const candidates = [sessionId]
-            if (myWxid && myWxid !== sessionId) candidates.push(myWxid)
-
-            const total = voiceMessages.length
-            const shouldReportVoiceStep = (processed: number) => (
-              processed % 5 === 0 || processed === total || processed <= 3
-            )
-            for (let idx = 0; idx < total; idx++) {
-              const voiceMessage = voiceMessages[idx]
-              const createTime = voiceMessage.createTime
-              const createTimeDedupeKey = `voice-time:${sessionId}:${createTime}`
-
-              const bindVoiceExported = async (bindAbsPath: string, sourceMd5?: string | null) => {
-                const bindPath = toSessionRelativePath(bindAbsPath)
-                const fileMd5 = await resolveExportedFileMd5(bindAbsPath, bindPath)
-                this.setMediaPathMapEntry(mediaPathMap, bindPath, voiceMessage.mediaMapKey, createTime)
-                this.upsertArkmeMediaIndexEntry(arkmeMediaIndexMap, {
-                  mediaKey: voiceMessage.mediaKey,
-                  kind: 'voice',
-                  exported: true,
-                  relativePath: bindPath,
-                  fileName: path.basename(bindPath),
-                  sourceMd5: sourceMd5 || null,
-                  fileMd5,
-                  createTime,
-                  sessionId,
-                  ...(voiceMessage.platformMessageId ? { platformMessageId: voiceMessage.platformMessageId } : {}),
-                  ...(voiceMessage.localMessageId ? { localMessageId: voiceMessage.localMessageId } : {}),
-                  source: {
-                    voiceCreateTime: createTime,
-                    ...(sourceMd5 ? { voiceMd5: sourceMd5 } : {})
-                  }
-                })
-              }
-
-              const cachedVoiceAbsPath = findDedupAbsPath('voice', [createTimeDedupeKey])
-              if (cachedVoiceAbsPath) {
-                await bindVoiceExported(cachedVoiceAbsPath)
-                if (shouldReportVoiceStep(idx + 1)) {
-                  emitMediaProgress(`语音处理: ${idx + 1}/${total}（已导出 ${voiceCount}）`, idx + 1, total, '条')
-                }
-                continue
-              }
-
-              // 在 MediaDb 中查找 SILK 数据
-              let silkData: Buffer | null = null
-              for (const vdb of voiceDbs) {
-                try {
-                  // 策略1: chatNameId + createTime
-                  if (vdb.chatNameIdColumn && vdb.name2IdTable) {
-                    for (const cand of candidates) {
-                      const n2i = vdb.db.prepare(`SELECT rowid FROM ${vdb.name2IdTable} WHERE user_name = ?`).get(cand) as any
-                      if (n2i?.rowid) {
-                        const row = vdb.db.prepare(`SELECT ${vdb.dataColumn} AS data FROM ${vdb.voiceTable} WHERE ${vdb.chatNameIdColumn} = ? AND ${vdb.timeColumn} = ? LIMIT 1`).get(n2i.rowid, createTime) as any
-                        if (row?.data) {
-                          silkData = this.decodeVoiceBlob(row.data)
-                          if (silkData) break
-                        }
-                      }
-                    }
-                  }
-                  // 策略2: 仅 createTime
-                  if (!silkData) {
-                    const row = vdb.db.prepare(`SELECT ${vdb.dataColumn} AS data FROM ${vdb.voiceTable} WHERE ${vdb.timeColumn} = ? LIMIT 1`).get(createTime) as any
-                    if (row?.data) {
-                      silkData = this.decodeVoiceBlob(row.data)
-                    }
-                  }
-                  if (silkData) break
-                } catch { }
-              }
-
-              if (!silkData) {
-                voiceFailCount++
+          try {
+            const voiceResult = await chatService.getVoiceData(sessionId, voiceMessage.resolverMessageId, createTime)
+            if (!voiceResult.success || !voiceResult.data) {
+              voiceFailCount++
+              const errorText = String(voiceResult.error || '')
+              if (errorText.includes('未找到语音数据')) {
                 bumpReason(voiceFailReasons, 'source_missing')
-                if (shouldReportVoiceStep(idx + 1)) {
-                  emitMediaProgress(`语音处理: ${idx + 1}/${total}（已导出 ${voiceCount}，未成功 ${voiceFailCount}）`, idx + 1, total, '条')
-                }
-                continue
+              } else if (errorText.includes('无效的消息ID') || errorText.includes('未找到消息时间戳')) {
+                bumpReason(voiceFailReasons, 'resolver_failed')
+              } else {
+                bumpReason(voiceFailReasons, 'decode_error')
               }
+              if (shouldReportVoiceStep(idx + 1)) {
+                emitMediaProgress(`语音处理: ${idx + 1}/${total}（已导出 ${voiceCount}，未成功 ${voiceFailCount}）`, idx + 1, total, '条')
+              }
+              continue
+            }
 
-              try {
-                // SILK → PCM → WAV（串行，立即释放）
-                const result = await this.withTimeout(
-                  Promise.resolve(silkWasm.decode(silkData, 24000)),
-                  10000,
-                  '语音解码'
-                )
-                silkData = null // 释放 SILK 数据
-                if (!result?.data) {
-                  voiceFailCount++
-                  bumpReason(voiceFailReasons, 'decode_error')
-                  if (shouldReportVoiceStep(idx + 1)) {
-                    emitMediaProgress(`语音处理: ${idx + 1}/${total}（已导出 ${voiceCount}，未成功 ${voiceFailCount}）`, idx + 1, total, '条')
-                  }
-                  continue
-                }
-                const pcmData = Buffer.from(result.data)
-                const wavData = this.createWavBuffer(pcmData, 24000)
+            const wavData = Buffer.from(voiceResult.data, 'base64')
+            if (wavData.length === 0) {
+              voiceFailCount++
+              bumpReason(voiceFailReasons, 'decode_error')
+              if (shouldReportVoiceStep(idx + 1)) {
+                emitMediaProgress(`语音处理: ${idx + 1}/${total}（已导出 ${voiceCount}，未成功 ${voiceFailCount}）`, idx + 1, total, '条')
+              }
+              continue
+            }
+
+            const wavMd5 = this.normalizeMd5(createHash('md5').update(wavData).digest('hex')) || null
+            const voiceDedupKeys = [messageDedupeKey]
+            if (wavMd5) {
+              voiceDedupKeys.unshift(`voice-md5:${wavMd5}`)
+            }
+
+            let exportedAbsPath = findDedupAbsPath('voice', voiceDedupKeys)
+            if (!exportedAbsPath) {
+              const fileName = `${wavMd5 || voiceMessage.mediaKey}.wav`
+              const destPath = path.join(voiceOutDir, fileName)
+              if (!fs.existsSync(destPath)) {
                 try {
-                  const wavMd5 = this.normalizeMd5(createHash('md5').update(wavData).digest('hex')) || null
-                  const voiceDedupKeys = [createTimeDedupeKey]
-                  if (wavMd5) {
-                    voiceDedupKeys.unshift(`voice-md5:${wavMd5}`)
-                  }
-
-                  let exportedAbsPath = findDedupAbsPath('voice', voiceDedupKeys)
-                  if (!exportedAbsPath) {
-                    const fileName = `${wavMd5 || voiceMessage.mediaKey}.wav`
-                    const destPath = path.join(voiceOutDir, fileName)
-                    if (!fs.existsSync(destPath)) {
-                      fs.writeFileSync(destPath, wavData)
-                      voiceCount++
-                    }
-                    exportedAbsPath = destPath
-                  }
-
-                  registerDedupAbsPath('voice', voiceDedupKeys, exportedAbsPath)
-                  await bindVoiceExported(exportedAbsPath, wavMd5)
+                  fs.writeFileSync(destPath, wavData)
+                  voiceCount++
                 } catch {
                   voiceFailCount++
                   bumpReason(voiceFailReasons, 'write_failed')
@@ -6585,37 +6511,25 @@ class ExportService {
                   }
                   continue
                 }
-              } catch (e) {
-                voiceFailCount++
-                const errMsg = e instanceof Error ? e.message : String(e)
-                if (errMsg.includes('语音解码 超时')) {
-                  bumpReason(voiceFailReasons, 'decode_timeout')
-                  console.warn(`[Export] 语音解码超时: session=${sessionId}, createTime=${createTime}`)
-                } else {
-                  bumpReason(voiceFailReasons, 'decode_error')
-                }
               }
-
-              // 进度日志
-              if (shouldReportVoiceStep(idx + 1)) {
-                const failSuffix = voiceFailCount > 0 ? `，未成功 ${voiceFailCount}` : ''
-                emitMediaProgress(`语音处理: ${idx + 1}/${total}（已导出 ${voiceCount}${failSuffix}）`, idx + 1, total, '条')
-              }
+              exportedAbsPath = destPath
             }
 
-            // 6. 关闭所有 MediaDb
-            for (const vdb of voiceDbs) {
-              try { vdb.db.close() } catch { }
+            registerDedupAbsPath('voice', voiceDedupKeys, exportedAbsPath)
+            await bindVoiceExported(exportedAbsPath, wavMd5)
+          } catch {
+            voiceFailCount++
+            bumpReason(voiceFailReasons, 'unknown')
+            if (shouldReportVoiceStep(idx + 1)) {
+              emitMediaProgress(`语音处理: ${idx + 1}/${total}（已导出 ${voiceCount}，未成功 ${voiceFailCount}）`, idx + 1, total, '条')
             }
-          } else {
-            voiceFailCount += voiceMessages.length
-            voiceFailReasons.decoder_missing += voiceMessages.length
-            emitMediaProgress(`语音处理失败：无法加载语音解码器（待处理 ${voiceMessages.length} 条）`, 0, voiceMessages.length, '条')
+            continue
           }
-        } else {
-          voiceFailCount += voiceMessages.length
-          voiceFailReasons.media_db_missing += voiceMessages.length
-          emitMediaProgress(`语音处理失败：未找到 MediaDb（待处理 ${voiceMessages.length} 条）`, 0, voiceMessages.length, '条')
+
+          if (shouldReportVoiceStep(idx + 1)) {
+            const failSuffix = voiceFailCount > 0 ? `，未成功 ${voiceFailCount}` : ''
+            emitMediaProgress(`语音处理: ${idx + 1}/${total}（已导出 ${voiceCount}${failSuffix}）`, idx + 1, total, '条')
+          }
         }
       }
     }
@@ -6641,7 +6555,7 @@ class ExportService {
     })
     if (imageReasonText) reasonBreakdowns.push(`图片(${imageReasonText})`)
     const videoReasonText = summarizeReasons(videoFailReasons, {
-      no_md5: '无视频MD5',
+      no_identifier: '无视频标识',
       source_missing: '视频源文件缺失',
       copy_failed: '视频复制失败',
       unknown: '视频未知错误'
@@ -6658,10 +6572,8 @@ class ExportService {
     })
     if (emojiReasonText) reasonBreakdowns.push(`表情(${emojiReasonText})`)
     const voiceReasonText = summarizeReasons(voiceFailReasons, {
-      media_db_missing: '未找到MediaDb',
-      decoder_missing: '缺少语音解码器',
+      resolver_failed: '缺少语音消息标识',
       source_missing: '语音源数据缺失',
-      decode_timeout: '语音解码超时',
       decode_error: '语音解码失败',
       write_failed: '语音写文件失败',
       unknown: '语音未知错误'
@@ -6892,67 +6804,6 @@ class ExportService {
     if (buf[0] === 0xFF && buf[1] === 0xD8) return '.jpg'
     if (buf[0] === 0x52 && buf[1] === 0x49) return '.webp'
     return '.gif'
-  }
-
-  /**
-   * 查找 media 数据库文件
-   */
-  private findMediaDbs(): string[] {
-    if (!this.dbDir) return []
-    const result: string[] = []
-    try {
-      const files = fs.readdirSync(this.dbDir)
-      for (const file of files) {
-        const lower = file.toLowerCase()
-        if (lower.startsWith('media') && lower.endsWith('.db')) {
-          result.push(path.join(this.dbDir, file))
-        }
-      }
-    } catch { }
-    return result
-  }
-
-  /**
-   * 解码语音 Blob 数据为 Buffer
-   */
-  private decodeVoiceBlob(raw: any): Buffer | null {
-    if (!raw) return null
-    if (Buffer.isBuffer(raw)) return raw
-    if (raw instanceof Uint8Array) return Buffer.from(raw)
-    if (Array.isArray(raw)) return Buffer.from(raw)
-    if (typeof raw === 'string') {
-      const trimmed = raw.trim()
-      if (/^[a-fA-F0-9]+$/.test(trimmed) && trimmed.length % 2 === 0) {
-        try { return Buffer.from(trimmed, 'hex') } catch { }
-      }
-      try { return Buffer.from(trimmed, 'base64') } catch { }
-    }
-    if (typeof raw === 'object' && Array.isArray(raw.data)) {
-      return Buffer.from(raw.data)
-    }
-    return null
-  }
-
-  /**
-   * PCM 数据生成 WAV 文件 Buffer
-   */
-  private createWavBuffer(pcmData: Buffer, sampleRate: number = 24000, channels: number = 1): Buffer {
-    const pcmLength = pcmData.length
-    const header = Buffer.alloc(44)
-    header.write('RIFF', 0)
-    header.writeUInt32LE(36 + pcmLength, 4)
-    header.write('WAVE', 8)
-    header.write('fmt ', 12)
-    header.writeUInt32LE(16, 16)
-    header.writeUInt16LE(1, 20)
-    header.writeUInt16LE(channels, 22)
-    header.writeUInt32LE(sampleRate, 24)
-    header.writeUInt32LE(sampleRate * channels * 2, 28)
-    header.writeUInt16LE(channels * 2, 32)
-    header.writeUInt16LE(16, 34)
-    header.write('data', 36)
-    header.writeUInt32LE(pcmLength, 40)
-    return Buffer.concat([header, pcmData])
   }
 
   /**

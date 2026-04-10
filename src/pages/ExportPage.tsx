@@ -166,6 +166,18 @@ interface SessionEmojiAssetItem {
   status: 'pending' | 'ready' | 'missing'
 }
 
+type MediaBrowserStatus = 'idle' | 'loading' | 'ready' | 'error'
+
+interface SessionVoiceAssetItem {
+  localId: number
+  createTime: number
+  voiceDuration?: number
+  key: string
+  status: MediaBrowserStatus
+  dataUrl?: string
+  error?: string
+}
+
 interface SessionEmojiAssetSummary {
   total: number
   readyCount: number
@@ -246,6 +258,8 @@ interface ExportSessionRowData {
   onOpenCommonGroups: (session: ChatSession) => void
   onOpenExportSettings: (session: ChatSession) => void | Promise<void>
   onOpenImageAssets: (session: ChatSession) => void | Promise<void>
+  onOpenVideoAssets: (session: ChatSession) => void | Promise<void>
+  onOpenVoiceAssets: (session: ChatSession) => void | Promise<void>
   onOpenEmojiAssets: (session: ChatSession) => void | Promise<void>
 }
 
@@ -462,7 +476,7 @@ type SessionMediaCardItem = {
   icon: ReactElement
   label: string
   count: number
-  action: 'decrypt' | 'check-video' | null
+  action: 'decrypt' | 'check-video' | 'browse-voice' | null
 }
 
 const SESSION_TABLE_HEADER_MEDIA_ICONS: Record<string, ReactElement> = {
@@ -589,6 +603,8 @@ const ExportSessionRow = (props: RowComponentProps<ExportSessionRowData>) => {
     onOpenCommonGroups,
     onOpenExportSettings,
     onOpenImageAssets,
+    onOpenVideoAssets,
+    onOpenVoiceAssets,
     onOpenEmojiAssets
   } = props
   const session = sessions[index]
@@ -688,7 +704,7 @@ const ExportSessionRow = (props: RowComponentProps<ExportSessionRowData>) => {
 
             return (
               <div key={item.label} className="session-table-cell session-cell-metric session-cell-media" title={item.label}>
-                {item.label === '图片' || item.label === '表情包' ? (
+                {item.label === '图片' || item.label === '表情包' || item.label === '视频' || item.label === '语音' ? (
                   <button
                     type="button"
                     className={`session-media-count-link ${hasMediaCount ? '' : 'is-disabled'}`}
@@ -698,6 +714,14 @@ const ExportSessionRow = (props: RowComponentProps<ExportSessionRowData>) => {
                       if (!hasMediaCount) return
                       if (item.label === '图片') {
                         await onOpenImageAssets(session)
+                        return
+                      }
+                      if (item.label === '视频') {
+                        await onOpenVideoAssets(session)
+                        return
+                      }
+                      if (item.label === '语音') {
+                        await onOpenVoiceAssets(session)
                         return
                       }
                       await onOpenEmojiAssets(session)
@@ -865,6 +889,15 @@ function ExportPage() {
   const [sessionVideoAssetsSessionId, setSessionVideoAssetsSessionId] = useState<string | null>(null)
   const [sessionVideoAssetsSessionName, setSessionVideoAssetsSessionName] = useState('')
   const [sessionVideoAssets, setSessionVideoAssets] = useState<SessionVideoAssetItem[]>([])
+  const [showSessionVoiceAssetsModal, setShowSessionVoiceAssetsModal] = useState(false)
+  const [sessionVoiceAssetsLoading, setSessionVoiceAssetsLoading] = useState(false)
+  const [sessionVoiceAssetsError, setSessionVoiceAssetsError] = useState<string | null>(null)
+  const [sessionVoiceAssetsSessionId, setSessionVoiceAssetsSessionId] = useState<string | null>(null)
+  const [sessionVoiceAssetsSessionName, setSessionVoiceAssetsSessionName] = useState('')
+  const [sessionVoiceAssets, setSessionVoiceAssets] = useState<SessionVoiceAssetItem[]>([])
+  const [sessionVoiceAssetsCurrentKey, setSessionVoiceAssetsCurrentKey] = useState<string | null>(null)
+  const [sessionVoiceAssetsPlayingKey, setSessionVoiceAssetsPlayingKey] = useState<string | null>(null)
+  const [sessionVoiceAssetsPendingPlayKey, setSessionVoiceAssetsPendingPlayKey] = useState<string | null>(null)
   const [showSessionEmojiAssetsModal, setShowSessionEmojiAssetsModal] = useState(false)
   const [sessionEmojiAssetsLoading, setSessionEmojiAssetsLoading] = useState(false)
   const [sessionEmojiAssetsResolving, setSessionEmojiAssetsResolving] = useState(false)
@@ -1043,6 +1076,8 @@ function ExportPage() {
   const sessionImageAssetsRequestIdRef = useRef(0)
   const sessionVideoOverviewRequestIdRef = useRef<Record<string, number>>({})
   const sessionVideoAssetsRequestIdRef = useRef(0)
+  const sessionVoiceAssetsRequestIdRef = useRef(0)
+  const sessionVoiceAudioRef = useRef<HTMLAudioElement>(null)
   const sessionEmojiAssetsRequestIdRef = useRef(0)
   const sessionTypeFilterRef = useRef<SessionTypeFilter>('private')
   const sessionSortStatsWarmupRunIdRef = useRef(0)
@@ -2789,6 +2824,10 @@ function ExportPage() {
     }
   }, [])
 
+  const buildSessionVoiceAssetKey = useCallback((message: Pick<SessionVoiceAssetItem, 'localId' | 'createTime'>) => {
+    return `${message.localId}:${message.createTime}`
+  }, [])
+
   const formatVideoDurationLabel = useCallback((seconds?: number) => {
     if (!seconds || Number.isNaN(seconds)) return ''
     const totalSeconds = Math.max(0, Math.floor(seconds))
@@ -2796,6 +2835,51 @@ function ExportPage() {
     const ss = totalSeconds % 60
     return `${mm}:${String(ss).padStart(2, '0')}`
   }, [])
+
+  const formatVoiceDurationLabel = useCallback((seconds?: number) => {
+    if (!seconds || seconds <= 0 || Number.isNaN(seconds)) return ''
+    const rounded = Math.max(1, Math.round(seconds))
+    const minutes = Math.floor(rounded / 60)
+    const remainSeconds = rounded % 60
+    if (minutes <= 0) return `${remainSeconds} 秒`
+    return `${minutes}:${String(remainSeconds).padStart(2, '0')}`
+  }, [])
+
+  const stopSessionVoicePlayback = useCallback(() => {
+    const audio = sessionVoiceAudioRef.current
+    if (!audio) return
+    audio.pause()
+    audio.currentTime = 0
+    setSessionVoiceAssetsPlayingKey(null)
+    setSessionVoiceAssetsPendingPlayKey(null)
+  }, [])
+
+  const inspectSessionVoiceAssets = useCallback(async (sessionId: string) => {
+    const listResult = await window.electronAPI.chat.getAllVoiceMessages(sessionId)
+    if (!listResult.success || !listResult.messages) {
+      throw new Error(listResult.error || '读取会话语音失败')
+    }
+
+    const assets = listResult.messages
+      .slice()
+      .sort((a, b) => (b.createTime || 0) - (a.createTime || 0))
+      .map((message) => ({
+        localId: Number(message.localId),
+        createTime: Number(message.createTime),
+        voiceDuration: message.voiceDuration,
+        key: buildSessionVoiceAssetKey({
+          localId: Number(message.localId),
+          createTime: Number(message.createTime)
+        }),
+        status: 'idle' as MediaBrowserStatus
+      }))
+      .filter(item => Number.isFinite(item.localId) && Number.isFinite(item.createTime))
+
+    return {
+      total: assets.length,
+      assets
+    }
+  }, [buildSessionVoiceAssetKey])
 
   const refreshSessionImageOverview = useCallback(async (sessionId: string) => {
     if (sessionImageOverviewPendingRef.current[sessionId]) return
@@ -2949,10 +3033,10 @@ function ExportPage() {
     }
   }, [getSessionDisplayName, inspectSessionImageAssets, selectedSession])
 
-  const openSessionVideoAssetsModal = useCallback(async () => {
-    if (!selectedSession) return
+  const openSessionVideoAssetsModal = useCallback(async (targetSessionId?: string) => {
+    const sessionId = targetSessionId || selectedSession
+    if (!sessionId) return
 
-    const sessionId = selectedSession
     const requestId = ++sessionVideoAssetsRequestIdRef.current
     setShowSessionVideoAssetsModal(true)
     setSessionVideoAssetsLoading(true)
@@ -2991,6 +3075,80 @@ function ExportPage() {
       }
     }
   }, [getSessionDisplayName, inspectSessionVideoAssets, selectedSession])
+
+  const loadSessionVoiceAssetItem = useCallback(async (sessionId: string, itemKey: string) => {
+    const targetItem = sessionVoiceAssets.find(item => item.key === itemKey)
+    if (!targetItem) return false
+    if (targetItem.status === 'ready' && targetItem.dataUrl) return true
+    if (targetItem.status === 'loading') return false
+
+    setSessionVoiceAssets(prev => prev.map(item => (
+      item.key === itemKey
+        ? { ...item, status: 'loading', error: undefined }
+        : item
+    )))
+
+    try {
+      const result = await window.electronAPI.chat.getVoiceData(
+        sessionId,
+        String(targetItem.localId),
+        targetItem.createTime
+      )
+
+      if (!result.success || !result.data) {
+        setSessionVoiceAssets(prev => prev.map(item => (
+          item.key === itemKey
+            ? { ...item, status: 'error', error: result.error || '语音加载失败' }
+            : item
+        )))
+        return false
+      }
+
+      setSessionVoiceAssets(prev => prev.map(item => (
+        item.key === itemKey
+          ? { ...item, status: 'ready', dataUrl: `data:audio/wav;base64,${result.data}`, error: undefined }
+          : item
+      )))
+      return true
+    } catch (error) {
+      setSessionVoiceAssets(prev => prev.map(item => (
+        item.key === itemKey
+          ? { ...item, status: 'error', error: error instanceof Error ? error.message : String(error) }
+          : item
+      )))
+      return false
+    }
+  }, [sessionVoiceAssets])
+
+  const openSessionVoiceAssetsModal = useCallback(async (targetSessionId?: string) => {
+    const sessionId = targetSessionId || selectedSession
+    if (!sessionId) return
+
+    stopSessionVoicePlayback()
+    const requestId = ++sessionVoiceAssetsRequestIdRef.current
+    setShowSessionVoiceAssetsModal(true)
+    setSessionVoiceAssetsLoading(true)
+    setSessionVoiceAssetsError(null)
+    setSessionVoiceAssetsSessionId(sessionId)
+    setSessionVoiceAssetsSessionName(getSessionDisplayName(sessionId))
+
+    try {
+      const result = await inspectSessionVoiceAssets(sessionId)
+      if (requestId !== sessionVoiceAssetsRequestIdRef.current) return
+
+      setSessionVoiceAssets(result.assets)
+      setSessionVoiceAssetsCurrentKey(result.assets[0]?.key || null)
+    } catch (error) {
+      if (requestId !== sessionVoiceAssetsRequestIdRef.current) return
+      setSessionVoiceAssets([])
+      setSessionVoiceAssetsCurrentKey(null)
+      setSessionVoiceAssetsError(error instanceof Error ? error.message : String(error))
+    } finally {
+      if (requestId === sessionVoiceAssetsRequestIdRef.current) {
+        setSessionVoiceAssetsLoading(false)
+      }
+    }
+  }, [getSessionDisplayName, inspectSessionVoiceAssets, selectedSession, stopSessionVoicePlayback])
 
   const openSessionEmojiAssetsModal = useCallback(async (targetSessionId?: string) => {
     const sessionId = targetSessionId || selectedSession
@@ -3090,6 +3248,54 @@ function ExportPage() {
       }
     }
   }, [getSessionDisplayName, inspectSessionEmojiAssets, selectedSession])
+
+  const handleSessionVoiceAssetSelect = useCallback((itemKey: string) => {
+    stopSessionVoicePlayback()
+    setSessionVoiceAssetsCurrentKey(itemKey)
+  }, [stopSessionVoicePlayback])
+
+  const handleSessionVoiceAssetPlay = useCallback(async (itemKey?: string) => {
+    const sessionId = sessionVoiceAssetsSessionId || selectedSession
+    const targetKey = itemKey || sessionVoiceAssetsCurrentKey
+    if (!sessionId || !targetKey) return
+
+    const targetItem = sessionVoiceAssets.find(item => item.key === targetKey)
+    if (!targetItem) return
+
+    if (sessionVoiceAssetsPlayingKey === targetKey) {
+      stopSessionVoicePlayback()
+      return
+    }
+
+    if (sessionVoiceAssetsCurrentKey !== targetKey) {
+      setSessionVoiceAssetsCurrentKey(targetKey)
+    }
+
+    if (targetItem.status !== 'ready' || !targetItem.dataUrl) {
+      setSessionVoiceAssetsPendingPlayKey(targetKey)
+      const loaded = await loadSessionVoiceAssetItem(sessionId, targetKey)
+      if (!loaded) {
+        setSessionVoiceAssetsPendingPlayKey(null)
+      }
+      return
+    }
+
+    setSessionVoiceAssetsPendingPlayKey(targetKey)
+  }, [
+    loadSessionVoiceAssetItem,
+    selectedSession,
+    sessionVoiceAssets,
+    sessionVoiceAssetsCurrentKey,
+    sessionVoiceAssetsPendingPlayKey,
+    sessionVoiceAssetsPlayingKey,
+    sessionVoiceAssetsSessionId,
+    stopSessionVoicePlayback
+  ])
+
+  const closeSessionVoiceAssetsModal = useCallback(() => {
+    stopSessionVoicePlayback()
+    setShowSessionVoiceAssetsModal(false)
+  }, [stopSessionVoicePlayback])
 
   const handleImageStatCardClick = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     const target = event.target
@@ -3235,6 +3441,22 @@ function ExportPage() {
   const sessionVideoAssetsReadyCount = sessionVideoAssetsOverview?.readyCount ?? readySessionVideoAssets.length
   const sessionVideoAssetsThumbOnlyCount = sessionVideoAssetsOverview?.thumbOnlyCount ?? thumbOnlySessionVideoAssets.length
   const sessionVideoAssetsMissingCount = sessionVideoAssetsOverview?.missingCount ?? Math.max(0, sessionVideoAssetsTotalCount - sessionVideoAssetsReadyCount - sessionVideoAssetsThumbOnlyCount)
+  const selectedSessionVoiceAsset = useMemo(
+    () => sessionVoiceAssets.find(item => item.key === sessionVoiceAssetsCurrentKey) || null,
+    [sessionVoiceAssets, sessionVoiceAssetsCurrentKey]
+  )
+  const sessionVoiceAssetsReadyCount = useMemo(
+    () => sessionVoiceAssets.filter(item => item.status === 'ready').length,
+    [sessionVoiceAssets]
+  )
+  const sessionVoiceAssetsErrorCount = useMemo(
+    () => sessionVoiceAssets.filter(item => item.status === 'error').length,
+    [sessionVoiceAssets]
+  )
+  const sessionVoiceAssetsPendingCount = Math.max(
+    0,
+    sessionVoiceAssets.length - sessionVoiceAssetsReadyCount - sessionVoiceAssetsErrorCount
+  )
   const sessionEmojiAssetsTotalCount = sessionEmojiAssetsSummary?.total ?? sessionEmojiAssets.length
   const sessionEmojiAssetsRawMessageCount = sessionEmojiAssetsSummary?.rawMessageCount ?? sessionEmojiAssetsTotalCount
   const sessionEmojiAssetsParsedMessageCount = sessionEmojiAssetsSummary?.parsedMessageCount ?? sessionEmojiAssetsTotalCount
@@ -4157,6 +4379,16 @@ function ExportPage() {
     await openSessionImageAssetsModal(session.username)
   }, [openSessionImageAssetsModal, selectSession])
 
+  const handleOpenVideoAssetsFromList = useCallback(async (session: ChatSession) => {
+    await selectSession(session.username)
+    await openSessionVideoAssetsModal(session.username)
+  }, [openSessionVideoAssetsModal, selectSession])
+
+  const handleOpenVoiceAssetsFromList = useCallback(async (session: ChatSession) => {
+    await selectSession(session.username)
+    await openSessionVoiceAssetsModal(session.username)
+  }, [openSessionVoiceAssetsModal, selectSession])
+
   const handleOpenEmojiAssetsFromList = useCallback(async (session: ChatSession) => {
     await selectSession(session.username)
     await openSessionEmojiAssetsModal(session.username)
@@ -4197,6 +4429,43 @@ function ExportPage() {
     sessionDetail,
     sessionVideoOverviews
   ])
+
+  useEffect(() => {
+    if (!showSessionVoiceAssetsModal || !sessionVoiceAssetsSessionId || !sessionVoiceAssetsCurrentKey) return
+    const currentItem = sessionVoiceAssets.find(item => item.key === sessionVoiceAssetsCurrentKey)
+    if (currentItem && currentItem.status === 'idle') {
+      void loadSessionVoiceAssetItem(sessionVoiceAssetsSessionId, currentItem.key)
+    }
+  }, [
+    loadSessionVoiceAssetItem,
+    sessionVoiceAssets,
+    sessionVoiceAssetsCurrentKey,
+    sessionVoiceAssetsSessionId,
+    showSessionVoiceAssetsModal
+  ])
+
+  useEffect(() => {
+    if (!sessionVoiceAssetsPendingPlayKey) return
+    if (sessionVoiceAssetsPendingPlayKey !== sessionVoiceAssetsCurrentKey) return
+
+    const currentItem = sessionVoiceAssets.find(item => item.key === sessionVoiceAssetsPendingPlayKey)
+    const audio = sessionVoiceAudioRef.current
+    if (!audio || !currentItem?.dataUrl || currentItem.status !== 'ready') return
+
+    const startPlayback = async () => {
+      audio.currentTime = 0
+      try {
+        await audio.play()
+        setSessionVoiceAssetsPlayingKey(currentItem.key)
+      } catch {
+        setSessionVoiceAssetsPlayingKey(null)
+      } finally {
+        setSessionVoiceAssetsPendingPlayKey(null)
+      }
+    }
+
+    void startPlayback()
+  }, [sessionVoiceAssets, sessionVoiceAssetsCurrentKey, sessionVoiceAssetsPendingPlayKey])
 
   const toggleContact = (username: string) => {
     const newSet = new Set(selectedContacts)
@@ -7475,6 +7744,8 @@ function ExportPage() {
                       onOpenCommonGroups: handleOpenCommonGroupsFromList,
                       onOpenExportSettings: handleOpenExportSettingsFromList,
                       onOpenImageAssets: handleOpenImageAssetsFromList,
+                      onOpenVideoAssets: handleOpenVideoAssetsFromList,
+                      onOpenVoiceAssets: handleOpenVoiceAssetsFromList,
                       onOpenEmojiAssets: handleOpenEmojiAssetsFromList
                     }}
                     rowComponent={ExportSessionRow}
@@ -8117,7 +8388,7 @@ function ExportPage() {
                                   { icon: <Image size={13} />, label: '图片', count: sessionDetail.imageCount, action: 'decrypt' },
                                   { icon: <Smile size={13} />, label: '表情', count: sessionDetail.emojiCount, action: null },
                                   { icon: <Video size={13} />, label: '视频', count: sessionDetail.videoCount, action: 'check-video' },
-                                  { icon: <Mic size={13} />, label: '语音', count: sessionDetail.voiceCount, action: null },
+                                  { icon: <Mic size={13} />, label: '语音', count: sessionDetail.voiceCount, action: 'browse-voice' },
                                 ] as SessionMediaCardItem[]).filter(item => item.count > 0).map(item => {
                                   const isVideoStatCard = item.action === 'check-video'
                                   const showCheckedVideoCount = isVideoStatCard && currentSessionVideoHasCheckedOverview
@@ -8149,7 +8420,7 @@ function ExportPage() {
                                         {item.icon}
                                         <span>{item.label}</span>
                                       </div>
-                                      {(item.action === 'decrypt' || item.action === 'check-video') && (
+                                      {(item.action === 'decrypt' || item.action === 'check-video' || item.action === 'browse-voice') && (
                                         <div className="session-media-image-actions">
                                           {item.action === 'decrypt' ? (
                                             isCurrentSessionImageTaskRunning ? (
@@ -8207,7 +8478,7 @@ function ExportPage() {
                                                 <span>解密</span>
                                               </button>
                                             )
-                                          ) : (
+                                          ) : item.action === 'check-video' ? (
                                             currentSessionVideoOverview?.status === 'checking' || sessionVideoAssetsLoading ? (
                                               <span className="session-media-status-pill checking">
                                                 <Loader2 size={11} className="spin" />
@@ -8228,7 +8499,9 @@ function ExportPage() {
                                                 <button
                                                   type="button"
                                                   className="session-media-action-btn"
-                                                  onClick={openSessionVideoAssetsModal}
+                                                  onClick={() => {
+                                                    void openSessionVideoAssetsModal()
+                                                  }}
                                                   disabled={!selectedSession}
                                                   title="查看可用视频"
                                                 >
@@ -8285,6 +8558,28 @@ function ExportPage() {
                                                 <span>检查</span>
                                               </button>
                                             )
+                                          ) : (
+                                            <>
+                                              <button
+                                                type="button"
+                                                className="session-media-action-btn"
+                                                onClick={() => { void openSessionVoiceAssetsModal(selectedSession || undefined) }}
+                                                disabled={!selectedSession}
+                                                title="查看并试听当前会话语音"
+                                              >
+                                                <span>查看语音</span>
+                                              </button>
+                                              {sessionVoiceAssetsLoading && sessionVoiceAssetsSessionId === selectedSession ? (
+                                                <span className="session-media-status-pill checking">
+                                                  <Loader2 size={11} className="spin" />
+                                                  <span>读取中</span>
+                                                </span>
+                                              ) : (
+                                                <span className="session-media-status-pill info">
+                                                  <span>{sessionDetail.voiceCount.toLocaleString()} 条</span>
+                                                </span>
+                                              )}
+                                            </>
                                           )}
                                         </div>
                                       )}
@@ -8981,6 +9276,260 @@ function ExportPage() {
                     </div>
                   </div>
                 ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 会话语音查看弹窗（懒加载 + 试听） */}
+      {showSessionVoiceAssetsModal && (
+        <div
+          className="export-overlay"
+          onClick={closeSessionVoiceAssetsModal}
+        >
+          <div className="session-image-assets-modal session-voice-assets-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="session-image-assets-header">
+              <div>
+                <h3>会话语音</h3>
+                <p>查看会话语音，并按需加载试听</p>
+              </div>
+              <button
+                type="button"
+                className="group-friends-close-btn"
+                onClick={closeSessionVoiceAssetsModal}
+                aria-label="关闭会话语音弹窗"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="session-image-assets-subtitle">
+              {sessionVoiceAssetsSessionName || sessionVoiceAssetsSessionId || selectedSession}
+            </div>
+
+            <div style={{
+              marginBottom: 12,
+              padding: '10px 12px',
+              borderRadius: 10,
+              background: 'var(--bg-secondary)',
+              border: '1px solid var(--border-color, #e0e0e0)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 4
+            }}>
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                会话语音 <strong style={{ color: 'var(--text-primary)' }}>{sessionVoiceAssets.length.toLocaleString()}</strong> 条
+                {' '}→ 可试听 <strong style={{ color: 'var(--text-primary)' }}>{sessionVoiceAssetsReadyCount.toLocaleString()}</strong> 条
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text-tertiary)', lineHeight: 1.5 }}>
+                当前策略：优先读取会话语音列表，首次只加载当前选中项，其余语音按点击时再解析。
+              </div>
+            </div>
+
+            <div className="session-image-assets-toolbar">
+              <div className="session-image-assets-stats">
+                <div className="session-image-assets-stat">
+                  <span className="label">原始语音</span>
+                  <strong>{sessionVoiceAssets.length.toLocaleString()}</strong>
+                </div>
+                <div className="session-image-assets-stat success">
+                  <span className="label">可试听</span>
+                  <strong>{sessionVoiceAssetsReadyCount.toLocaleString()}</strong>
+                </div>
+                <div className="session-image-assets-stat info">
+                  <span className="label">待加载</span>
+                  <strong>{sessionVoiceAssetsPendingCount.toLocaleString()}</strong>
+                </div>
+                <div className="session-image-assets-stat warning">
+                  <span className="label">失败</span>
+                  <strong>{sessionVoiceAssetsErrorCount.toLocaleString()}</strong>
+                </div>
+              </div>
+              <div className="session-image-assets-actions">
+                {sessionVoiceAssetsLoading ? (
+                  <span className="session-media-status-pill checking">
+                    <Loader2 size={11} className="spin" />
+                    <span>读取中</span>
+                  </span>
+                ) : sessionVoiceAssetsError ? (
+                  <button
+                    type="button"
+                    className="session-media-action-btn"
+                    onClick={() => { void openSessionVoiceAssetsModal(sessionVoiceAssetsSessionId || selectedSession || undefined) }}
+                    disabled={!sessionVoiceAssetsSessionId && !selectedSession}
+                  >
+                    <span>重试</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="session-media-action-btn"
+                    onClick={() => { void openSessionVoiceAssetsModal(sessionVoiceAssetsSessionId || selectedSession || undefined) }}
+                    disabled={!sessionVoiceAssetsSessionId && !selectedSession}
+                  >
+                    <span>刷新列表</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="session-image-assets-content">
+              {sessionVoiceAssetsLoading ? (
+                <div className="session-image-assets-loading">
+                  <Loader2 size={14} className="spin" />
+                  <span>正在读取会话语音...</span>
+                </div>
+              ) : sessionVoiceAssetsError ? (
+                <div className="session-image-assets-empty">
+                  <span>加载失败：{sessionVoiceAssetsError}</span>
+                </div>
+              ) : sessionVoiceAssets.length === 0 ? (
+                <div className="session-image-assets-empty">
+                  <span>当前会话没有语音消息</span>
+                </div>
+              ) : (
+                <div className="session-voice-assets-layout">
+                  <div className="session-voice-assets-preview">
+                    <div className={`session-voice-assets-hero ${selectedSessionVoiceAsset?.status || 'idle'}`}>
+                      <div className="session-voice-assets-hero-icon">
+                        <Mic size={24} />
+                      </div>
+                      <div className="session-voice-assets-hero-text">
+                        <strong>
+                          {selectedSessionVoiceAsset?.createTime
+                            ? new Date(selectedSessionVoiceAsset.createTime * 1000).toLocaleString('zh-CN')
+                            : '未选中语音'}
+                        </strong>
+                        <span>
+                          {selectedSessionVoiceAsset
+                            ? (formatVoiceDurationLabel(selectedSessionVoiceAsset.voiceDuration) || '未记录时长')
+                            : '点击右侧列表开始浏览'}
+                        </span>
+                      </div>
+                      {selectedSessionVoiceAsset && (
+                        <span className={`session-media-status-pill ${selectedSessionVoiceAsset.status === 'ready' ? 'success' : (selectedSessionVoiceAsset.status === 'error' ? 'warning' : 'checking')}`}>
+                          {selectedSessionVoiceAsset.status === 'ready'
+                            ? '可试听'
+                            : (selectedSessionVoiceAsset.status === 'error'
+                                ? '加载失败'
+                                : (selectedSessionVoiceAsset.status === 'loading' ? '加载中' : '待加载'))}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="session-voice-assets-action-row">
+                      <button
+                        type="button"
+                        className="session-media-action-btn"
+                        disabled={!selectedSessionVoiceAsset}
+                        onClick={() => { void handleSessionVoiceAssetPlay() }}
+                      >
+                        {sessionVoiceAssetsPlayingKey && selectedSessionVoiceAsset?.key === sessionVoiceAssetsPlayingKey
+                          ? '暂停'
+                          : (selectedSessionVoiceAsset?.status === 'ready' ? '播放' : '加载并播放')}
+                      </button>
+                      {selectedSessionVoiceAsset?.status === 'error' && (
+                        <button
+                          type="button"
+                          className="session-media-action-btn"
+                          onClick={() => {
+                            if (selectedSessionVoiceAsset && sessionVoiceAssetsSessionId) {
+                              void loadSessionVoiceAssetItem(sessionVoiceAssetsSessionId, selectedSessionVoiceAsset.key)
+                            }
+                          }}
+                        >
+                          重新加载
+                        </button>
+                      )}
+                    </div>
+
+                    {selectedSessionVoiceAsset?.dataUrl ? (
+                      <audio
+                        key={selectedSessionVoiceAsset.key}
+                        ref={sessionVoiceAudioRef}
+                        controls
+                        src={selectedSessionVoiceAsset.dataUrl}
+                        className="session-voice-assets-audio"
+                        onPlay={() => {
+                          if (!selectedSessionVoiceAsset) return
+                          setSessionVoiceAssetsPlayingKey(selectedSessionVoiceAsset.key)
+                        }}
+                        onPause={() => {
+                          setSessionVoiceAssetsPlayingKey(null)
+                        }}
+                        onEnded={() => {
+                          setSessionVoiceAssetsPlayingKey(null)
+                        }}
+                        onError={() => {
+                          if (!selectedSessionVoiceAsset) return
+                          setSessionVoiceAssets(prev => prev.map(item => (
+                            item.key === selectedSessionVoiceAsset.key
+                              ? { ...item, status: 'error', error: '音频播放失败' }
+                              : item
+                          )))
+                          setSessionVoiceAssetsPlayingKey(null)
+                        }}
+                      />
+                    ) : (
+                      <div className="session-image-assets-empty session-voice-assets-inline-empty">
+                        <span>{selectedSessionVoiceAsset?.error || '点击“加载并播放”后即可在这里试听语音。'}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="session-voice-assets-list">
+                    {sessionVoiceAssets.map((item) => (
+                      <div
+                        key={item.key}
+                        className={`session-voice-assets-item ${sessionVoiceAssetsCurrentKey === item.key ? 'is-active' : ''}`}
+                      >
+                        <button
+                          type="button"
+                          className="session-voice-assets-item-main"
+                          onClick={() => handleSessionVoiceAssetSelect(item.key)}
+                        >
+                          <div className="session-voice-assets-item-meta">
+                            <strong>
+                              {item.createTime
+                                ? new Date(item.createTime * 1000).toLocaleString('zh-CN')
+                                : `消息 ${item.localId}`}
+                            </strong>
+                            <span>{formatVoiceDurationLabel(item.voiceDuration) || '未记录时长'}</span>
+                          </div>
+                          <span className={`session-media-status-pill ${item.status === 'ready' ? 'success' : (item.status === 'error' ? 'warning' : 'checking')}`}>
+                            {item.status === 'ready'
+                              ? '可试听'
+                              : (item.status === 'error'
+                                  ? '失败'
+                                  : (item.status === 'loading' ? '加载中' : '待加载'))}
+                          </span>
+                        </button>
+                        <div className="session-voice-assets-item-actions">
+                          <button
+                            type="button"
+                            className="session-media-action-btn"
+                            onClick={() => { void handleSessionVoiceAssetPlay(item.key) }}
+                          >
+                            {sessionVoiceAssetsPlayingKey === item.key ? '暂停' : '播放'}
+                          </button>
+                          {item.status === 'error' && sessionVoiceAssetsSessionId && (
+                            <button
+                              type="button"
+                              className="session-media-action-btn"
+                              onClick={() => { void loadSessionVoiceAssetItem(sessionVoiceAssetsSessionId, item.key) }}
+                            >
+                              重试
+                            </button>
+                          )}
+                        </div>
+                        {item.status === 'error' && item.error && (
+                          <div className="session-voice-assets-item-error">{item.error}</div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
               )}
             </div>
           </div>

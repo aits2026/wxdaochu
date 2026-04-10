@@ -1,4 +1,4 @@
-import { dirname, join } from 'path'
+import { basename, dirname, join } from 'path'
 import { existsSync, readdirSync, statSync, readFileSync } from 'fs'
 import { ConfigService } from './config'
 import Database from 'better-sqlite3'
@@ -77,66 +77,169 @@ class VideoService {
     return trimmed
   }
 
-  /**
-   * �?video_hardlink_info_v4 表查询视频文件名
-   */
-  private queryVideoFileName(md5: string): string | undefined {
+  private isDirectory(dirPath: string): boolean {
+    try {
+      return statSync(dirPath).isDirectory()
+    } catch {
+      return false
+    }
+  }
+
+  private isAccountDir(dirPath: string): boolean {
+    return (
+      existsSync(join(dirPath, 'msg', 'video')) ||
+      existsSync(join(dirPath, 'hardlink.db')) ||
+      existsSync(join(dirPath, 'db_storage')) ||
+      existsSync(join(dirPath, 'msg'))
+    )
+  }
+
+  private resolveAccountDir(basePath: string, wxid: string): string | undefined {
+    const normalized = basePath.replace(/[\\/]+$/, '')
+    const cleanedWxid = this.cleanWxid(wxid)
+
+    if (this.isAccountDir(normalized)) {
+      return normalized
+    }
+
+    const searchBases = new Set<string>([normalized])
+    const weChatFilesDir = join(normalized, 'WeChat Files')
+    if (this.isDirectory(weChatFilesDir)) {
+      searchBases.add(weChatFilesDir)
+    }
+
+    for (const baseDir of searchBases) {
+      for (const candidate of [wxid, cleanedWxid]) {
+        if (!candidate) continue
+        const direct = join(baseDir, candidate)
+        if (this.isAccountDir(direct)) {
+          return direct
+        }
+      }
+
+      try {
+        const entries = readdirSync(baseDir)
+        const lowerWxid = wxid.toLowerCase()
+        const lowerCleanedWxid = cleanedWxid.toLowerCase()
+
+        for (const entry of entries) {
+          const entryPath = join(baseDir, entry)
+          if (!this.isDirectory(entryPath)) continue
+
+          const lowerEntry = entry.toLowerCase()
+          const cleanedEntry = this.cleanWxid(entry).toLowerCase()
+          const matched =
+            lowerEntry === lowerWxid ||
+            lowerEntry === lowerCleanedWxid ||
+            lowerEntry.startsWith(`${lowerWxid}_`) ||
+            lowerEntry.startsWith(`${lowerCleanedWxid}_`) ||
+            cleanedEntry === lowerWxid ||
+            cleanedEntry === lowerCleanedWxid
+
+          if (matched && this.isAccountDir(entryPath)) {
+            return entryPath
+          }
+        }
+      } catch {
+        // 忽略目录扫描失败
+      }
+    }
+
+    return undefined
+  }
+
+  private collectHardlinkDbCandidates(): string[] {
     const cachePath = this.getCachePath()
     const wxid = this.getMyWxid()
     const cleanedWxid = this.cleanWxid(wxid)
     const dbPath = this.getDbPath()
-    
-    if (!cachePath || !wxid) return undefined
+    const candidates = new Set<string>()
 
-    // hardlink.db 可能在多个位�?
-    const possiblePaths = new Set<string>([
-      join(cachePath, cleanedWxid, 'hardlink.db'),
-      join(cachePath, wxid, 'hardlink.db'),
-      join(cachePath, 'hardlink.db'),
-      join(cachePath, 'databases', cleanedWxid, 'hardlink.db'),
-      join(cachePath, 'databases', wxid, 'hardlink.db')
-    ])
+    const addCandidate = (candidatePath?: string) => {
+      if (candidatePath) {
+        candidates.add(candidatePath)
+      }
+    }
+
+    const addAccountDirCandidates = (accountDir?: string) => {
+      if (!accountDir) return
+      addCandidate(join(accountDir, 'hardlink.db'))
+      addCandidate(join(accountDir, 'msg', 'hardlink.db'))
+      addCandidate(join(accountDir, 'db_storage', 'hardlink', 'hardlink.db'))
+    }
+
+    addCandidate(join(cachePath, cleanedWxid, 'hardlink.db'))
+    addCandidate(join(cachePath, wxid, 'hardlink.db'))
+    addCandidate(join(cachePath, 'hardlink.db'))
+    addCandidate(join(cachePath, cleanedWxid, 'db_storage', 'hardlink', 'hardlink.db'))
+    addCandidate(join(cachePath, wxid, 'db_storage', 'hardlink', 'hardlink.db'))
+    addCandidate(join(cachePath, 'databases', cleanedWxid, 'hardlink.db'))
+    addCandidate(join(cachePath, 'databases', wxid, 'hardlink.db'))
 
     if (dbPath) {
-      const baseCandidates = new Set<string>([
-        dbPath,
-        join(dbPath, wxid),
-        join(dbPath, cleanedWxid)
-      ])
-      for (const base of baseCandidates) {
-        possiblePaths.add(join(base, 'hardlink.db'))
-        possiblePaths.add(join(base, 'msg', 'hardlink.db'))
-      }
+      addAccountDirCandidates(this.resolveAccountDir(dbPath, wxid))
     }
-    
-    let hardlinkDbPath: string | undefined
-    for (const p of possiblePaths) {
-      if (existsSync(p)) {
-        hardlinkDbPath = p
-        break
-      }
+    if (cachePath) {
+      addAccountDirCandidates(this.resolveAccountDir(cachePath, wxid))
     }
-    
-    if (!hardlinkDbPath) return undefined
 
-    try {
-      const db = new Database(hardlinkDbPath, { readonly: true })
-      
-      // 查询视频文件�?
-      const row = db.prepare(`
-        SELECT file_name, md5 FROM video_hardlink_info_v4 
-        WHERE md5 = ? 
-        LIMIT 1
-      `).get(md5) as { file_name: string; md5: string } | undefined
+    return Array.from(candidates).filter(candidatePath => existsSync(candidatePath))
+  }
 
-      db.close()
+  /**
+   * �?video_hardlink_info_v4 表查询视频文件名
+   */
+  private queryVideoFileName(md5: string): string | undefined {
+    if (!md5) return undefined
 
-      if (row?.file_name) {
-        // 提取不带扩展名的文件名作�?MD5
-        return row.file_name.replace(/\.[^.]+$/, '')
+    const hardlinkDbPaths = this.collectHardlinkDbCandidates()
+    if (hardlinkDbPaths.length === 0) return undefined
+
+    for (const hardlinkDbPath of hardlinkDbPaths) {
+      try {
+        const db = new Database(hardlinkDbPath, { readonly: true })
+
+        try {
+          const tableRows = db.prepare(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'video_hardlink_info%' ORDER BY name DESC"
+          ).all() as Array<{ name: string }>
+
+          const tableNames = tableRows.length > 0
+            ? tableRows.map(row => row.name)
+            : ['video_hardlink_info_v4', 'video_hardlink_info_v3', 'video_hardlink_info']
+
+          for (const tableName of tableNames) {
+            const columns = db.prepare(`PRAGMA table_info('${tableName}')`).all() as Array<{ name: string }>
+            if (columns.length === 0) continue
+
+            const columnMap = new Map<string, string>()
+            for (const column of columns) {
+              if (column.name) {
+                columnMap.set(column.name.toLowerCase(), column.name)
+              }
+            }
+
+            const md5ColumnLower = ['md5', 'file_md5', 'video_md5'].find(name => columnMap.has(name))
+            const fileNameColumnLower = ['file_name', 'filename', 'target_name', 'hardlink_name', 'path'].find(name => columnMap.has(name))
+
+            if (!md5ColumnLower || !fileNameColumnLower) continue
+
+            const md5Column = columnMap.get(md5ColumnLower)!
+            const fileNameColumn = columnMap.get(fileNameColumnLower)!
+            const row = db.prepare(
+              `SELECT ${fileNameColumn} AS fileName FROM ${tableName} WHERE ${md5Column} = ? LIMIT 1`
+            ).get(md5) as { fileName?: string } | undefined
+
+            if (row?.fileName) {
+              return basename(String(row.fileName)).replace(/\.[^.]+$/, '')
+            }
+          }
+        } finally {
+          db.close()
+        }
+      } catch {
+        // 忽略单个 hardlink.db 解析失败
       }
-    } catch {
-      // 忽略错误
     }
 
     return undefined
@@ -170,49 +273,60 @@ class VideoService {
 
     // 先尝试从数据库查询真正的视频文件�?
     const realVideoMd5 = this.queryVideoFileName(videoMd5) || videoMd5
+    const accountDir = this.resolveAccountDir(dbPath, wxid)
+    if (!accountDir) {
+      return { exists: false }
+    }
 
-    const videoBaseDir = join(dbPath, wxid, 'msg', 'video')
+    const videoBaseDirs = [
+      join(accountDir, 'msg', 'video'),
+      join(accountDir, 'FileStorage', 'Video')
+    ].filter(videoBaseDir => existsSync(videoBaseDir))
 
-    if (!existsSync(videoBaseDir)) {
+    if (videoBaseDirs.length === 0) {
       return { exists: false }
     }
 
     // 遍历年月目录查找视频文件
     try {
-      const allDirs = readdirSync(videoBaseDir)
-      
-      // 支持多种目录格式: YYYY-MM, YYYYMM, 或其�?
-      const yearMonthDirs = allDirs
-        .filter(dir => {
-          const dirPath = join(videoBaseDir, dir)
-          return statSync(dirPath).isDirectory()
-        })
-        .sort((a, b) => b.localeCompare(a)) // 从最新的目录开始查�?
-
       let previewFallback: { coverUrl?: string; thumbUrl?: string } | null = null
+      const possibleVideoNames = Array.from(new Set([realVideoMd5, videoMd5].filter(Boolean)))
+      const possibleVideoExts = ['.mp4', '.mov', '.m4v']
 
-      for (const yearMonth of yearMonthDirs) {
-        const dirPath = join(videoBaseDir, yearMonth)
+      for (const videoBaseDir of videoBaseDirs) {
+        const allEntries = readdirSync(videoBaseDir)
 
-        const videoPath = join(dirPath, `${realVideoMd5}.mp4`)
-        const coverPath = join(dirPath, `${realVideoMd5}.jpg`)
-        const thumbPath = join(dirPath, `${realVideoMd5}_thumb.jpg`)
-        const coverUrl = this.fileToDataUrl(coverPath, 'image/jpeg')
-        const thumbUrl = this.fileToDataUrl(thumbPath, 'image/jpeg')
+        const subDirs = allEntries
+          .filter(entry => this.isDirectory(join(videoBaseDir, entry)))
+          .sort((a, b) => b.localeCompare(a))
 
-        // 检查视频文件是否存�?
-        if (existsSync(videoPath)) {
-          return {
-            videoUrl: `file:///${videoPath.replace(/\\/g, '/')}`,  // 转换为 file:// 协议
-            coverUrl,
-            thumbUrl,
-            exists: true
+        const searchDirs = subDirs.length > 0
+          ? subDirs.map(subDir => join(videoBaseDir, subDir))
+          : [videoBaseDir]
+
+        for (const dirPath of searchDirs) {
+          for (const candidateName of possibleVideoNames) {
+            const coverPath = join(dirPath, `${candidateName}.jpg`)
+            const thumbPath = join(dirPath, `${candidateName}_thumb.jpg`)
+            const coverUrl = this.fileToDataUrl(coverPath, 'image/jpeg')
+            const thumbUrl = this.fileToDataUrl(thumbPath, 'image/jpeg')
+
+            for (const ext of possibleVideoExts) {
+              const videoPath = join(dirPath, `${candidateName}${ext}`)
+              if (existsSync(videoPath)) {
+                return {
+                  videoUrl: `file:///${videoPath.replace(/\\/g, '/')}`,
+                  coverUrl,
+                  thumbUrl,
+                  exists: true
+                }
+              }
+            }
+
+            if (!previewFallback && (coverUrl || thumbUrl)) {
+              previewFallback = { coverUrl, thumbUrl }
+            }
           }
-        }
-
-        // 记录仅缩略图/封面可用的兜底结果（优先较新的目录）
-        if (!previewFallback && (coverUrl || thumbUrl)) {
-          previewFallback = { coverUrl, thumbUrl }
         }
       }
 
